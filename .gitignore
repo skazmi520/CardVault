@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.spec
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# CSV import files (may contain personal data)
+*.csv
+
+# Local database / data directory (stored in ~/.cardvaultmac/)
+*.db
+*.sqlite
