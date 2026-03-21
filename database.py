@@ -17,7 +17,7 @@ DB_PATH   = DATA_DIR / "cardvault.db"
 # ── grading companies / statuses ──────────────────────────────────────────────
 GRADING_COMPANIES = ["PSA", "BGS", "CGC", "TAG"]
 GRADING_STATUSES  = ["Not Slated", "Slated", "At Grading"]
-ACQUISITION_TYPES = ["Cash", "Trade"]
+ACQUISITION_TYPES = ["Cash", "Trade", "Cash & Trade"]
 
 COMPANY_COLORS = {
     "PSA": "#FF3B30",
@@ -62,6 +62,8 @@ def init_db():
             acquisition_type     TEXT    NOT NULL DEFAULT 'Cash',
             acquisition_price    REAL    NOT NULL DEFAULT 0,
             grading_fee          REAL    NOT NULL DEFAULT 0,
+            trade_value          REAL    NOT NULL DEFAULT 0,
+            trade_details        TEXT    NOT NULL DEFAULT '',
             acquisition_date     TEXT    NOT NULL,
             notes                TEXT    NOT NULL DEFAULT '',
             date_added           TEXT    NOT NULL,
@@ -82,6 +84,9 @@ def init_db():
             photo_filename         TEXT,
             purchase_price         REAL    NOT NULL DEFAULT 0,
             purchase_date          TEXT    NOT NULL,
+            acquisition_type       TEXT    NOT NULL DEFAULT 'Cash',
+            trade_value            REAL    NOT NULL DEFAULT 0,
+            trade_details          TEXT    NOT NULL DEFAULT '',
             notes                  TEXT    NOT NULL DEFAULT '',
             grading_status         TEXT    NOT NULL DEFAULT 'Not Slated',
             target_grading_company TEXT    NOT NULL DEFAULT '',
@@ -98,13 +103,22 @@ def init_db():
 
 def _migrate(conn: sqlite3.Connection):
     """Safely add new columns to existing databases."""
-    existing = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(graded_cards)")
-    }
-    if "grading_fee" not in existing:
+    graded_cols = {row[1] for row in conn.execute("PRAGMA table_info(graded_cards)")}
+    if "grading_fee" not in graded_cols:
         conn.execute("ALTER TABLE graded_cards ADD COLUMN grading_fee REAL NOT NULL DEFAULT 0")
-        conn.commit()
+    if "trade_value" not in graded_cols:
+        conn.execute("ALTER TABLE graded_cards ADD COLUMN trade_value REAL NOT NULL DEFAULT 0")
+    if "trade_details" not in graded_cols:
+        conn.execute("ALTER TABLE graded_cards ADD COLUMN trade_details TEXT NOT NULL DEFAULT ''")
+
+    ungraded_cols = {row[1] for row in conn.execute("PRAGMA table_info(ungraded_cards)")}
+    if "acquisition_type" not in ungraded_cols:
+        conn.execute("ALTER TABLE ungraded_cards ADD COLUMN acquisition_type TEXT NOT NULL DEFAULT 'Cash'")
+    if "trade_value" not in ungraded_cols:
+        conn.execute("ALTER TABLE ungraded_cards ADD COLUMN trade_value REAL NOT NULL DEFAULT 0")
+    if "trade_details" not in ungraded_cols:
+        conn.execute("ALTER TABLE ungraded_cards ADD COLUMN trade_details TEXT NOT NULL DEFAULT ''")
+    conn.commit()
 
 def _today() -> str:
     return date.today().isoformat()
@@ -150,17 +164,19 @@ def add_graded_card(
     acquisition_date: str,
     notes: str,
     grading_fee: float = 0.0,
+    trade_value: float = 0.0,
+    trade_details: str = "",
 ) -> int:
     conn = get_connection()
     cur = conn.execute(
         """INSERT INTO graded_cards
            (serial_number, grading_company, grade, card_name, card_number,
             set_name, photo_filename, acquisition_type, acquisition_price,
-            grading_fee, acquisition_date, notes, date_added)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            grading_fee, trade_value, trade_details, acquisition_date, notes, date_added)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (serial_number, grading_company, grade, card_name, card_number,
          set_name, photo_filename, acquisition_type, acquisition_price,
-         grading_fee, acquisition_date, notes, _now()),
+         grading_fee, trade_value, trade_details, acquisition_date, notes, _now()),
     )
     conn.commit()
     row_id = cur.lastrowid
@@ -217,17 +233,20 @@ def add_ungraded_card(
     notes: str,
     grading_status: str,
     target_grading_company: str,
+    acquisition_type: str = "Cash",
+    trade_value: float = 0.0,
+    trade_details: str = "",
 ) -> int:
     conn = get_connection()
     cur = conn.execute(
         """INSERT INTO ungraded_cards
            (card_name, card_number, set_name, year, photo_filename,
-            purchase_price, purchase_date, notes, grading_status,
-            target_grading_company, date_added)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            purchase_price, purchase_date, acquisition_type, trade_value,
+            trade_details, notes, grading_status, target_grading_company, date_added)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (card_name, card_number, set_name, year, photo_filename,
-         purchase_price, purchase_date, notes, grading_status,
-         target_grading_company, _now()),
+         purchase_price, purchase_date, acquisition_type, trade_value,
+         trade_details, notes, grading_status, target_grading_company, _now()),
     )
     conn.commit()
     row_id = cur.lastrowid
@@ -295,10 +314,12 @@ def convert_ungraded_to_graded(
         card_number=ug["card_number"],
         set_name=ug["set_name"],
         photo_filename=new_photo,
-        acquisition_type="Cash",
+        acquisition_type=ug["acquisition_type"],
         acquisition_price=ug["purchase_price"],
         acquisition_date=acquisition_date,
         notes=ug["notes"],
+        trade_value=ug["trade_value"],
+        trade_details=ug["trade_details"],
     )
     update_ungraded_card(ungraded_id, is_converted=1)
     return graded_id

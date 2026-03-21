@@ -6,6 +6,12 @@ from PIL import Image
 from datetime import date
 import database as db
 
+try:
+    from tkcalendar import DateEntry
+    _HAS_CAL = True
+except ImportError:
+    _HAS_CAL = False
+
 STATUS_COLORS = {
     "Not Slated": "gray",
     "Slated":     "#007AFF",
@@ -19,6 +25,30 @@ def _fmt_usd(val) -> str:
     if val is None:
         return "—"
     return f"${val:,.2f}"
+
+def _make_date_entry(parent, initial=None):
+    from datetime import date as _date
+    d = initial if isinstance(initial, _date) else _date.today()
+    if not _HAS_CAL:
+        e = ctk.CTkEntry(parent, height=32, width=160, placeholder_text="YYYY-MM-DD")
+        e.insert(0, d.isoformat())
+        return e
+    is_dark = ctk.get_appearance_mode() == "Dark"
+    bg = "#2b2b2b" if is_dark else "#f5f5f5"
+    fg = "#e0e0e0" if is_dark else "#1a1a1a"
+    return DateEntry(
+        parent, width=16, date_pattern="yyyy-mm-dd",
+        year=d.year, month=d.month, day=d.day,
+        font=("SF Pro Text", 12),
+        background="#007AFF", foreground="white",
+        selectbackground="#007AFF", selectforeground="white",
+        headersbackground="#005BD9", headersforeground="white",
+        normalbackground=bg, normalforeground=fg,
+        weekendbackground=bg, weekendforeground=fg,
+        othermonthbackground="#222222" if is_dark else "#e5e5e5",
+        othermonthforeground="#888888",
+        borderwidth=0,
+    )
 
 def _apply_treeview_style():
     style = ttk.Style()
@@ -162,11 +192,15 @@ class AddUngradedCardDialog(ctk.CTkToplevel):
     def __init__(self, parent, on_save=None):
         super().__init__(parent)
         self.title("Add Ungraded Card")
-        self.geometry("500x560")
-        self.resizable(False, False)
+        self.geometry("500x620")
+        self.resizable(False, True)
         self.grab_set()
         self._on_save = on_save
         self._photo_path: str | None = None
+        self._trade_rows: list[dict] = []
+        self._price_var = ctk.StringVar()
+        self._price_var.trace_add("write", self._update_total)
+        self._trade_outer = None
         self._build()
 
     def _build(self):
@@ -196,11 +230,27 @@ class AddUngradedCardDialog(ctk.CTkToplevel):
 
         lbl("Year", r, 0, 1); lbl("Purchase Date *", r, 1, 1); r += 1
         self._year = entry(r, 0, 1)
-        self._pdate = entry(r, 1, 1, placeholder_text="YYYY-MM-DD")
-        self._pdate.insert(0, _date_str()); r += 1
+        self._pdate = _make_date_entry(scroll)
+        self._pdate.grid(row=r, column=1, sticky="w", padx=(6, 0), pady=(2, 0)); r += 1
 
-        lbl("Purchase Price (USD) *", r); r += 1
-        self._price = entry(r, placeholder_text="0.00"); r += 1
+        lbl("Purchase Type", r); r += 1
+        seg_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        seg_frame.grid(row=r, column=0, columnspan=2, sticky="w", pady=(4, 0)); r += 1
+        self._type_seg = ctk.CTkSegmentedButton(
+            seg_frame, values=["Cash", "Trade", "Cash & Trade"],
+            command=self._on_type_change, width=320, height=32
+        )
+        self._type_seg.set("Cash")
+        self._type_seg.pack(side="left")
+
+        # Dynamic acquisition detail
+        self._acq_detail = ctk.CTkFrame(scroll, fg_color="transparent")
+        self._acq_detail.grid(row=r, column=0, columnspan=2, sticky="ew"); r += 1
+        self._acq_detail.grid_columnconfigure((0, 1), weight=1)
+
+        self._total_cost_lbl = ctk.CTkLabel(scroll, text="Total Cost: —",
+                                            font=ctk.CTkFont(size=12), text_color="gray")
+        self._total_cost_lbl.grid(row=r, column=0, columnspan=2, sticky="w", pady=(4, 0)); r += 1
 
         ctk.CTkFrame(scroll, height=1, fg_color="gray40").grid(
             row=r, column=0, columnspan=2, sticky="ew", pady=10); r += 1
@@ -236,6 +286,8 @@ class AddUngradedCardDialog(ctk.CTkToplevel):
         ctk.CTkButton(btn_frame, text="Save Card", width=110,
                       command=self._save).pack(side="right")
 
+        self._on_type_change("Cash")
+
     def _pick_photo(self):
         path = filedialog.askopenfilename(
             title="Select Card Photo",
@@ -247,16 +299,40 @@ class AddUngradedCardDialog(ctk.CTkToplevel):
             self._photo_lbl.configure(text=Path(path).name, text_color=("gray10", "gray90"))
 
     def _save(self):
-        name  = self._name.get().strip()
-        price = self._price.get().strip()
+        name = self._name.get().strip()
         if not name:
             messagebox.showerror("Required", "Card name is required.", parent=self); return
-        if not price:
-            messagebox.showerror("Required", "Purchase price is required.", parent=self); return
-        try:
-            price_f = float(price)
-        except ValueError:
-            messagebox.showerror("Invalid", "Price must be a number.", parent=self); return
+
+        acq = self._type_seg.get()
+        price_f       = 0.0
+        trade_total   = 0.0
+        trade_details = ""
+
+        if acq in ("Cash", "Cash & Trade"):
+            price_str = self._price_var.get().strip()
+            if not price_str:
+                messagebox.showerror("Required", "Purchase price is required.", parent=self); return
+            try:
+                price_f = float(price_str)
+            except ValueError:
+                messagebox.showerror("Invalid", "Price must be a number.", parent=self); return
+
+        if acq in ("Trade", "Cash & Trade"):
+            if not self._trade_rows:
+                messagebox.showerror("Required", "Add at least one traded card.", parent=self); return
+            parts = []
+            for row in self._trade_rows:
+                mv_s = row["mv"].get().strip()
+                try:
+                    mv = float(mv_s) if mv_s else 0.0
+                except ValueError:
+                    mv = 0.0
+                trade_total += mv
+                n = row["name"].get().strip() or "Unknown Card"
+                parts.append(f"{n}: ${mv:,.2f}")
+            trade_details = " | ".join(parts)
+
+        purchase_price = price_f + trade_total
 
         photo_fn = None
         if self._photo_path:
@@ -271,15 +347,152 @@ class AddUngradedCardDialog(ctk.CTkToplevel):
             set_name=self._set.get().strip(),
             year=self._year.get().strip(),
             photo_filename=photo_fn,
-            purchase_price=price_f,
+            purchase_price=purchase_price,
             purchase_date=self._pdate.get().strip(),
             notes=self._notes.get("1.0", "end").strip(),
             grading_status=self._status_var.get(),
             target_grading_company=self._target_var.get(),
+            acquisition_type=acq,
+            trade_value=trade_total,
+            trade_details=trade_details,
         )
         if self._on_save:
             self._on_save()
         self.destroy()
+
+    def _on_type_change(self, acq_type: str | None = None):
+        if acq_type is None:
+            acq_type = self._type_seg.get()
+        for w in self._acq_detail.winfo_children():
+            w.destroy()
+        self._acq_detail.grid_columnconfigure((0, 1), weight=1)
+        self._trade_outer = None
+        r = 0
+
+        if acq_type in ("Cash", "Cash & Trade"):
+            label_text = "Purchase Price (USD) *" if acq_type == "Cash" else "Cash Paid (USD) *"
+            ctk.CTkLabel(self._acq_detail, text=label_text,
+                         font=ctk.CTkFont(size=12), anchor="w"
+                         ).grid(row=r, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            r += 1
+            ctk.CTkEntry(self._acq_detail, height=32,
+                         textvariable=self._price_var, placeholder_text="0.00"
+                         ).grid(row=r, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+            r += 1
+
+        if acq_type in ("Trade", "Cash & Trade"):
+            hdr = ctk.CTkFrame(self._acq_detail, fg_color="transparent")
+            hdr.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(12, 4))
+            hdr.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(hdr, text="Traded Cards",
+                         font=ctk.CTkFont(size=12, weight="bold"), anchor="w"
+                         ).grid(row=0, column=0, sticky="w")
+            ctk.CTkButton(hdr, text="+ Add Card", width=90, height=26,
+                          corner_radius=8, command=self._add_trade_row
+                          ).grid(row=0, column=1, sticky="e")
+            r += 1
+
+            self._trade_outer = ctk.CTkFrame(self._acq_detail, corner_radius=8)
+            self._trade_outer.grid(row=r, column=0, columnspan=2, sticky="ew")
+            self._trade_outer.grid_columnconfigure(1, weight=1)
+
+            if not self._trade_rows:
+                self._add_trade_row_data()
+            self._rebuild_trade_rows()
+
+        self._update_total()
+
+    def _add_trade_row_data(self):
+        name_var = ctk.StringVar()
+        mv_var   = ctk.StringVar()
+        mv_var.trace_add("write", self._update_total)
+        self._trade_rows.append({"name": name_var, "mv": mv_var})
+
+    def _add_trade_row(self):
+        self._add_trade_row_data()
+        self._on_type_change()
+
+    def _remove_trade_row(self, idx: int):
+        if len(self._trade_rows) <= 1:
+            return
+        self._trade_rows.pop(idx)
+        self._on_type_change()
+
+    def _rebuild_trade_rows(self):
+        if self._trade_outer is None:
+            return
+        for w in self._trade_outer.winfo_children():
+            w.destroy()
+        self._trade_outer.grid_columnconfigure(1, weight=1)
+
+        for col, text in enumerate(["", "Card Name", "Market Value", ""]):
+            ctk.CTkLabel(self._trade_outer, text=text,
+                         font=ctk.CTkFont(size=11), text_color="gray"
+                         ).grid(row=0, column=col,
+                                padx=(14 if col == 0 else 6, 6),
+                                pady=(8, 2), sticky="w")
+
+        for i, row in enumerate(self._trade_rows):
+            ri = i + 1
+            ctk.CTkLabel(self._trade_outer, text=f"{i+1}.",
+                         width=20, font=ctk.CTkFont(size=12), text_color="gray"
+                         ).grid(row=ri, column=0, padx=(14, 4), pady=4)
+
+            name_f = ctk.CTkFrame(self._trade_outer, fg_color="transparent")
+            name_f.grid(row=ri, column=1, sticky="ew", padx=4, pady=4)
+            name_f.grid_columnconfigure(0, weight=1)
+            ctk.CTkEntry(name_f, textvariable=row["name"],
+                         placeholder_text="Card name", height=30
+                         ).grid(row=0, column=0, sticky="ew")
+            ctk.CTkButton(name_f, text="Inventory ↓", width=94, height=26,
+                          font=ctk.CTkFont(size=11),
+                          fg_color="transparent", border_width=1,
+                          command=lambda nv=row["name"], mv=row["mv"]:
+                              self._open_inventory_picker(nv, mv)
+                          ).grid(row=0, column=1, padx=(4, 0))
+
+            mv_f = ctk.CTkFrame(self._trade_outer, fg_color="transparent")
+            mv_f.grid(row=ri, column=2, padx=4, pady=4, sticky="w")
+            ctk.CTkLabel(mv_f, text="$",
+                         font=ctk.CTkFont(size=12), text_color="gray").pack(side="left")
+            ctk.CTkEntry(mv_f, textvariable=row["mv"],
+                         placeholder_text="0.00", width=100, height=30).pack(side="left")
+
+            ctk.CTkButton(self._trade_outer, text="×", width=26, height=26,
+                          fg_color="transparent",
+                          text_color=("gray40", "gray60"),
+                          hover_color=("gray80", "gray30"),
+                          corner_radius=6,
+                          command=lambda idx=i: self._remove_trade_row(idx)
+                          ).grid(row=ri, column=3, padx=(4, 10), pady=4)
+
+        ctk.CTkFrame(self._trade_outer, height=6, fg_color="transparent"
+                     ).grid(row=len(self._trade_rows) + 1, column=0)
+
+    def _open_inventory_picker(self, name_var, mv_var):
+        from inventory_view import InventoryPickerDialog as _Picker
+        def on_select(card_name, market_value):
+            name_var.set(card_name)
+            mv_var.set(f"{market_value:.2f}")
+        _Picker(self, on_select=on_select)
+
+    def _update_total(self, *_):
+        acq = self._type_seg.get() if hasattr(self, '_type_seg') else "Cash"
+        total = 0.0
+        if acq in ("Cash", "Cash & Trade"):
+            try:
+                total += float(self._price_var.get() or 0)
+            except ValueError:
+                pass
+        if acq in ("Trade", "Cash & Trade"):
+            for row in self._trade_rows:
+                try:
+                    total += float(row["mv"].get() or 0)
+                except ValueError:
+                    pass
+        self._total_cost_lbl.configure(
+            text=f"Total Cost: ${total:,.2f}" if total > 0 else "Total Cost: —"
+        )
 
 
 # ── ungraded detail dialog ────────────────────────────────────────────────────
@@ -445,8 +658,8 @@ class GradingReturnDialog(ctk.CTkToplevel):
         self._serial = entry(r); r += 1
 
         lbl("Return Date *", r); r += 1
-        self._ret_date = entry(r, placeholder_text="YYYY-MM-DD")
-        self._ret_date.insert(0, _date_str()); r += 1
+        self._ret_date = _make_date_entry(f)
+        self._ret_date.grid(row=r, column=0, columnspan=2, sticky="w", pady=(2, 0)); r += 1
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(fill="x", padx=24, pady=(0, 20))
