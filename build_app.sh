@@ -56,12 +56,13 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" << 'PLIST'
 PLIST
 
 # Write launcher executable
+# Use the venv Python directly — avoids PATH issues when launched from Finder/Launchpad
+PYTHON_BIN="${VENV_DIR}/bin/python3"
+LOG_FILE="\$HOME/Library/Logs/CardVault.log"
 cat > "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" << LAUNCHER
 #!/usr/bin/env bash
-SOURCE_DIR="${SOURCE_DIR}"
-cd "\$SOURCE_DIR"
-source "\$SOURCE_DIR/.venv/bin/activate"
-exec python3 "\$SOURCE_DIR/main.py"
+cd "${SOURCE_DIR}"
+exec "${PYTHON_BIN}" "${SOURCE_DIR}/main.py" 2>>"${LOG_FILE}"
 LAUNCHER
 
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
