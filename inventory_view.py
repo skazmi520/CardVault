@@ -286,7 +286,9 @@ class AddGradedCardDialog(ctk.CTkToplevel):
         self.title("Add Graded Card")
         self.geometry("560x720")
         self.resizable(False, True)
-        self.grab_set()
+        self.transient(parent.winfo_toplevel())
+        self.lift()
+        self.after(50, self.focus_force)
         self._on_save = on_save
         self._photo_path: str | None = None
         self._trade_rows: list[dict] = []
