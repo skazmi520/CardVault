@@ -5,6 +5,8 @@ Run:  python3 main.py
 
 import customtkinter as ctk
 from database import init_db
+from pathlib import Path
+from PIL import Image, ImageTk
 
 # ── appearance ────────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("System")   # follows macOS dark/light mode
@@ -27,6 +29,16 @@ class CardVaultApp(ctk.CTk):
         self.title("CardVault")
         self.geometry("1100x720")
         self.minsize(900, 600)
+
+        # Window icon (shows in Dock while running)
+        icon_path = Path(__file__).parent / "icon.png"
+        if icon_path.exists():
+            try:
+                pil_img = Image.open(icon_path).resize((64, 64), Image.LANCZOS)
+                self._icon_img = ImageTk.PhotoImage(pil_img)
+                self.iconphoto(True, self._icon_img)
+            except Exception:
+                pass
 
         # ── layout: sidebar | content ─────────────────────────────────────────
         self.grid_columnconfigure(1, weight=1)
