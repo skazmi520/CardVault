@@ -674,7 +674,9 @@ class CardDetailDialog(ctk.CTkToplevel):
         self.title(card["card_name"] if card else "Card Detail")
         self.geometry("560x680")
         self.resizable(False, False)
-        self.grab_set()
+        self.transient(parent.winfo_toplevel())
+        self.lift()
+        self.after(50, self.focus_force)
 
         if not card:
             ctk.CTkLabel(self, text="Card not found.").pack(pady=40)
