@@ -6,12 +6,6 @@ from PIL import Image
 from datetime import date
 import database as db
 
-try:
-    from tkcalendar import DateEntry
-    _HAS_CAL = True
-except ImportError:
-    _HAS_CAL = False
-
 COMPANY_COLORS = db.COMPANY_COLORS
 
 def _fmt_usd(val) -> str:
@@ -23,30 +17,81 @@ def _fmt_usd(val) -> str:
 def _date_str() -> str:
     return date.today().isoformat()
 
-def _make_date_entry(parent, initial=None):
-    """Return a tkcalendar DateEntry or fallback CTkEntry if not installed."""
-    from datetime import date as _date
-    d = initial if isinstance(initial, _date) else _date.today()
-    if not _HAS_CAL:
-        e = ctk.CTkEntry(parent, height=32, width=160, placeholder_text="YYYY-MM-DD")
-        e.insert(0, d.isoformat())
-        return e
-    is_dark = ctk.get_appearance_mode() == "Dark"
-    bg = "#2b2b2b" if is_dark else "#f5f5f5"
-    fg = "#e0e0e0" if is_dark else "#1a1a1a"
-    return DateEntry(
-        parent, width=16, date_pattern="yyyy-mm-dd",
-        year=d.year, month=d.month, day=d.day,
-        font=("SF Pro Text", 12),
-        background="#007AFF", foreground="white",
-        selectbackground="#007AFF", selectforeground="white",
-        headersbackground="#005BD9", headersforeground="white",
-        normalbackground=bg, normalforeground=fg,
-        weekendbackground=bg, weekendforeground=fg,
-        othermonthbackground="#222222" if is_dark else "#e5e5e5",
-        othermonthforeground="#888888",
-        borderwidth=0,
-    )
+
+class _DatePickerWidget(ctk.CTkFrame):
+    """Text entry + button that opens a tkcalendar.Calendar in a controlled popup."""
+
+    def __init__(self, parent, initial=None):
+        super().__init__(parent, fg_color="transparent")
+        from datetime import date as _date
+        d = initial if isinstance(initial, _date) else _date.today()
+        self._var = ctk.StringVar(value=d.isoformat())
+        self._entry = ctk.CTkEntry(self, textvariable=self._var,
+                                   width=118, height=32,
+                                   placeholder_text="YYYY-MM-DD")
+        self._entry.pack(side="left")
+        ctk.CTkButton(self, text="▼", width=32, height=32,
+                      font=ctk.CTkFont(size=11), corner_radius=6,
+                      command=self._open_picker
+                      ).pack(side="left", padx=(3, 0))
+
+    def get(self) -> str:
+        return self._var.get().strip()
+
+    def _open_picker(self):
+        from datetime import date as _date
+        try:
+            d = _date.fromisoformat(self._var.get().strip())
+        except ValueError:
+            d = _date.today()
+
+        popup = ctk.CTkToplevel(self)
+        popup.title("Select Date")
+        popup.resizable(False, False)
+        popup.transient(self.winfo_toplevel())
+        popup.lift()
+        popup.after(50, popup.focus_force)
+
+        try:
+            from tkcalendar import Calendar
+        except ImportError:
+            ctk.CTkLabel(popup, text="tkcalendar not installed.\nEdit date manually."
+                         ).pack(padx=20, pady=20)
+            return
+
+        is_dark = ctk.get_appearance_mode() == "Dark"
+        cal = Calendar(
+            popup, selectmode="day",
+            year=d.year, month=d.month, day=d.day,
+            date_pattern="yyyy-mm-dd",
+            background="#007AFF", foreground="white",
+            headersbackground="#005BD9", headersforeground="white",
+            selectbackground="#007AFF", selectforeground="white",
+            normalbackground="#2b2b2b" if is_dark else "#f5f5f5",
+            normalforeground="#e0e0e0" if is_dark else "#1a1a1a",
+            weekendbackground="#2b2b2b" if is_dark else "#f5f5f5",
+            weekendforeground="#e0e0e0" if is_dark else "#1a1a1a",
+            othermonthbackground="#222222" if is_dark else "#e5e5e5",
+            othermonthforeground="#888888",
+            borderwidth=0,
+        )
+        cal.pack(padx=10, pady=10)
+
+        def confirm():
+            self._var.set(cal.get_date())
+            popup.destroy()
+
+        ctk.CTkButton(popup, text="Select Date", height=32,
+                      command=confirm).pack(padx=10, pady=(0, 10), fill="x")
+
+        self.update_idletasks()
+        wx = self.winfo_rootx()
+        wy = self.winfo_rooty() + self.winfo_height()
+        popup.geometry(f"+{wx}+{wy}")
+
+
+def _make_date_entry(parent, initial=None) -> _DatePickerWidget:
+    return _DatePickerWidget(parent, initial=initial)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
