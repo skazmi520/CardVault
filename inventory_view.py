@@ -860,9 +860,11 @@ class MarkSoldDialog(ctk.CTkToplevel):
         self._on_save = on_save
         card = db.get_graded_card(card_id)
         self.title(f"Mark as Sold — {card['card_name'] if card else ''}")
-        self.geometry("380x280")
+        self.geometry("400x360")
         self.resizable(False, False)
-        self.grab_set()
+        self.transient(parent.winfo_toplevel())
+        self.lift()
+        self.after(50, self.focus_force)
         self._card = card
         self._build()
 

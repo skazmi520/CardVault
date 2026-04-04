@@ -615,9 +615,11 @@ class GradingReturnDialog(ctk.CTkToplevel):
         self._on_save     = on_save
         card = db.get_ungraded_card(ungraded_id)
         self.title(f"Grading Return — {card['card_name'] if card else ''}")
-        self.geometry("420x380")
+        self.geometry("420x400")
         self.resizable(False, False)
-        self.grab_set()
+        self.transient(parent.winfo_toplevel())
+        self.lift()
+        self.after(50, self.focus_force)
         self._card = card
         self._build()
 

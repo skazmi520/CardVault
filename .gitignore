@@ -16,6 +16,9 @@ build/
 *.egg-info/
 *.spec
 
+# macOS app bundle (built locally, not committed)
+*.app/
+
 # macOS
 .DS_Store
 .AppleDouble
