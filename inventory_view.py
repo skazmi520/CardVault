@@ -146,6 +146,12 @@ class InventoryView(ctk.CTkFrame):
         ctk.CTkButton(hdr, text="+ Add Card", width=110, height=34,
                       corner_radius=8,
                       command=self._open_add_dialog).pack(side="right")
+        ctk.CTkButton(hdr, text="Stock Check", width=110, height=34,
+                      corner_radius=8,
+                      fg_color="transparent", border_width=1,
+                      text_color=("gray10", "gray90"),
+                      hover_color=("gray80", "gray30"),
+                      command=self._open_stock_check).pack(side="right", padx=(0, 8))
 
         # search + sort bar
         bar = ctk.CTkFrame(self, fg_color="transparent")
@@ -213,6 +219,12 @@ class InventoryView(ctk.CTkFrame):
 
         self.tree.bind("<Double-1>", self._on_row_double_click)
         self.tree.bind("<Return>",   self._on_row_double_click)
+
+    # ── actions ───────────────────────────────────────────────────────────────
+
+    def _open_stock_check(self):
+        from stock_check_view import StockCheckView
+        StockCheckView(self)
 
     # ── data loading ──────────────────────────────────────────────────────────
 
