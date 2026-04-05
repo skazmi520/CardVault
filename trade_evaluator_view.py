@@ -137,6 +137,14 @@ class TradeEvaluatorView(ctk.CTkFrame):
         self._redraw_side(side)
         return frame
 
+    def _refresh_totals(self, side: str):
+        """Update only the total label and summary bar — no widget recreation."""
+        items: list[TradeItem] = self._giving if side == "give" else self._getting
+        total_lbl: ctk.CTkLabel = getattr(self, f"_{side}_total_lbl")
+        total = sum(it.value for it in items)
+        total_lbl.configure(text=_fmt_usd(total))
+        self._refresh_summary()
+
     def _redraw_side(self, side: str):
         items: list[TradeItem] = self._giving if side == "give" else self._getting
         rows_frame: ctk.CTkScrollableFrame = getattr(self, f"_{side}_rows_frame")
@@ -192,19 +200,18 @@ class TradeEvaluatorView(ctk.CTkFrame):
             name_var = ctk.StringVar(value=item.name)
             val_var  = ctk.StringVar(value=str(item.manual_value) if item.manual_value else "")
 
-            def on_name_change(v, it=item, s=side):
-                it.name = v
-                self._redraw_side(s)
+            def on_name_change(v, it=item):
+                it.name = v  # name doesn't affect totals — no redraw needed
 
             def on_val_change(v, it=item, s=side):
                 try:
                     it.manual_value = float(v)
                 except ValueError:
                     it.manual_value = 0.0
-                self._redraw_side(s)
+                self._refresh_totals(s)  # update totals only, don't recreate rows
 
-            name_var.trace_add("write", lambda *_, v=name_var, it=item, s=side:
-                               on_name_change(v.get(), it, s))
+            name_var.trace_add("write", lambda *_, v=name_var, it=item:
+                               on_name_change(v.get(), it))
             val_var.trace_add("write", lambda *_, v=val_var, it=item, s=side:
                               on_val_change(v.get(), it, s))
 
