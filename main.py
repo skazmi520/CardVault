@@ -59,6 +59,8 @@ class CardVaultApp(ctk.CTk):
         self.sidebar = ctk.CTkFrame(self, width=190, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_rowconfigure(len(NAV_ITEMS) + 2, weight=1)
+        # rows after the spacer: export button
+        EXPORT_ROW = len(NAV_ITEMS) + 3
 
         logo = ctk.CTkLabel(
             self.sidebar,
@@ -92,6 +94,19 @@ class CardVaultApp(ctk.CTk):
             btn.grid(row=i + 2, column=0, padx=12, pady=3, sticky="ew")
             self._nav_buttons[key] = btn
 
+        ctk.CTkButton(
+            self.sidebar,
+            text="Export CSV",
+            anchor="w",
+            height=36,
+            corner_radius=8,
+            fg_color="transparent",
+            text_color=("gray10", "gray90"),
+            hover_color=("gray80", "gray30"),
+            font=ctk.CTkFont(size=13),
+            command=self._export_csv,
+        ).grid(row=EXPORT_ROW, column=0, padx=12, pady=(0, 16), sticky="ew")
+
     def _set_active_nav(self, key: str):
         for k, btn in self._nav_buttons.items():
             if k == key:
@@ -104,6 +119,31 @@ class CardVaultApp(ctk.CTk):
                     fg_color="transparent",
                     font=ctk.CTkFont(size=13),
                 )
+
+    def _export_csv(self):
+        from tkinter import filedialog, messagebox
+        import export_to_csv
+
+        folder = filedialog.askdirectory(
+            title="Choose export folder",
+            initialdir=str(Path.home() / "Desktop"),
+        )
+        if not folder:
+            return
+
+        try:
+            summary = export_to_csv.run(folder)
+        except Exception as e:
+            messagebox.showerror("Export Failed", str(e))
+            return
+
+        lines = "\n".join(
+            f"  {name}.csv — {count} rows" for name, count in summary.items()
+        )
+        messagebox.showinfo(
+            "Export Complete",
+            f"Files saved to:\n{folder}\n\n{lines}",
+        )
 
     # ── content area ──────────────────────────────────────────────────────────
 
