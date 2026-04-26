@@ -879,6 +879,11 @@ class CardDetailDialog(ctk.CTkToplevel):
                       fg_color="transparent", border_width=1,
                       command=self._close).pack(side="left")
 
+        ctk.CTkButton(btn_frame, text="Edit", width=80,
+                      fg_color="transparent", border_width=1,
+                      text_color=("gray10", "gray90"),
+                      command=self._open_edit).pack(side="left", padx=(8, 0))
+
         fav_text = "★ Unfavorite" if card["is_favorited"] else "☆ Favorite"
         ctk.CTkButton(btn_frame, text=fav_text, width=110,
                       fg_color="#FFD700" if card["is_favorited"] else "transparent",
@@ -886,19 +891,14 @@ class CardDetailDialog(ctk.CTkToplevel):
                       border_width=1,
                       command=self._toggle_favorite).pack(side="left", padx=8)
 
-        if not card["is_sold"]:
-            ctk.CTkButton(btn_frame, text="Mark Sold", width=100,
-                          fg_color="#34C759",
-                          command=self._open_mark_sold).pack(side="right", padx=(8, 0))
-
-        ctk.CTkButton(btn_frame, text="Edit", width=80,
-                      fg_color="transparent", border_width=1,
-                      text_color=("gray10", "gray90"),
-                      command=self._open_edit).pack(side="right", padx=(0, 8))
-
         ctk.CTkButton(btn_frame, text="Delete", width=80,
                       fg_color="#FF3B30",
                       command=self._delete).pack(side="right")
+
+        if not card["is_sold"]:
+            ctk.CTkButton(btn_frame, text="Mark Sold", width=100,
+                          fg_color="#34C759",
+                          command=self._open_mark_sold).pack(side="right", padx=(0, 8))
 
     # ── actions ───────────────────────────────────────────────────────────────
 
@@ -1083,10 +1083,6 @@ class EditGradedCardDialog(ctk.CTkToplevel):
         entry(r, var=self._number_var, col=0, span=1)
         entry(r, var=self._set_var,    col=1, span=1); r += 1
 
-        lbl("Year", r); r += 1
-        self._year_var = ctk.StringVar(value=card.get("year", "") or "")
-        entry(r, var=self._year_var); r += 1
-
         ctk.CTkFrame(scroll, height=1, fg_color="gray40").grid(
             row=r, column=0, columnspan=2, sticky="ew", pady=10); r += 1
 
@@ -1199,7 +1195,7 @@ class EditGradedCardDialog(ctk.CTkToplevel):
             self._trade_details_box = ctk.CTkTextbox(self._acq_detail, height=60)
             self._trade_details_box.grid(row=r, column=0, columnspan=2, sticky="ew",
                                          pady=(2, 0)); r += 1
-            existing = self._card.get("trade_details", "") or ""
+            existing = self._card["trade_details"] or ""
             if existing and not self._trade_details_box.get("1.0", "end").strip():
                 self._trade_details_box.insert("1.0", existing)
 
