@@ -152,6 +152,12 @@ class InventoryView(ctk.CTkFrame):
                       text_color=("gray10", "gray90"),
                       hover_color=("gray80", "gray30"),
                       command=self._open_stock_check).pack(side="right", padx=(0, 8))
+        ctk.CTkButton(hdr, text="Record Trade", width=118, height=34,
+                      corner_radius=8,
+                      fg_color="transparent", border_width=1,
+                      text_color=("gray10", "gray90"),
+                      hover_color=("gray80", "gray30"),
+                      command=self._open_record_trade).pack(side="right", padx=(0, 8))
 
         # search + sort bar
         bar = ctk.CTkFrame(self, fg_color="transparent")
@@ -225,6 +231,10 @@ class InventoryView(ctk.CTkFrame):
     def _open_stock_check(self):
         from stock_check_view import StockCheckView
         StockCheckView(self)
+
+    def _open_record_trade(self):
+        from record_trade_dialog import RecordTradeDialog
+        RecordTradeDialog(self, on_complete=self.refresh)
 
     # ── data loading ──────────────────────────────────────────────────────────
 
