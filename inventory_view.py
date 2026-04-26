@@ -24,7 +24,15 @@ class _DatePickerWidget(ctk.CTkFrame):
     def __init__(self, parent, initial=None):
         super().__init__(parent, fg_color="transparent")
         from datetime import date as _date
-        d = initial if isinstance(initial, _date) else _date.today()
+        if isinstance(initial, _date):
+            d = initial
+        elif isinstance(initial, str):
+            try:
+                d = _date.fromisoformat(initial)
+            except ValueError:
+                d = _date.today()
+        else:
+            d = _date.today()
         self._var = ctk.StringVar(value=d.isoformat())
         self._entry = ctk.CTkEntry(self, textvariable=self._var,
                                    width=118, height=32,
@@ -883,6 +891,11 @@ class CardDetailDialog(ctk.CTkToplevel):
                           fg_color="#34C759",
                           command=self._open_mark_sold).pack(side="right", padx=(8, 0))
 
+        ctk.CTkButton(btn_frame, text="Edit", width=80,
+                      fg_color="transparent", border_width=1,
+                      text_color=("gray10", "gray90"),
+                      command=self._open_edit).pack(side="right", padx=(0, 8))
+
         ctk.CTkButton(btn_frame, text="Delete", width=80,
                       fg_color="#FF3B30",
                       command=self._delete).pack(side="right")
@@ -905,6 +918,9 @@ class CardDetailDialog(ctk.CTkToplevel):
         new_val = 0 if self._card["is_favorited"] else 1
         db.update_graded_card(self._card_id, is_favorited=new_val)
         self._close()
+
+    def _open_edit(self):
+        EditGradedCardDialog(self, self._card_id, on_save=self._close)
 
     def _open_mark_sold(self):
         MarkSoldDialog(self, self._card_id, on_save=self._close)
@@ -995,6 +1011,287 @@ class MarkSoldDialog(ctk.CTkToplevel):
             messagebox.showerror("Invalid", "Sale price must be a number.", parent=self)
             return
         db.mark_graded_sold(self._card_id, price_f, sale_date)
+        if self._on_save:
+            self._on_save()
+        self.destroy()
+
+
+# ── edit card dialog ──────────────────────────────────────────────────────────
+
+class EditGradedCardDialog(ctk.CTkToplevel):
+    """Pre-populated edit form for an existing graded card."""
+
+    def __init__(self, parent, card_id: int, on_save=None):
+        super().__init__(parent)
+        self._card_id  = card_id
+        self._on_save  = on_save
+        card = db.get_graded_card(card_id)
+        if not card:
+            self.destroy()
+            return
+        self._card = card
+        self.title(f"Edit — {card['card_name']}")
+        self.geometry("560x760")
+        self.resizable(False, True)
+        self.transient(parent.winfo_toplevel())
+        self.lift()
+        self.after(50, self.focus_force)
+
+        # Derive cash-paid from stored totals
+        fee        = card["grading_fee"] or 0.0
+        trade_v    = card["trade_value"] or 0.0
+        cash_paid  = max(0.0, (card["acquisition_price"] or 0.0) - trade_v - fee)
+
+        # Persistent StringVars so type switching doesn't lose values
+        self._cash_var  = ctk.StringVar(value=f"{cash_paid:.2f}" if cash_paid else "")
+        self._fee_var   = ctk.StringVar(value=f"{fee:.2f}" if fee else "")
+        self._trade_v_var = ctk.StringVar(value=f"{trade_v:.2f}" if trade_v else "")
+        self._cash_var.trace_add("write", self._update_total)
+        self._fee_var.trace_add("write",  self._update_total)
+        self._trade_v_var.trace_add("write", self._update_total)
+
+        self._acq_detail = None
+        self._build(card)
+
+    def _build(self, card):
+        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=20, pady=16)
+        scroll.grid_columnconfigure((0, 1), weight=1)
+        self._scroll = scroll
+        r = 0
+
+        def lbl(text, row, col=0, span=2):
+            ctk.CTkLabel(scroll, text=text, font=ctk.CTkFont(size=12), anchor="w"
+                         ).grid(row=row, column=col, columnspan=span,
+                                sticky="w", pady=(8, 0))
+
+        def entry(row, var=None, col=0, span=2, **kw):
+            e = ctk.CTkEntry(scroll, height=32, textvariable=var, **kw)
+            e.grid(row=row, column=col, columnspan=span, sticky="ew",
+                   padx=(0, 6) if (col == 0 and span == 1) else (6, 0) if col == 1 else 0,
+                   pady=(2, 0))
+            return e
+
+        # ── Card Identity ─────────────────────────────────────────────────────
+        lbl("Card Name *", r); r += 1
+        self._name_var = ctk.StringVar(value=card["card_name"] or "")
+        entry(r, var=self._name_var); r += 1
+
+        lbl("Card Number", r, 0, 1); lbl("Set Name", r, 1, 1); r += 1
+        self._number_var = ctk.StringVar(value=card["card_number"] or "")
+        self._set_var    = ctk.StringVar(value=card["set_name"] or "")
+        entry(r, var=self._number_var, col=0, span=1)
+        entry(r, var=self._set_var,    col=1, span=1); r += 1
+
+        lbl("Year", r); r += 1
+        self._year_var = ctk.StringVar(value=card.get("year", "") or "")
+        entry(r, var=self._year_var); r += 1
+
+        ctk.CTkFrame(scroll, height=1, fg_color="gray40").grid(
+            row=r, column=0, columnspan=2, sticky="ew", pady=10); r += 1
+
+        # ── Grading Info ──────────────────────────────────────────────────────
+        lbl("Grading Company *", r, 0, 1); lbl("Grade *", r, 1, 1); r += 1
+        self._company_var = ctk.StringVar(value=card["grading_company"] or "PSA")
+        ctk.CTkOptionMenu(scroll, values=db.GRADING_COMPANIES,
+                          variable=self._company_var, height=32
+                          ).grid(row=r, column=0, sticky="ew", padx=(0, 6))
+        self._grade_var = ctk.StringVar(value=card["grade"] or "")
+        entry(r, var=self._grade_var, col=1, span=1); r += 1
+
+        lbl("Serial Number", r); r += 1
+        self._serial_var = ctk.StringVar(value=card["serial_number"] or "")
+        entry(r, var=self._serial_var); r += 1
+
+        ctk.CTkFrame(scroll, height=1, fg_color="gray40").grid(
+            row=r, column=0, columnspan=2, sticky="ew", pady=10); r += 1
+
+        # ── Acquisition ───────────────────────────────────────────────────────
+        lbl("Purchase Date *", r); r += 1
+        self._acq_date = _make_date_entry(scroll, initial=card["acquisition_date"])
+        self._acq_date.grid(row=r, column=0, columnspan=2, sticky="w", pady=(2, 0)); r += 1
+
+        lbl("Purchase Type", r); r += 1
+        seg_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        seg_frame.grid(row=r, column=0, columnspan=2, sticky="w", pady=(4, 0)); r += 1
+        self._type_seg = ctk.CTkSegmentedButton(
+            seg_frame, values=["Cash", "Trade", "Cash & Trade"],
+            command=self._on_type_change, width=320, height=32
+        )
+        self._type_seg.set(card["acquisition_type"] or "Cash")
+        self._type_seg.pack(side="left")
+
+        # Dynamic cost fields (rebuilt on type change)
+        self._acq_detail = ctk.CTkFrame(scroll, fg_color="transparent")
+        self._acq_detail.grid(row=r, column=0, columnspan=2, sticky="ew"); r += 1
+        self._acq_detail.grid_columnconfigure((0, 1), weight=1)
+
+        # Grading fee — always visible
+        lbl("Grading Fee (USD)", r); r += 1
+        ctk.CTkEntry(scroll, height=32, textvariable=self._fee_var,
+                     placeholder_text="0.00"
+                     ).grid(row=r, column=0, columnspan=2, sticky="ew", pady=(2, 0)); r += 1
+
+        self._total_lbl = ctk.CTkLabel(scroll, text="Total Cost: —",
+                                       font=ctk.CTkFont(size=12), text_color="gray")
+        self._total_lbl.grid(row=r, column=0, columnspan=2, sticky="w", pady=(4, 0)); r += 1
+
+        ctk.CTkFrame(scroll, height=1, fg_color="gray40").grid(
+            row=r, column=0, columnspan=2, sticky="ew", pady=10); r += 1
+
+        # ── Market Value ──────────────────────────────────────────────────────
+        lbl("Market Value", r); r += 1
+        self._mkt_var = ctk.StringVar(
+            value=f"{card['market_value']:.2f}" if card["market_value"] is not None else ""
+        )
+        entry(r, var=self._mkt_var, placeholder_text="leave blank if unknown"); r += 1
+
+        # ── Notes ─────────────────────────────────────────────────────────────
+        lbl("Notes", r); r += 1
+        self._notes = ctk.CTkTextbox(scroll, height=70)
+        self._notes.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(2, 0)); r += 1
+        if card["notes"]:
+            self._notes.insert("1.0", card["notes"])
+
+        # Seed cost fields from current acquisition type
+        self._on_type_change(card["acquisition_type"] or "Cash")
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=(0, 16))
+        ctk.CTkButton(btn_frame, text="Cancel", width=110,
+                      fg_color="transparent", border_width=1,
+                      command=self.destroy).pack(side="left")
+        ctk.CTkButton(btn_frame, text="Save Changes", width=120,
+                      command=self._save).pack(side="right")
+
+    # ── type switching ─────────────────────────────────────────────────────────
+
+    def _on_type_change(self, acq_type: str | None = None):
+        if acq_type is None:
+            acq_type = self._type_seg.get()
+        for w in self._acq_detail.winfo_children():
+            w.destroy()
+        self._acq_detail.grid_columnconfigure((0, 1), weight=1)
+        r = 0
+
+        def sub_lbl(text, row, col=0, span=2):
+            ctk.CTkLabel(self._acq_detail, text=text,
+                         font=ctk.CTkFont(size=12), anchor="w"
+                         ).grid(row=row, column=col, columnspan=span,
+                                sticky="w", pady=(8, 0))
+
+        if acq_type in ("Cash", "Cash & Trade"):
+            label = "Purchase Price (USD) *" if acq_type == "Cash" else "Cash Paid (USD) *"
+            sub_lbl(label, r); r += 1
+            ctk.CTkEntry(self._acq_detail, height=32, textvariable=self._cash_var,
+                         placeholder_text="0.00"
+                         ).grid(row=r, column=0, columnspan=2, sticky="ew",
+                                pady=(2, 0)); r += 1
+
+        if acq_type in ("Trade", "Cash & Trade"):
+            sub_lbl("Trade Value (USD) *", r); r += 1
+            ctk.CTkEntry(self._acq_detail, height=32, textvariable=self._trade_v_var,
+                         placeholder_text="0.00"
+                         ).grid(row=r, column=0, columnspan=2, sticky="ew",
+                                pady=(2, 0)); r += 1
+            sub_lbl("Trade Details", r); r += 1
+            self._trade_details_box = ctk.CTkTextbox(self._acq_detail, height=60)
+            self._trade_details_box.grid(row=r, column=0, columnspan=2, sticky="ew",
+                                         pady=(2, 0)); r += 1
+            existing = self._card.get("trade_details", "") or ""
+            if existing and not self._trade_details_box.get("1.0", "end").strip():
+                self._trade_details_box.insert("1.0", existing)
+
+        self._update_total()
+
+    def _update_total(self, *_):
+        acq = self._type_seg.get() if hasattr(self, "_type_seg") else "Cash"
+        total = 0.0
+        if acq in ("Cash", "Cash & Trade"):
+            try:
+                total += float(self._cash_var.get() or 0)
+            except ValueError:
+                pass
+        if acq in ("Trade", "Cash & Trade"):
+            try:
+                total += float(self._trade_v_var.get() or 0)
+            except ValueError:
+                pass
+        try:
+            total += float(self._fee_var.get() or 0)
+        except ValueError:
+            pass
+        if hasattr(self, "_total_lbl"):
+            self._total_lbl.configure(
+                text=f"Total Cost: ${total:,.2f}" if total > 0 else "Total Cost: —"
+            )
+
+    # ── save ───────────────────────────────────────────────────────────────────
+
+    def _save(self):
+        name = self._name_var.get().strip()
+        if not name:
+            messagebox.showerror("Required", "Card name is required.", parent=self)
+            return
+
+        acq_type = self._type_seg.get()
+        cash_paid   = 0.0
+        trade_v     = 0.0
+        trade_details = ""
+
+        if acq_type in ("Cash", "Cash & Trade"):
+            try:
+                cash_paid = float(self._cash_var.get() or 0)
+            except ValueError:
+                messagebox.showerror("Invalid", "Purchase price must be a number.", parent=self)
+                return
+
+        if acq_type in ("Trade", "Cash & Trade"):
+            try:
+                trade_v = float(self._trade_v_var.get() or 0)
+            except ValueError:
+                messagebox.showerror("Invalid", "Trade value must be a number.", parent=self)
+                return
+            if hasattr(self, "_trade_details_box"):
+                trade_details = self._trade_details_box.get("1.0", "end").strip()
+
+        try:
+            fee = float(self._fee_var.get() or 0)
+        except ValueError:
+            fee = 0.0
+
+        acquisition_price = cash_paid + trade_v + fee
+
+        mkt_str = self._mkt_var.get().strip()
+        try:
+            mkt = float(mkt_str) if mkt_str else None
+        except ValueError:
+            mkt = None
+
+        acq_date = self._acq_date.get().strip()
+
+        updates = dict(
+            card_name         = name,
+            card_number       = self._number_var.get().strip(),
+            set_name          = self._set_var.get().strip(),
+            grading_company   = self._company_var.get(),
+            grade             = self._grade_var.get().strip(),
+            serial_number     = self._serial_var.get().strip(),
+            acquisition_type  = acq_type,
+            acquisition_price = acquisition_price,
+            grading_fee       = fee,
+            trade_value       = trade_v,
+            trade_details     = trade_details,
+            acquisition_date  = acq_date,
+            notes             = self._notes.get("1.0", "end").strip(),
+        )
+        if mkt is not None:
+            updates["market_value"]         = mkt
+            updates["market_value_updated"] = date.today().isoformat()
+
+        db.update_graded_card(self._card_id, **updates)
+
         if self._on_save:
             self._on_save()
         self.destroy()
