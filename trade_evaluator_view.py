@@ -33,7 +33,11 @@ class TradeItem:
     @property
     def value(self) -> float:
         if self.inventory_id is not None:
-            base = self.cost_basis if self.use_cost else (self.market_value or 0.0)
+            # Cost basis mode always shows what was paid — overrides don't apply
+            if self.use_cost:
+                return self.cost_basis
+            # Market value mode: apply any override
+            base = self.market_value or 0.0
             if self.override_mode == "percent":
                 return base * self.override_pct / 100
             if self.override_mode == "custom":
@@ -181,11 +185,14 @@ class TradeEvaluatorView(ctk.CTkFrame):
             info_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
             info_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
 
-            mode_text = {
-                "default": "Market Value" if not self._show_cost else "Cost Basis",
-                "percent": f"{item.override_pct:.0f}% override",
-                "custom":  "Custom value",
-            }.get(item.override_mode, "")
+            if self._show_cost:
+                mode_text = "Cost Basis"
+            else:
+                mode_text = {
+                    "default": "Market Value",
+                    "percent": f"{item.override_pct:.0f}% of market",
+                    "custom":  "Custom value",
+                }.get(item.override_mode, "")
             ctk.CTkLabel(info_frame, text=f"📁 Inventory  ·  {mode_text}",
                          font=ctk.CTkFont(size=10), text_color="gray"
                          ).pack(side="left")
@@ -450,9 +457,8 @@ class OverrideDialog(ctk.CTkToplevel):
                      font=ctk.CTkFont(size=16, weight="bold")
                      ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
-        base_label = "Cost Basis" if self._show_cost else "Market Value"
-        base_val   = self._item.cost_basis if self._show_cost else (self._item.market_value or 0)
-        ctk.CTkLabel(f, text=f"{base_label}: {_fmt_usd(base_val)}",
+        base_val = self._item.market_value or 0
+        ctk.CTkLabel(f, text=f"Market Value: {_fmt_usd(base_val)}",
                      font=ctk.CTkFont(size=12), text_color="gray"
                      ).grid(row=1, column=0, sticky="w", pady=(0, 12))
 
