@@ -39,3 +39,6 @@ build/
 # Local database / data directory (stored in ~/.cardvaultmac/)
 *.db
 *.sqlite
+
+# Alt.xyz pricing credentials (tokens expire ~5 min, never commit)
+pricing/alt_config.json

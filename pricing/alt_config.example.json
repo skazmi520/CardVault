@@ -1,0 +1,6 @@
+{
+  "_note": "Copy this file to alt_config.json (it is gitignored). Tokens expire in ~5 minutes — paste fresh values before each test run.",
+  "_how_to_get_tokens": "Open alt.xyz in Chrome, sign in, open DevTools → Network tab, trigger any card search, find a request to typesense or the graphql endpoint, and copy the x-typesense-api-key query param and the Authorization: Bearer <token> header value.",
+  "typesense_api_key": "PASTE_TYPESENSE_KEY_HERE",
+  "bearer_token": "PASTE_BEARER_JWT_HERE"
+}
