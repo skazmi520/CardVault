@@ -26,9 +26,56 @@ COMPANY_COLORS = {
     "TAG": "#5AC8FA",
 }
 
+BACKUP_DIR   = DATA_DIR / "backups"
+ICLOUD_DIR   = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/CardVault Backups"
+LOCAL_KEEP   = 7    # daily local snapshots to retain
+ICLOUD_KEEP  = 30   # daily iCloud snapshots to retain
+
 def _ensure_dirs():
     DATA_DIR.mkdir(exist_ok=True)
     PHOTO_DIR.mkdir(exist_ok=True)
+
+def _backup():
+    """
+    Run once per day on app launch.
+    Writes a clean SQLite backup (via the backup API, safe with WAL mode) to:
+      • ~/.cardvaultmac/backups/cardvault_YYYY-MM-DD.db  (local, keep 7)
+      • ~/iCloud Drive/CardVault Backups/cardvault_YYYY-MM-DD.db  (cloud, keep 30)
+    Errors are swallowed so a backup failure never blocks app startup.
+    """
+    if not DB_PATH.exists():
+        return
+
+    today     = date.today().isoformat()
+    destinations: list[tuple[Path, int]] = []
+
+    # Local backup
+    BACKUP_DIR.mkdir(exist_ok=True)
+    local_path = BACKUP_DIR / f"cardvault_{today}.db"
+    destinations.append((local_path, LOCAL_KEEP, BACKUP_DIR))
+
+    # iCloud backup (optional — skipped silently if iCloud isn't available)
+    icloud_path = ICLOUD_DIR / f"cardvault_{today}.db"
+    destinations.append((icloud_path, ICLOUD_KEEP, ICLOUD_DIR))
+
+    src = sqlite3.connect(DB_PATH)
+    try:
+        for dest_path, keep, dest_dir in destinations:
+            if dest_path.exists():
+                continue  # already backed up today
+            try:
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dst = sqlite3.connect(dest_path)
+                src.backup(dst)
+                dst.close()
+                # Prune old backups
+                old = sorted(dest_dir.glob("cardvault_????-??-??.db"))
+                for f in old[:-keep]:
+                    f.unlink(missing_ok=True)
+            except Exception:
+                pass  # don't let a failed destination block the other
+    finally:
+        src.close()
 
 def get_connection() -> sqlite3.Connection:
     _ensure_dirs()
@@ -100,6 +147,9 @@ def init_db():
     # ── migrations: add columns that may not exist in older DBs ──────────────
     _migrate(conn)
     conn.close()
+
+    # ── daily backup (local + iCloud) ─────────────────────────────────────────
+    _backup()
 
 def _migrate(conn: sqlite3.Connection):
     """Safely add new columns to existing databases."""
