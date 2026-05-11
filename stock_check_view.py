@@ -2,6 +2,7 @@
 
 import customtkinter as ctk
 import database as db
+import print_inventory
 
 COMPANY_COLORS = db.COMPANY_COLORS
 
@@ -46,12 +47,17 @@ class StockCheckView(ctk.CTkToplevel):
         )
         self._progress_label.grid(row=0, column=1, sticky="e", padx=(12, 8))
 
+        ctk.CTkButton(hdr, text="Print List", width=90, height=30,
+                      corner_radius=8,
+                      command=print_inventory.open_print_view).grid(
+            row=0, column=2, sticky="e", padx=(0, 8))
+
         ctk.CTkButton(hdr, text="Reset All", width=90, height=30,
                       corner_radius=8, fg_color="transparent",
                       border_width=1,
                       text_color=("gray20", "gray80"),
                       hover_color=("gray85", "gray25"),
-                      command=self._reset_all).grid(row=0, column=2, sticky="e")
+                      command=self._reset_all).grid(row=0, column=3, sticky="e")
 
         # Filter bar
         bar = ctk.CTkFrame(self, fg_color="transparent")
