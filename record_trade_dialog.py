@@ -374,10 +374,10 @@ class RecordTradeDialog(ctk.CTkToplevel):
 
         # 2. Add receiving cards to inventory
         for card in self._receiving:
-            acq_type = "Cash & Trade" if cash_paid > 0 else "Trade"
+            acq_type  = "Cash & Trade" if cash_paid > 0 else "Trade"
             acq_price = card.get("market_value", 0.0)
 
-            db.add_graded_card(
+            new_id = db.add_graded_card(
                 serial_number      = card.get("serial_number", ""),
                 grading_company    = card.get("grading_company", ""),
                 grade              = card.get("grade", ""),
@@ -395,12 +395,9 @@ class RecordTradeDialog(ctk.CTkToplevel):
             )
             # set market value immediately
             if acq_price > 0:
-                all_cards = db.get_graded_cards(sold=False)
-                # find the card we just added (most recent)
-                if all_cards:
-                    db.update_graded_card(all_cards[0]["id"],
-                                          market_value=acq_price,
-                                          market_value_updated=today)
+                db.update_graded_card(new_id,
+                                      market_value=acq_price,
+                                      market_value_updated=today)
 
         if self._on_complete:
             self._on_complete()

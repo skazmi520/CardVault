@@ -42,14 +42,29 @@ def _export_graded_sheet(output_dir: Path, company: str, cards: list) -> int:
             "Acquisition Date", "Market Value Updated", "Notes",
         ])
         for c in company_cards:
-            purchase    = (c["acquisition_price"] or 0) - (c["grading_fee"] or 0) - (c["trade_value"] or 0)
-            market      = c["market_value"] or 0
-            total_cost  = c["acquisition_price"] or 0
+            acq_type   = c["acquisition_type"] or "Cash"
+            acq_price  = c["acquisition_price"] or 0
+            fee        = c["grading_fee"] or 0
+            trade_val  = c["trade_value"] or 0
+            market     = c["market_value"] or 0
+            total_cost = acq_price
+
+            # Cash component depends on how the card was acquired:
+            #   Cash       → everything is cash (minus grading fee)
+            #   Trade      → no cash paid; cost basis = acquisition_price
+            #   Cash&Trade → cash = acq_price - grading_fee - trade_value
+            if acq_type == "Trade":
+                purchase = 0.0
+            elif acq_type == "Cash & Trade":
+                purchase = max(0.0, acq_price - fee - trade_val)
+            else:
+                purchase = max(0.0, acq_price - fee)
+
             profit_loss = market - total_cost if market else ""
             writer.writerow([
                 c["card_name"],
                 c["grade"],
-                _fmt_usd(max(purchase, 0)),
+                _fmt_usd(purchase) if purchase else "",
                 _fmt_usd(c["grading_fee"]),
                 _fmt_usd(market) if market else "",
                 _fmt_usd(profit_loss) if profit_loss != "" else "",
@@ -84,14 +99,22 @@ def _export_sold_sheet(output_dir: Path, sold_cards: list) -> int:
             "Acquisition Date", "Sale Date", "Notes",
         ])
         for c in sold_cards:
-            purchase    = (c["acquisition_price"] or 0) - (c["grading_fee"] or 0) - (c["trade_value"] or 0)
-            total_cost  = c["acquisition_price"] or 0
-            sale_price  = c["sale_price"] or 0
+            acq_type   = c["acquisition_type"] or "Cash"
+            acq_price  = c["acquisition_price"] or 0
+            fee        = c["grading_fee"] or 0
+            trade_val  = c["trade_value"] or 0
+            total_cost = acq_price
+            sale_price = c["sale_price"] or 0
             profit_loss = sale_price - total_cost
 
+            if acq_type == "Trade":
+                purchase = 0.0
+            elif acq_type == "Cash & Trade":
+                purchase = max(0.0, acq_price - fee - trade_val)
+            else:
+                purchase = max(0.0, acq_price - fee)
+
             # Split sale into cash vs trade components (best effort)
-            acq_type = c["acquisition_type"] or "Cash"
-            trade_val = c["trade_value"] or 0
             if acq_type == "Trade":
                 cash_val  = 0.0
             elif acq_type == "Cash & Trade":
@@ -103,7 +126,7 @@ def _export_sold_sheet(output_dir: Path, sold_cards: list) -> int:
             writer.writerow([
                 c["card_name"],
                 c["grade"],
-                _fmt_usd(max(purchase, 0)),
+                _fmt_usd(purchase) if purchase else "",
                 _fmt_usd(c["grading_fee"]),
                 _fmt_usd(total_cost),
                 _fmt_usd(trade_val),
