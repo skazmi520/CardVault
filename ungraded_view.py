@@ -700,7 +700,7 @@ class GradingReturnDialog(ctk.CTkToplevel):
             return e
 
         lbl("Grading Company *", r, 0, 1); lbl("Grade Received *", r, 1, 1); r += 1
-        self._company_var = ctk.StringVar(value=self._card.get("target_grading_company") or "PSA")
+        self._company_var = ctk.StringVar(value=self._card["target_grading_company"] or "PSA")
         ctk.CTkOptionMenu(f, values=db.GRADING_COMPANIES,
                           variable=self._company_var, height=32
                           ).grid(row=r, column=0, sticky="ew", padx=(0, 6))
