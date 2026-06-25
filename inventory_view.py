@@ -238,7 +238,7 @@ class InventoryView(ctk.CTkFrame):
 
     def _open_stock_check(self):
         from stock_check_view import StockCheckView
-        StockCheckView(self)
+        StockCheckView(self, on_close=self.refresh)
 
     def _open_record_trade(self):
         from record_trade_dialog import RecordTradeDialog

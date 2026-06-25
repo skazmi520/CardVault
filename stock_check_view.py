@@ -8,9 +8,11 @@ import print_inventory
 
 COMPANY_COLORS = db.COMPANY_COLORS
 
+SEARCH_DEBOUNCE_MS = 250   # wait this long after the last keystroke before filtering
+
 
 class StockCheckView(ctk.CTkToplevel):
-    def __init__(self, parent):
+    def __init__(self, parent, on_close=None):
         super().__init__(parent)
         self.title("Stock Check")
         self.geometry("860x660")
@@ -20,16 +22,22 @@ class StockCheckView(ctk.CTkToplevel):
         self.lift()
         self.after(50, self.focus_force)
 
+        self._on_close       = on_close
         self._filter_company = None
         self._search_text    = ""
+        self._search_after_id = None                       # pending debounce timer
         self._check_vars: dict[int, ctk.BooleanVar] = {}   # card_id → BooleanVar
         self._mv_vars:    dict[int, ctk.StringVar]  = {}   # card_id → StringVar (market value)
+        self._row_widgets: dict[int, ctk.CTkFrame]  = {}   # card_id → persistent row frame
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
 
         self._build()
         self._load_cards()
+
+        # Refresh the parent view (e.g. inventory) when this window closes so
+        # market-value edits made here show up immediately.
+        self.protocol("WM_DELETE_WINDOW", self._handle_close)
 
     # ── layout ────────────────────────────────────────────────────────────────
 
@@ -83,7 +91,7 @@ class StockCheckView(ctk.CTkToplevel):
         bar.grid(row=2, column=0, sticky="ew", padx=20, pady=(6, 0))
 
         self._search_var = ctk.StringVar()
-        self._search_var.trace_add("write", lambda *_: self._apply_filter())
+        self._search_var.trace_add("write", lambda *_: self._schedule_filter())
         ctk.CTkEntry(bar, textvariable=self._search_var,
                      placeholder_text="Search by name, set or card number…",
                      width=260, height=32).pack(side="left")
@@ -121,52 +129,34 @@ class StockCheckView(ctk.CTkToplevel):
                 self._mv_vars[cid] = ctk.StringVar(
                     value=f"{mv:.2f}" if mv is not None else ""
                 )
+        self._build_all_rows()
         self._apply_filter()
 
-    def _apply_filter(self):
-        search = self._search_var.get().strip().lower()
-        self._search_text = search
+    def _build_all_rows(self):
+        """Create one persistent row widget per card (once). Filtering only
+        re-grids these rows rather than destroying and rebuilding them, which
+        keeps search responsive even with a large inventory."""
+        for w in self._scroll.winfo_children():
+            w.destroy()
+        self._row_widgets = {}
 
-        filtered = []
         for card in self._all_cards:
-            if self._filter_company and card["grading_company"] != self._filter_company:
-                continue
-            if search:
-                name = (card["card_name"] or "").lower()
-                num  = (card["card_number"] or "").lower()
-                sset = (card["set_name"] or "").lower()
-                if search not in name and search not in num and search not in sset:
-                    continue
-            filtered.append(card)
-
-        filtered.sort(key=lambda c: (c["grading_company"] or "", (c["card_name"] or "").lower()))
-        self._render_rows(filtered)
-
-    def _render_rows(self, cards):
-        for widget in self._scroll.winfo_children():
-            widget.destroy()
-
-        for i, card in enumerate(cards):
-            cid    = card["id"]
+            cid = card["id"]
             var    = self._check_vars[cid]
             mv_var = self._mv_vars[cid]
 
-            row_bg = ("gray88", "gray20") if i % 2 == 0 else ("gray82", "gray17")
-
-            row = ctk.CTkFrame(self._scroll, corner_radius=6, fg_color=row_bg)
-            row.grid(row=i, column=0, sticky="ew", pady=2)
+            row = ctk.CTkFrame(self._scroll, corner_radius=6)
             row.grid_columnconfigure(2, weight=1)
             row.grid_rowconfigure(0, weight=1)
             row.grid_rowconfigure(1, weight=1)
 
             # ── Checkbox (spans both text rows) ───────────────────────────────
-            cb = ctk.CTkCheckBox(
+            ctk.CTkCheckBox(
                 row, text="", variable=var,
                 width=28, height=28,
                 checkbox_width=20, checkbox_height=20,
                 command=self._update_progress,
-            )
-            cb.grid(row=0, column=0, rowspan=2, padx=(10, 6), pady=8)
+            ).grid(row=0, column=0, rowspan=2, padx=(10, 6), pady=8)
 
             # ── Grade badge (spans both rows) ─────────────────────────────────
             company    = card["grading_company"] or ""
@@ -190,9 +180,8 @@ class StockCheckView(ctk.CTkToplevel):
             ).grid(row=0, column=2, sticky="ew", padx=(0, 8), pady=(7, 1))
 
             # ── Set name ──────────────────────────────────────────────────────
-            set_name = card["set_name"] or ""
             ctk.CTkLabel(
-                row, text=set_name,
+                row, text=card["set_name"] or "",
                 font=ctk.CTkFont(size=10),
                 text_color="gray",
                 anchor="w",
@@ -221,6 +210,50 @@ class StockCheckView(ctk.CTkToplevel):
             # Row background click toggles the checkbox
             row.bind("<Button-1>", lambda e, v=var: self._toggle(v))
 
+            self._row_widgets[cid] = row
+
+    def _schedule_filter(self):
+        """Debounce: only filter once the user pauses typing."""
+        if self._search_after_id is not None:
+            try:
+                self.after_cancel(self._search_after_id)
+            except Exception:
+                pass
+        self._search_after_id = self.after(SEARCH_DEBOUNCE_MS, self._apply_filter)
+
+    def _apply_filter(self):
+        self._search_after_id = None
+        search = self._search_var.get().strip().lower()
+        self._search_text = search
+
+        filtered = []
+        for card in self._all_cards:
+            if self._filter_company and card["grading_company"] != self._filter_company:
+                continue
+            if search:
+                name = (card["card_name"] or "").lower()
+                num  = (card["card_number"] or "").lower()
+                sset = (card["set_name"] or "").lower()
+                if search not in name and search not in num and search not in sset:
+                    continue
+            filtered.append(card)
+
+        filtered.sort(key=lambda c: (c["grading_company"] or "", (c["card_name"] or "").lower()))
+        self._show_rows(filtered)
+
+    def _show_rows(self, cards):
+        """Re-grid the pre-built rows for the filtered set (no destroy/create)."""
+        for row in self._row_widgets.values():
+            row.grid_remove()
+
+        for i, card in enumerate(cards):
+            row = self._row_widgets.get(card["id"])
+            if row is None:
+                continue
+            row_bg = ("gray88", "gray20") if i % 2 == 0 else ("gray82", "gray17")
+            row.configure(fg_color=row_bg)
+            row.grid(row=i, column=0, sticky="ew", pady=2)
+
         self._update_progress()
 
     # ── market value save ─────────────────────────────────────────────────────
@@ -234,6 +267,7 @@ class StockCheckView(ctk.CTkToplevel):
             db.update_graded_card(card_id,
                                   market_value=None,
                                   market_value_updated=None)
+            self._sync_cached_card(card_id)
             return
         try:
             val = float(raw)
@@ -244,14 +278,7 @@ class StockCheckView(ctk.CTkToplevel):
             )
             # Normalise display to 2dp
             var.set(f"{val:.2f}")
-            # Refresh the cached card row so print/export pick up the new value
-            for c in self._all_cards:
-                if c["id"] == card_id:
-                    # sqlite3.Row is read-only; replace the entry with the updated row
-                    updated = db.get_graded_card(card_id)
-                    idx = self._all_cards.index(c)
-                    self._all_cards[idx] = updated
-                    break
+            self._sync_cached_card(card_id)
         except ValueError:
             # Restore previous value from in-memory card list
             for c in self._all_cards:
@@ -259,6 +286,13 @@ class StockCheckView(ctk.CTkToplevel):
                     mv = c["market_value"]
                     var.set(f"{mv:.2f}" if mv is not None else "")
                     break
+
+    def _sync_cached_card(self, card_id: int):
+        """Replace the cached row so print/export pick up the new value."""
+        for idx, c in enumerate(self._all_cards):
+            if c["id"] == card_id:
+                self._all_cards[idx] = db.get_graded_card(card_id)
+                break
 
     # ── interactions ──────────────────────────────────────────────────────────
 
@@ -290,3 +324,18 @@ class StockCheckView(ctk.CTkToplevel):
                 border_width=(0 if active else 1),
                 border_color=("gray70", "gray40"),
             )
+
+    # ── close ───────────────────────────────────────────────────────────────────
+
+    def _handle_close(self):
+        if self._search_after_id is not None:
+            try:
+                self.after_cancel(self._search_after_id)
+            except Exception:
+                pass
+        if self._on_close:
+            try:
+                self._on_close()
+            except Exception:
+                pass
+        self.destroy()
