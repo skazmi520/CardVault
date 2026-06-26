@@ -265,6 +265,7 @@ class InventoryView(ctk.CTkFrame):
                 or search in c["set_name"].lower()
             ]
 
+        filtered = self._sort_cards(filtered)
         self._populate_tree(filtered)
 
     def _populate_tree(self, cards):
@@ -303,17 +304,20 @@ class InventoryView(ctk.CTkFrame):
             else:
                 btn.configure(fg_color="transparent", text_color=("gray10", "gray90"))
 
+    # Maps DB columns <-> sort-dropdown labels.
+    _SORT_LABELS = {
+        "acquisition_date":  "Date Obtained",
+        "card_name":         "Card Name",
+        "acquisition_price": "Cost",
+        "market_value":      "Market Value",
+        "grade":             "Grade",
+    }
+
     def _on_sort_change(self, choice: str):
-        mapping = {
-            "Date Obtained": "acquisition_date",
-            "Card Name":     "card_name",
-            "Cost":          "acquisition_price",
-            "Market Value":  "market_value",
-            "Grade":         "grade",
-        }
-        col = mapping.get(choice, "acquisition_date")
+        col = {v: k for k, v in self._SORT_LABELS.items()}.get(choice, "acquisition_date")
         self._sort_col = col
-        self._sort_rev = True
+        # Text sorts ascending by default; numbers/dates descending.
+        self._sort_rev = col != "card_name"
         self._apply_filter()
 
     def _sort_by(self, col: str):
@@ -322,23 +326,30 @@ class InventoryView(ctk.CTkFrame):
         else:
             self._sort_col = col
             self._sort_rev = False
+        # Keep the dropdown label in sync when sorting via a column header.
+        if col in self._SORT_LABELS and hasattr(self, "_sort_var"):
+            self._sort_var.set(self._SORT_LABELS[col])
+        self._apply_filter()
+
+    def _sort_cards(self, cards):
+        """Return a sorted copy of cards using the current sort column/direction."""
+        col = self._sort_col
 
         def key(c):
-            v = c[col] if col in c.keys() else ""
-            if v is None:
-                return (0, 0)
+            v = c[col] if col in c.keys() else None
+            if v is None or v == "":
+                return (0, 0.0, "")
             if isinstance(v, (int, float)):
-                return (1, v)
-            # Grade column: parse numerically so "10" > "9" > "8" etc.
+                return (1, float(v), "")
+            # Grade column: parse numerically so 10 > 9 > 8.5 etc.
             if col == "grade":
                 try:
-                    return (1, float(v))
+                    return (1, float(v), "")
                 except (ValueError, TypeError):
-                    return (1, 0)
-            return (1, str(v).lower())
+                    return (1, 0.0, str(v).lower())
+            return (1, 0.0, str(v).lower())
 
-        self._cards.sort(key=key, reverse=self._sort_rev)
-        self._apply_filter()
+        return sorted(cards, key=key, reverse=self._sort_rev)
 
     # ── interactions ──────────────────────────────────────────────────────────
 
@@ -701,7 +712,11 @@ class AddGradedCardDialog(ctk.CTkToplevel):
                 messagebox.showwarning("Photo", f"Could not save photo: {e}", parent=self)
 
         mkt_str = self._mkt.get().strip()
-        mkt_f   = float(mkt_str) if mkt_str else None
+        try:
+            mkt_f = float(mkt_str) if mkt_str else None
+        except ValueError:
+            messagebox.showerror("Invalid", "Market value must be a number.", parent=self)
+            return
 
         card_id = db.add_graded_card(
             serial_number=self._serial.get().strip(),
@@ -1303,7 +1318,9 @@ class InventoryPickerDialog(ctk.CTkToplevel):
         self.title("Select Card")
         self.geometry("620x420")
         self.resizable(False, True)
-        self.grab_set()
+        self.transient(parent.winfo_toplevel())
+        self.lift()
+        self.after(50, self.focus_force)
         self._on_select   = on_select
         self._cards_data: dict = {}
         self._build()

@@ -362,7 +362,9 @@ class InventoryPickerDialog(ctk.CTkToplevel):
         super().__init__(parent)
         self.title("Select Card from Inventory")
         self.geometry("520x460")
-        self.grab_set()
+        self.transient(parent.winfo_toplevel())
+        self.lift()
+        self.after(50, self.focus_force)
         self._side      = side
         self._on_select = on_select
         self._cards     = db.get_graded_cards(sold=False)
@@ -442,7 +444,9 @@ class OverrideDialog(ctk.CTkToplevel):
         self.title("Adjust Card Value")
         self.geometry("360x320")
         self.resizable(False, False)
-        self.grab_set()
+        self.transient(parent.winfo_toplevel())
+        self.lift()
+        self.after(50, self.focus_force)
         self._item      = item
         self._show_cost = show_cost
         self._on_apply  = on_apply
