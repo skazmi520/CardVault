@@ -355,28 +355,53 @@ class RecordTradeDialog(ctk.CTkToplevel):
         cash_paid     = _parse_float(self._cash_paid_var.get())
         cash_received = _parse_float(self._cash_received_var.get())
 
-        # Build trade detail string (what was given up)
+        give_vals        = [_parse_float(c["val_var"].get()) for c in self._giving]
+        total_give_cards = sum(give_vals)
+        total_recv_cards = sum((c.get("market_value", 0.0) or 0.0) for c in self._receiving)
+
+        # Guard: the cards given up are booked as "sold" for the value received.
+        # If nothing of value is received, that would record them at $0 — almost
+        # always a mistake (e.g. the received cards' market value wasn't entered).
+        if total_recv_cards <= 0 and cash_received <= 0:
+            messagebox.showwarning(
+                "Missing values",
+                "Enter the market value of the cards you're receiving (and/or any "
+                "cash received). Otherwise the cards you give up would be recorded "
+                "as sold for $0.",
+                parent=self)
+            return
+
+        # Proceeds realized on the giving side = value actually received, net of any
+        # cash you added to the deal. This is what the cards you gave up sold for —
+        # NOT the value typed against each one (trades can be unequal, with cash on
+        # either side).
+        net_proceeds = max(0.0, total_recv_cards + cash_received - cash_paid)
+
+        # Trade narrative (what was given up; note any cash received on the other side)
         give_parts = [
-            f"{c['card_name']} ({c['grading_company']} {c['grade']}): "
-            f"{_fmt(_parse_float(c['val_var'].get()))}"
-            for c in self._giving
+            f"{c['card_name']} ({c['grading_company']} {c['grade']}): {_fmt(v)}"
+            for c, v in zip(self._giving, give_vals)
         ]
         if cash_paid > 0:
             give_parts.append(f"Cash: {_fmt(cash_paid)}")
         trade_details = " | ".join(give_parts)
+        if cash_received > 0:
+            trade_details += f"  (+ {_fmt(cash_received)} cash received)"
 
-        total_give_cards = sum(_parse_float(c["val_var"].get()) for c in self._giving)
+        # 1. Mark giving cards sold, splitting the proceeds across them in proportion
+        #    to each card's stated value (split evenly if no values were entered).
+        n_give = len(self._giving)
+        for c, v in zip(self._giving, give_vals):
+            if total_give_cards > 0:
+                share = net_proceeds * (v / total_give_cards)
+            else:
+                share = net_proceeds / n_give
+            db.mark_graded_sold(c["id"], round(share, 2), today)
 
-        # 1. Mark giving cards as sold
-        for card in self._giving:
-            sale_price = _parse_float(card["val_var"].get())
-            db.mark_graded_sold(card["id"], sale_price, today)
-
-        # 2. Add receiving cards to inventory
+        # 2. Add receiving cards to inventory at their market value (cost basis).
+        acq_type = "Cash & Trade" if cash_paid > 0 else "Trade"
         for card in self._receiving:
-            acq_type  = "Cash & Trade" if cash_paid > 0 else "Trade"
-            acq_price = card.get("market_value", 0.0)
-
+            acq_price = card.get("market_value", 0.0) or 0.0
             new_id = db.add_graded_card(
                 serial_number      = card.get("serial_number", ""),
                 grading_company    = card.get("grading_company", ""),
@@ -388,12 +413,11 @@ class RecordTradeDialog(ctk.CTkToplevel):
                 acquisition_type   = acq_type,
                 acquisition_price  = acq_price,
                 grading_fee        = 0.0,
-                trade_value        = total_give_cards,
+                trade_value        = acq_price,
                 trade_details      = trade_details,
                 acquisition_date   = today,
                 notes              = f"Received in trade on {today}",
             )
-            # set market value immediately
             if acq_price > 0:
                 db.update_graded_card(new_id,
                                       market_value=acq_price,
