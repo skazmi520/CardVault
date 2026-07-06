@@ -49,6 +49,7 @@ def dashboard():
     c = conn()
     v2cards.record_snapshot(c)
     stats = v2cards.dashboard_stats(c)
+    extras = v2cards.dashboard_extras(c)
     snaps = v2cards.snapshots(c)
     recent = []
     for d in list_deals(c)[:8]:
@@ -61,7 +62,8 @@ def dashboard():
         })
     c.close()
     return render_template("dashboard.html", active="dashboard",
-                           stats=stats, snaps_json=json.dumps(snaps), recent=recent)
+                           stats=stats, extras=extras,
+                           snaps_json=json.dumps(snaps), recent=recent)
 
 
 @app.get("/collection")
@@ -159,6 +161,54 @@ def api_reprice():
                              if mv is not None else None)})
 
 
+_EDITABLE = {
+    "graded_cards": {"card_name", "set_name", "card_number", "year",
+                     "grading_company", "grade", "serial_number", "notes",
+                     "acquisition_price", "acquisition_date"},
+    "ungraded_cards": {"card_name", "set_name", "card_number", "year", "notes",
+                       "purchase_price", "purchase_date", "target_grading_company"},
+}
+
+
+@app.post("/api/card/update")
+def api_card_update():
+    p = request.get_json(force=True)
+    table = p.get("table")
+    if table not in _EDITABLE:
+        return jsonify({"ok": False, "error": "bad table"}), 400
+    fields = {k: v for k, v in (p.get("fields") or {}).items() if k in _EDITABLE[table]}
+    if not fields:
+        return jsonify({"ok": False, "error": "no editable fields supplied"}), 400
+    for money_col in ("acquisition_price", "purchase_price"):
+        if money_col in fields:
+            try:
+                fields[money_col] = float(str(fields[money_col]).replace("$", "").replace(",", "") or 0)
+            except ValueError:
+                return jsonify({"ok": False, "error": f"{money_col} must be a number"}), 400
+    c = conn()
+    sets = ", ".join(f"{k}=?" for k in fields)
+    c.execute(f"UPDATE {table} SET {sets} WHERE id=?", [*fields.values(), int(p["id"])])
+    c.commit()
+    row = c.execute(f"SELECT * FROM {table} WHERE id=?", (int(p["id"]),)).fetchone()
+    c.close()
+    if row is None:
+        return jsonify({"ok": False, "error": "card not found"}), 404
+    basis = (row["acquisition_price"] if table == "graded_cards" else row["purchase_price"]) or 0
+    mv = row["market_value"] if table == "graded_cards" else None
+    return jsonify({"ok": True, "card": {
+        "name": row["card_name"], "set": row["set_name"] or "",
+        "number": row["card_number"] or "", "year": row["year"] or "",
+        "company": row["grading_company"] if table == "graded_cards" else "",
+        "grade": row["grade"] if table == "graded_cards" else "",
+        "cert": row["serial_number"] if table == "graded_cards" else "",
+        "acq_cost": basis, "basis": basis,
+        "gain": (round(mv - basis, 2) if mv is not None else None),
+        "acq_date": (row["acquisition_date"] if table == "graded_cards"
+                     else row["purchase_date"]) or "",
+        "notes": row["notes"] or "",
+    }})
+
+
 @app.post("/api/deals")
 def api_save_deal():
     p = request.get_json(force=True)
@@ -236,6 +286,8 @@ def api_grading_status():
 
 def main():
     v2db.get_connection().close()   # startup guard: refuse to boot against v1
+    from . import config
+    config.ensure_env_file()        # create ~/.cardvaultmac/v2.env template
     print("CardVault v2 — http://127.0.0.1:5177  (Ctrl+C to stop)")
     app.run(host="127.0.0.1", port=5177, debug=False)
 

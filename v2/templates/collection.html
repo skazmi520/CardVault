@@ -24,7 +24,7 @@
     <option value="">Active</option>
     <option value="submitted_for_grading">At grading</option>
   </select>
-  <span class="muted" style="font-size:12px">↑↓ move · Enter edit price · Esc cancel</span>
+  <span class="muted" style="font-size:12px">↑↓ move · Enter edit price · E edit card · Esc cancel</span>
 </div>
 
 <div class="table-wrap">
@@ -39,9 +39,43 @@
       <th data-k="market_value" class="num">Market Value</th>
       <th data-k="gain" class="num">Gain</th>
       <th data-k="repriced">Repriced</th>
+      <th></th>
     </tr></thead>
     <tbody id="tbody"></tbody>
   </table>
+</div>
+
+<!-- card edit modal -->
+<div class="modal-backdrop" id="edit-backdrop" hidden>
+  <div class="modal">
+    <h2 id="edit-title">Edit Card</h2>
+    <div class="row">
+      <div style="flex:2;min-width:200px"><label>Card name</label><input type="text" id="e-name" style="width:100%"></div>
+      <div><label>Card #</label><input type="text" id="e-number" style="width:90px"></div>
+    </div>
+    <div class="row">
+      <div style="flex:1"><label>Set</label><input type="text" id="e-set" style="width:100%"></div>
+      <div><label>Year</label><input type="text" id="e-year" style="width:80px"></div>
+    </div>
+    <div class="row" id="e-slab-row">
+      <div><label>Company</label>
+        <select id="e-company"><option>PSA</option><option>BGS</option><option>CGC</option><option>TAG</option></select></div>
+      <div><label>Grade</label><input type="text" id="e-grade" style="width:80px"></div>
+      <div style="flex:1"><label>Cert / serial #</label><input type="text" id="e-cert" style="width:100%"></div>
+    </div>
+    <div class="row">
+      <div><label>Cost basis ($)</label><input type="text" id="e-basis" style="width:120px"></div>
+      <div><label>Acquired</label><input type="date" id="e-date"></div>
+    </div>
+    <div class="row">
+      <div style="flex:1"><label>Notes</label><input type="text" id="e-notes" style="width:100%"></div>
+    </div>
+    <div class="actions">
+      <span id="e-msg" class="neg" style="align-self:center;font-size:12px"></span>
+      <button class="btn ghost" id="e-cancel">Cancel</button>
+      <button class="btn" id="e-save">Save</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -95,6 +129,7 @@ function render() {
       <td class="num mv-cell" data-i="${i}">${r.kind === "slab" ? fmt(r.market_value) : '<span class="muted">—</span>'}</td>
       <td class="num ${gainClass(r.gain)}">${fmtGain(r.gain)}</td>
       <td class="${staleClass(r)}">${r.repriced ? r.repriced.slice(0, 10) : "never"}</td>
+      <td><button class="rowedit" data-edit="${i}" title="Edit card (E)">✎</button></td>
     </tr>`).join("");
   $("count-sub").textContent = view.length + " cards";
 }
@@ -129,19 +164,84 @@ function beginEdit(i) {
   inp.addEventListener("blur", () => { if (tbody.contains(inp)) commit(false); });
 }
 
+/* ── card edit modal ── */
+let editIdx = -1;
+const E = id => document.getElementById(id);
+
+function openCardEdit(i) {
+  const r = view[i];
+  if (!r) return;
+  editIdx = i;
+  E("edit-title").textContent = "Edit — " + r.name;
+  E("e-name").value = r.name; E("e-number").value = r.number;
+  E("e-set").value = r.set;   E("e-year").value = r.year || "";
+  E("e-slab-row").style.display = r.kind === "slab" ? "" : "none";
+  if (r.kind === "slab") {
+    E("e-company").value = r.company || "PSA";
+    E("e-grade").value = r.grade; E("e-cert").value = r.cert;
+  }
+  E("e-basis").value = r.basis ?? "";
+  E("e-date").value = (r.acq_date || "").slice(0, 10);
+  E("e-notes").value = r.notes || "";
+  E("e-msg").textContent = "";
+  E("edit-backdrop").hidden = false;
+  E("e-name").focus();
+}
+
+function closeCardEdit() { E("edit-backdrop").hidden = true; editIdx = -1; }
+E("e-cancel").addEventListener("click", closeCardEdit);
+E("edit-backdrop").addEventListener("click", e => {
+  if (e.target === E("edit-backdrop")) closeCardEdit();
+});
+
+E("e-save").addEventListener("click", async () => {
+  const r = view[editIdx];
+  if (!r) return;
+  const fields = {
+    card_name: E("e-name").value.trim(),
+    set_name: E("e-set").value.trim(),
+    card_number: E("e-number").value.trim(),
+    year: E("e-year").value.trim(),
+    notes: E("e-notes").value.trim(),
+  };
+  if (r.kind === "slab") {
+    fields.grading_company = E("e-company").value;
+    fields.grade = E("e-grade").value.trim();
+    fields.serial_number = E("e-cert").value.trim();
+    fields.acquisition_price = E("e-basis").value;
+    fields.acquisition_date = E("e-date").value;
+  } else {
+    fields.purchase_price = E("e-basis").value;
+    fields.purchase_date = E("e-date").value;
+  }
+  if (!fields.card_name) { E("e-msg").textContent = "Name is required."; return; }
+  try {
+    const res = await postJSON("/api/card/update", { table: r.table, id: r.id, fields });
+    Object.assign(r, res.card);   // refresh row data in place
+    closeCardEdit(); render();
+  } catch (err) { E("e-msg").textContent = err.message; }
+});
+
 /* interactions */
 document.querySelectorAll("thead th").forEach(th => th.addEventListener("click", () => {
   const k = th.dataset.k;
+  if (!k) return;
   if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = 1; }
   applyFilters();
 }));
 tbody.addEventListener("click", e => {
+  const editBtn = e.target.closest("[data-edit]");
+  if (editBtn) { focusIdx = +editBtn.dataset.edit; render(); openCardEdit(+editBtn.dataset.edit); return; }
   const cell = e.target.closest("td.mv-cell");
   const row = e.target.closest("tr");
   if (row) { focusIdx = +row.dataset.i; render(); }
   if (cell) beginEdit(+cell.dataset.i);
 });
 document.addEventListener("keydown", e => {
+  if (!E("edit-backdrop").hidden) {
+    if (e.key === "Escape") closeCardEdit();
+    return;
+  }
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") {
     if (e.key === "/" ) e.stopPropagation();
     return;
@@ -150,6 +250,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "ArrowDown") { e.preventDefault(); focusIdx = Math.min(focusIdx + 1, view.length - 1); render(); scrollFocus(); }
   else if (e.key === "ArrowUp") { e.preventDefault(); focusIdx = Math.max(focusIdx - 1, 0); render(); scrollFocus(); }
   else if (e.key === "Enter" && focusIdx >= 0) { e.preventDefault(); beginEdit(focusIdx); }
+  else if ((e.key === "e" || e.key === "E") && focusIdx >= 0) { e.preventDefault(); openCardEdit(focusIdx); }
 });
 function scrollFocus() {
   const row = tbody.querySelector("tr.focused");

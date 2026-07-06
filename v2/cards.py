@@ -25,6 +25,7 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
             "gain": (round(mv - basis, 2) if mv is not None else None),
             "repriced": r["market_value_updated"] or "",
             "status": r["status"], "acq_date": r["acquisition_date"] or "",
+            "notes": r["notes"] or "",
         })
     u_where = ("WHERE status IN ('active','submitted_for_grading')"
                if not include_disposed else "WHERE status != 'promoted'")
@@ -39,6 +40,7 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
             "market_value": None, "gain": None, "repriced": "",
             "status": r["status"],
             "acq_date": r["purchase_date"] or "",
+            "notes": r["notes"] or "",
             "grading_status": r["grading_status"],
             "target_company": r["target_grading_company"] or "",
         })
@@ -139,6 +141,59 @@ def dashboard_stats(conn) -> dict:
         "realized_ytd": round(realized_ytd, 2),
         "realized_all": round(realized_all, 2),
     }
+
+
+def dashboard_extras(conn) -> dict:
+    """Company breakdown, top holdings, attention counts, snapshot delta."""
+    comp = []
+    total_mkt = 0.0
+    for co in v2db.GRADING_COMPANIES:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(market_value, acquisition_price)),0) AS mkt "
+            "FROM graded_cards WHERE status='active' AND grading_company=?", (co,)).fetchone()
+        if row["n"]:
+            comp.append({"company": co, "count": row["n"], "market": round(row["mkt"], 2)})
+            total_mkt += row["mkt"]
+    for c in comp:
+        c["share"] = round(c["market"] / total_mkt * 100, 1) if total_mkt else 0
+    comp.sort(key=lambda c: -c["market"])
+
+    top = []
+    for r in conn.execute(
+            "SELECT * FROM graded_cards WHERE status='active' AND market_value IS NOT NULL "
+            "ORDER BY market_value DESC LIMIT 5"):
+        basis = r["acquisition_price"] or 0
+        top.append({"name": r["card_name"], "company": r["grading_company"],
+                    "grade": r["grade"], "set": r["set_name"] or "",
+                    "market": r["market_value"],
+                    "gain": round(r["market_value"] - basis, 2)})
+
+    cutoff = (datetime.now().date().toordinal() - 30)
+    stale = 0
+    for r in conn.execute("SELECT market_value_updated FROM graded_cards WHERE status='active'"):
+        ts = r["market_value_updated"]
+        if not ts:
+            stale += 1
+            continue
+        try:
+            if date.fromisoformat(ts[:10]).toordinal() < cutoff:
+                stale += 1
+        except ValueError:
+            stale += 1
+    at_grading = conn.execute(
+        "SELECT COUNT(*) FROM ungraded_cards WHERE status='submitted_for_grading'").fetchone()[0]
+    never_priced = conn.execute(
+        "SELECT COUNT(*) FROM graded_cards WHERE status='active' AND market_value IS NULL").fetchone()[0]
+
+    snaps = conn.execute(
+        "SELECT * FROM portfolio_snapshots ORDER BY snapshot_date DESC LIMIT 2").fetchall()
+    delta = None
+    if len(snaps) == 2:
+        delta = {"amount": round(snaps[0]["total_value"] - snaps[1]["total_value"], 2),
+                 "since": snaps[1]["snapshot_date"]}
+
+    return {"companies": comp, "top": top, "stale": stale,
+            "at_grading": at_grading, "never_priced": never_priced, "delta": delta}
 
 
 def record_snapshot(conn):
