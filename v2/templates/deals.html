@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Deals{% endblock %}
+{% block content %}
+<div class="page-title" style="display:flex;align-items:center;justify-content:space-between">
+  <span>Deals</span>
+  <a class="btn" href="/deals/new">+ New Deal</a>
+</div>
+
+<div class="panel">
+  <h2>Show Day — {{ today }}</h2>
+  <div class="tiles" style="margin-bottom:0">
+    <div class="tile"><div class="v">{{ today_rows|length }}</div><div class="l">Deals Today</div></div>
+    <div class="tile"><div class="v pos">{{ cash_in|money }}</div><div class="l">Cash In</div></div>
+    <div class="tile"><div class="v neg">{{ cash_out|money }}</div><div class="l">Cash Out</div></div>
+    <div class="tile"><div class="v {{ 'pos' if (cash_in - cash_out) >= 0 else 'neg' }}">{{ (cash_in - cash_out)|gain }}</div><div class="l">Net Cash</div></div>
+    <div class="tile"><div class="v {{ 'pos' if day_gain >= 0 else 'neg' }}">{{ day_gain|gain }}</div><div class="l">Realized Gain Today</div></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>All Deals</h2>
+  {% if deals %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Date</th><th>Counterparty</th><th>Location</th><th>Method</th>
+        <th class="num">Out</th><th class="num">In</th><th class="num">Cash</th>
+        <th class="num">Realized Gain</th><th></th>
+      </tr></thead>
+      <tbody>
+        {% for d in deals %}
+        <tr>
+          <td>{{ d.occurred_at[:16].replace('T', ' ') }}</td>
+          <td>{{ d.counterparty or '—' }}</td>
+          <td class="muted">{{ d.location or '—' }}</td>
+          <td class="muted">{{ d.method }}</td>
+          <td class="num">{{ d.n_out }}</td>
+          <td class="num">{{ d.n_in }}</td>
+          <td class="num {{ 'pos' if d.cash > 0 else 'neg' if d.cash < 0 else 'muted' }}">{{ d.cash|gain if d.cash else "—" }}</td>
+          <td class="num {{ 'pos' if d.gain >= 0 else 'neg' }}">{{ d.gain|gain }}</td>
+          <td><a href="/deals/{{ d.id }}">view</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="muted">No deals yet.</div>
+  {% endif %}
+</div>
+{% endblock %}

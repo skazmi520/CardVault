@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-title">Dashboard</div>
+
+<div class="tiles">
+  <div class="tile"><div class="v">{{ stats.market|money }}</div><div class="l">Total Market Value</div></div>
+  <div class="tile"><div class="v">{{ stats.basis|money }}</div><div class="l">Total Cost Basis</div></div>
+  <div class="tile"><div class="v {{ 'pos' if stats.unrealized >= 0 else 'neg' }}">{{ stats.unrealized|gain }}</div><div class="l">Unrealized Gain</div></div>
+  <div class="tile"><div class="v {{ 'pos' if stats.realized_ytd >= 0 else 'neg' }}">{{ stats.realized_ytd|gain }}</div><div class="l">Realized Gain YTD</div></div>
+  <div class="tile"><div class="v">{{ stats.slabs }} <span class="muted" style="font-size:13px">slabs</span> · {{ stats.raw }} <span class="muted" style="font-size:13px">raw</span></div><div class="l">Active Cards</div></div>
+</div>
+
+<div class="panel">
+  <h2>Portfolio Value Over Time</h2>
+  <div class="chart" id="chart"></div>
+</div>
+
+<div class="panel">
+  <h2>Recent Deals</h2>
+  {% if recent %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Date</th><th>Counterparty</th><th class="num">Out</th><th class="num">In</th>
+        <th class="num">Cash</th><th class="num">Realized Gain</th><th></th>
+      </tr></thead>
+      <tbody>
+        {% for d in recent %}
+        <tr>
+          <td>{{ d.occurred_at[:16].replace('T', ' ') }}</td>
+          <td>{{ d.counterparty or '—' }}</td>
+          <td class="num">{{ d.n_out }}</td>
+          <td class="num">{{ d.n_in }}</td>
+          <td class="num {{ 'pos' if d.cash > 0 else 'neg' if d.cash < 0 else 'muted' }}">{{ d.cash|gain if d.cash else "—" }}</td>
+          <td class="num {{ 'pos' if d.gain >= 0 else 'neg' }}">{{ d.gain|gain }}</td>
+          <td><a href="/deals/{{ d.id }}">view</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="muted">No deals recorded yet. <a href="/deals/new">Record your first deal →</a></div>
+  {% endif %}
+</div>
+
+<script>
+  lineChart(document.getElementById("chart"), {{ snaps_json|safe }});
+</script>
+{% endblock %}
