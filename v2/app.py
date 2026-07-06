@@ -15,7 +15,10 @@ from flask import (Flask, abort, jsonify, redirect, render_template,
                    request, send_from_directory, url_for)
 
 from . import cards as v2cards
+from . import config
 from . import db as v2db
+from . import photos as v2photos
+from . import psa_api
 from .deals import CardIn, CardOut, add_deal_photo, get_deal, list_deals, save_deal
 
 app = Flask(__name__)
@@ -141,6 +144,156 @@ def raw_page():
 @app.get("/deal-photos/<path:name>")
 def deal_photo_file(name):
     return send_from_directory(v2db.DEAL_PHOTO_DIR, name)
+
+
+@app.get("/slab-photos/<path:name>")
+def slab_photo_file(name):
+    return send_from_directory(v2db.SLAB_PHOTO_DIR, name)
+
+
+# ── Phase 4: slab photos + backfill ────────────────────────────────────────────
+
+@app.get("/photos")
+def photos_page():
+    c = conn()
+    imports = [dict(r) for r in v2photos.list_imports(c)]
+    for i in imports:
+        if i["extracted_json"]:
+            i["ext"] = json.loads(i["extracted_json"])
+    total_cost = sum(i["extract_cost"] or 0 for i in imports)
+    budget_left = psa_api.budget_remaining(c)
+    keys = config.get_keys()
+    c.close()
+    return render_template("photos.html", active="photos", imports=imports,
+                           total_cost=total_cost, budget_left=budget_left,
+                           have_anthropic=bool(keys["anthropic_api_key"]),
+                           have_psa=bool(keys["psa_api_token"]))
+
+
+@app.get("/photos/<int:import_id>")
+def photo_review(import_id):
+    c = conn()
+    row = c.execute("SELECT * FROM photo_imports WHERE id=?", (import_id,)).fetchone()
+    if row is None:
+        c.close(); abort(404)
+    ext = json.loads(row["extracted_json"]) if row["extracted_json"] else {"fields": {}, "low_confidence": []}
+    cert = json.loads(row["cert_verified_json"]) if row["cert_verified_json"] else None
+
+    current, match = None, {"exact": None, "candidates": []}
+    if row["matched_id"]:
+        cur_row = c.execute("SELECT * FROM graded_cards WHERE id=?", (row["matched_id"],)).fetchone()
+        if cur_row:
+            current = dict(cur_row)
+    else:
+        match = v2photos.find_match(c, ext["fields"], cert)
+        if match["exact"]:
+            current = match["exact"]
+    c.close()
+
+    # build per-field review rows: extracted | cert | current | proposed
+    field_map = [("grading_company", "Company"), ("grade", "Grade"),
+                 ("cert_number", "Cert #"), ("card_name", "Card name"),
+                 ("set_name", "Set"), ("card_number", "Card #"), ("year", "Year")]
+    card_col = {"cert_number": "serial_number"}
+    rows = []
+    for key, label in field_map:
+        col = card_col.get(key, key)
+        ext_v = ext["fields"].get(key, "")
+        cert_v = (cert or {}).get(key, "")
+        cur_v = str(current.get(col, "") or "") if current else ""
+        proposed = cert_v or ext_v or cur_v          # cert-verified wins on disagreement
+        rows.append({
+            "key": col, "label": label,
+            "extracted": ext_v, "cert": cert_v, "current": cur_v,
+            "proposed": proposed,
+            "low_conf": key in ext.get("low_confidence", []) and not cert_v,
+            "changed": proposed != cur_v and proposed != "",
+        })
+    return render_template("photo_review.html", active="photos",
+                           imp=row, rows=rows, current=current,
+                           candidates=match["candidates"], cert=cert)
+
+
+@app.post("/api/photos/upload")
+def api_photos_upload():
+    files = request.files.getlist("photos")
+    if not files:
+        return jsonify({"ok": False, "error": "no files"}), 400
+    card_id = request.form.get("card_id")
+    c = conn()
+    ids = []
+    for f in files:
+        if not f.filename:
+            continue
+        pid = v2photos.save_upload(c, f)
+        if card_id:                      # backfill mode: pre-match to a card
+            c.execute("UPDATE photo_imports SET matched_table='graded_cards', "
+                      "matched_id=? WHERE id=?", (int(card_id), pid))
+            c.commit()
+        ids.append(pid)
+    c.close()
+    return jsonify({"ok": True, "ids": ids})
+
+
+@app.post("/api/photos/<int:import_id>/extract")
+def api_photo_extract(import_id):
+    c = conn()
+    res = v2photos.run_extract(c, import_id)
+    c.close()
+    status = 200 if res.get("ok") else 500
+    return jsonify(res), status
+
+
+@app.post("/api/photos/extract-all")
+def api_photo_extract_all():
+    c = conn()
+    pending = [r["id"] for r in v2photos.list_imports(c, "pending")]
+    done, errors, cost = 0, [], 0.0
+    for pid in pending:
+        res = v2photos.run_extract(c, pid)
+        if res.get("ok"):
+            done += 1
+            cost += res.get("cost", 0)
+        else:
+            errors.append({"id": pid, "error": res.get("error")})
+    c.close()
+    return jsonify({"ok": True, "processed": done, "cost": round(cost, 4),
+                    "errors": errors})
+
+
+@app.post("/api/photos/<int:import_id>/apply")
+def api_photo_apply(import_id):
+    p = request.get_json(force=True)
+    c = conn()
+    try:
+        card_id = v2photos.apply_to_card(
+            c, import_id,
+            int(p["card_id"]) if p.get("card_id") else None,
+            p.get("fields") or {})
+    except (ValueError, KeyError) as e:
+        c.close()
+        return jsonify({"ok": False, "error": str(e)}), 400
+    c.close()
+    return jsonify({"ok": True, "card_id": card_id})
+
+
+@app.post("/api/photos/<int:import_id>/reject")
+def api_photo_reject(import_id):
+    c = conn()
+    v2photos.reject(c, import_id)
+    c.close()
+    return jsonify({"ok": True})
+
+
+@app.get("/backfill")
+def backfill_page():
+    c = conn()
+    items = v2photos.incomplete_cards(c)
+    total_active = c.execute(
+        "SELECT COUNT(*) FROM graded_cards WHERE status='active'").fetchone()[0]
+    c.close()
+    return render_template("backfill.html", active="backfill", items=items,
+                           total_active=total_active)
 
 
 # ── JSON API ────────────────────────────────────────────────────────────────────
@@ -285,8 +438,9 @@ def api_grading_status():
 
 
 def main():
-    v2db.get_connection().close()   # startup guard: refuse to boot against v1
-    from . import config
+    guard = v2db.get_connection()   # startup guard: refuse to boot against v1
+    v2db.migrate_schema(guard)      # idempotent — applies any new v2 tables
+    guard.close()
     config.ensure_env_file()        # create ~/.cardvaultmac/v2.env template
     print("CardVault v2 — http://127.0.0.1:5177  (Ctrl+C to stop)")
     app.run(host="127.0.0.1", port=5177, debug=False)

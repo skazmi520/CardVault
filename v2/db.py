@@ -21,8 +21,9 @@ V1_DB_PATH = DATA_DIR / "cardvault.db"        # never written by v2
 V2_DB_PATH = DATA_DIR / "cardvault_v2.db"
 PHOTO_DIR  = DATA_DIR / "photos"              # shared, read-only from v2's perspective
 DEAL_PHOTO_DIR = DATA_DIR / "deal_photos"     # v2-only
+SLAB_PHOTO_DIR = DATA_DIR / "slab_photos"     # v2-only: slab label photos
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 GRADING_COMPANIES = ["PSA", "BGS", "CGC", "TAG"]
 PAYMENT_METHODS   = ["cash", "venmo", "zelle", "paypal", "trade", "mixed"]
@@ -100,6 +101,33 @@ CREATE TABLE IF NOT EXISTS deal_photos (
     deal_id     INTEGER NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
     file_path   TEXT NOT NULL,
     captured_at TEXT
+);
+
+-- Phase 4: slab photo ingestion / extraction pipeline
+CREATE TABLE IF NOT EXISTS photo_imports (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_path          TEXT NOT NULL,
+    uploaded_at        TEXT NOT NULL,
+    extracted_json     TEXT,                          -- Haiku label extraction
+    extract_error      TEXT,
+    extract_cost       REAL,                          -- USD, from token usage
+    cert_verified_json TEXT,                          -- normalized PSA cert data
+    status             TEXT NOT NULL DEFAULT 'pending',  -- pending|extracted|applied|rejected
+    matched_table      TEXT,
+    matched_id         INTEGER
+);
+
+-- PSA cert responses are immutable: cache forever, never re-query
+CREATE TABLE IF NOT EXISTS psa_cert_cache (
+    cert_number   TEXT PRIMARY KEY,
+    fetched_at    TEXT NOT NULL,
+    response_json TEXT NOT NULL
+);
+
+-- daily lookup budget for the free PSA tier
+CREATE TABLE IF NOT EXISTS psa_budget (
+    day  TEXT PRIMARY KEY,
+    used INTEGER NOT NULL DEFAULT 0
 );
 """
 
