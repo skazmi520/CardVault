@@ -172,6 +172,51 @@ label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px
   margin-bottom: 10px;
 }
 
+/* ── modal ─────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(6, 8, 11, .62);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 20px 22px;
+  width: 560px; max-width: 96vw; max-height: 92vh; overflow-y: auto;
+  box-shadow: 0 18px 50px rgba(0,0,0,.55);
+}
+.modal h2 { font-size: 16px; margin-bottom: 14px; }
+.modal .row { margin-bottom: 10px; }
+.modal .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
+.rowedit {
+  background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 6px;
+}
+.rowedit:hover { color: var(--accent); background: var(--surface-3); }
+
+/* ── dashboard extras ──────────────────────────────── */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+.tile .d { font-size: 11px; margin-top: 4px; }
+.bar-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+.bar-row .bar-label { width: 52px; font-weight: 600; font-size: 12px; }
+.bar-row .bar-track { display: block; flex: 1; height: 8px; background: var(--surface-3); border-radius: 4px; overflow: hidden; }
+.bar-row .bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.bar-row .bar-val { width: 150px; text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.list-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.list-row:first-of-type { border-top: none; }
+.list-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attention { display: flex; gap: 12px; flex-wrap: wrap; }
+.attention a {
+  flex: 1; min-width: 180px; display: block;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px; color: var(--text);
+}
+.attention a:hover { border-color: var(--accent); text-decoration: none; }
+.attention .n { font-size: 20px; font-weight: 700; }
+.attention .t { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
 /* ── photos ────────────────────────────────────────── */
 .photo-grid { display: flex; gap: 10px; flex-wrap: wrap; }
 .photo-grid img {

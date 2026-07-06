@@ -4,7 +4,14 @@
 <div class="page-title">Dashboard</div>
 
 <div class="tiles">
-  <div class="tile"><div class="v">{{ stats.market|money }}</div><div class="l">Total Market Value</div></div>
+  <div class="tile">
+    <div class="v">{{ stats.market|money }}</div>
+    <div class="l">Total Market Value</div>
+    {% if extras.delta %}
+    <div class="d {{ 'pos' if extras.delta.amount >= 0 else 'neg' }}">
+      {{ extras.delta.amount|gain }} since {{ extras.delta.since }}</div>
+    {% endif %}
+  </div>
   <div class="tile"><div class="v">{{ stats.basis|money }}</div><div class="l">Total Cost Basis</div></div>
   <div class="tile"><div class="v {{ 'pos' if stats.unrealized >= 0 else 'neg' }}">{{ stats.unrealized|gain }}</div><div class="l">Unrealized Gain</div></div>
   <div class="tile"><div class="v {{ 'pos' if stats.realized_ytd >= 0 else 'neg' }}">{{ stats.realized_ytd|gain }}</div><div class="l">Realized Gain YTD</div></div>
@@ -16,33 +23,67 @@
   <div class="chart" id="chart"></div>
 </div>
 
-<div class="panel">
-  <h2>Recent Deals</h2>
-  {% if recent %}
-  <div class="table-wrap">
-    <table>
-      <thead><tr>
-        <th>Date</th><th>Counterparty</th><th class="num">Out</th><th class="num">In</th>
-        <th class="num">Cash</th><th class="num">Realized Gain</th><th></th>
-      </tr></thead>
-      <tbody>
-        {% for d in recent %}
-        <tr>
-          <td>{{ d.occurred_at[:16].replace('T', ' ') }}</td>
-          <td>{{ d.counterparty or '—' }}</td>
-          <td class="num">{{ d.n_out }}</td>
-          <td class="num">{{ d.n_in }}</td>
-          <td class="num {{ 'pos' if d.cash > 0 else 'neg' if d.cash < 0 else 'muted' }}">{{ d.cash|gain if d.cash else "—" }}</td>
-          <td class="num {{ 'pos' if d.gain >= 0 else 'neg' }}">{{ d.gain|gain }}</td>
-          <td><a href="/deals/{{ d.id }}">view</a></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+<div class="grid2">
+  <div class="panel">
+    <h2>Collection by Grader</h2>
+    {% for c in extras.companies %}
+    <div class="bar-row">
+      <span class="bar-label">{{ c.company }}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:{{ c.share }}%"></span></span>
+      <span class="bar-val">{{ c.count }} cards · {{ c.market|money }}</span>
+    </div>
+    {% endfor %}
   </div>
-  {% else %}
-  <div class="muted">No deals recorded yet. <a href="/deals/new">Record your first deal →</a></div>
-  {% endif %}
+
+  <div class="panel">
+    <h2>Top Holdings</h2>
+    {% for t in extras.top %}
+    <div class="list-row">
+      <span class="chip">{{ t.company }} {{ t.grade }}</span>
+      <span class="grow"><strong>{{ t.name }}</strong>
+        {% if t.set %}<span class="muted"> · {{ t.set }}</span>{% endif %}</span>
+      <span class="num" style="font-weight:600">{{ t.market|money }}</span>
+      <span class="num {{ 'pos' if t.gain >= 0 else 'neg' }}" style="width:92px;text-align:right">{{ t.gain|gain }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="panel">
+    <h2>Needs Attention</h2>
+    <div class="attention">
+      <a href="/collection">
+        <div class="n {{ 'neg' if extras.stale else '' }}">{{ extras.stale }}</div>
+        <div class="t">cards not repriced in 30+ days</div>
+      </a>
+      <a href="/collection">
+        <div class="n">{{ extras.never_priced }}</div>
+        <div class="t">cards with no market value</div>
+      </a>
+      <a href="/raw">
+        <div class="n">{{ extras.at_grading }}</div>
+        <div class="t">cards out at grading</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Recent Deals</h2>
+    {% if recent %}
+      {% for d in recent[:5] %}
+      <div class="list-row">
+        <span class="muted" style="width:82px">{{ d.occurred_at[:10] }}</span>
+        <span class="grow">{{ d.counterparty or '—' }}
+          <span class="muted">· {{ d.n_out }} out / {{ d.n_in }} in</span></span>
+        <span class="num {{ 'pos' if d.gain >= 0 else 'neg' }}">{{ d.gain|gain }}</span>
+        <a href="/deals/{{ d.id }}">view</a>
+      </div>
+      {% endfor %}
+    {% else %}
+    <div class="muted">No deals recorded yet. <a href="/deals/new">Record your first deal →</a></div>
+    {% endif %}
+  </div>
 </div>
 
 <script>
