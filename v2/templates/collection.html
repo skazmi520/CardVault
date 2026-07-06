@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Collection{% endblock %}
+{% block content %}
+<div class="page-title">Collection <span class="sub" id="count-sub"></span></div>
+
+<div class="filters">
+  <input type="text" id="f-search" placeholder="Search name, set, cert…  ( / )">
+  <select id="f-set">
+    <option value="">All sets</option>
+    {% for s in sets %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+  </select>
+  <select id="f-kind">
+    <option value="">Slabs + raw</option>
+    <option value="slab">Slabs only</option>
+    <option value="raw">Raw only</option>
+  </select>
+  <select id="f-grade">
+    <option value="">Any grade</option>
+    <option>10</option><option>9.5</option><option>9</option><option>8.5</option>
+    <option>8</option><option>7</option><option>6</option><option>5</option>
+    <option>4</option><option>3</option><option>2</option><option>1</option>
+  </select>
+  <select id="f-status">
+    <option value="">Active</option>
+    <option value="submitted_for_grading">At grading</option>
+  </select>
+  <span class="muted" style="font-size:12px">↑↓ move · Enter edit price · Esc cancel</span>
+</div>
+
+<div class="table-wrap">
+  <table id="tbl">
+    <thead><tr>
+      <th data-k="name">Name</th>
+      <th data-k="set">Set</th>
+      <th data-k="grade">Grade</th>
+      <th data-k="kind">Type</th>
+      <th data-k="acq_cost" class="num">Acq. Cost</th>
+      <th data-k="basis" class="num">Basis</th>
+      <th data-k="market_value" class="num">Market Value</th>
+      <th data-k="gain" class="num">Gain</th>
+      <th data-k="repriced">Repriced</th>
+    </tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+const CARDS = {{ cards_json|safe }};
+let sortKey = "name", sortDir = 1, focusIdx = -1, view = [];
+
+const $ = id => document.getElementById(id);
+const tbody = $("tbody");
+
+function staleClass(r) {
+  if (!r.repriced) return "muted";
+  const days = (Date.now() - new Date(r.repriced.slice(0,10))) / 864e5;
+  return days > 30 ? "stale" : "muted";
+}
+
+function applyFilters() {
+  const q = $("f-search").value.trim().toLowerCase();
+  const set = $("f-set").value, kind = $("f-kind").value;
+  const grade = $("f-grade").value, status = $("f-status").value;
+  view = CARDS.filter(r => {
+    if (status ? r.status !== status : r.status !== "active" && r.status !== "submitted_for_grading") return false;
+    if (status && r.status !== status) return false;
+    if (kind && r.kind !== kind) return false;
+    if (set && r.set !== set) return false;
+    if (grade && String(r.grade) !== grade) return false;
+    if (q) {
+      const hay = (r.name + " " + r.set + " " + r.cert + " " + r.number).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  view.sort((a, b) => {
+    let x = a[sortKey], y = b[sortKey];
+    if (x === null || x === undefined || x === "") x = sortKey === "name" || sortKey === "set" || sortKey === "repriced" ? "" : -Infinity;
+    if (y === null || y === undefined || y === "") y = sortKey === "name" || sortKey === "set" || sortKey === "repriced" ? "" : -Infinity;
+    if (typeof x === "string") { x = x.toLowerCase(); y = String(y).toLowerCase(); }
+    return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
+  });
+  render();
+}
+
+function render() {
+  tbody.innerHTML = view.map((r, i) => `
+    <tr data-i="${i}" class="${i === focusIdx ? 'focused' : ''}">
+      <td><strong>${esc(r.name)}</strong>${r.number ? ' <span class="muted">#' + esc(r.number) + '</span>' : ''}</td>
+      <td class="muted">${esc(r.set) || "—"}</td>
+      <td>${r.kind === "slab" ? `<span class="chip">${esc(r.company)} ${esc(r.grade)}</span>` : '<span class="chip raw">RAW</span>'}</td>
+      <td class="muted">${r.kind}</td>
+      <td class="num">${fmt(r.acq_cost)}</td>
+      <td class="num">${fmt(r.basis)}</td>
+      <td class="num mv-cell" data-i="${i}">${r.kind === "slab" ? fmt(r.market_value) : '<span class="muted">—</span>'}</td>
+      <td class="num ${gainClass(r.gain)}">${fmtGain(r.gain)}</td>
+      <td class="${staleClass(r)}">${r.repriced ? r.repriced.slice(0, 10) : "never"}</td>
+    </tr>`).join("");
+  $("count-sub").textContent = view.length + " cards";
+}
+
+function beginEdit(i) {
+  const r = view[i];
+  if (!r || r.kind !== "slab") return;
+  const cell = tbody.querySelector(`td.mv-cell[data-i="${i}"]`);
+  if (!cell || cell.querySelector("input")) return;
+  const cur = r.market_value ?? "";
+  cell.innerHTML = `<input type="text" value="${cur}">`;
+  const inp = cell.querySelector("input");
+  inp.focus(); inp.select();
+
+  const commit = async (moveNext) => {
+    const raw = inp.value.trim().replace(/[$,]/g, "");
+    if (raw !== "" && isNaN(parseFloat(raw))) { inp.focus(); return; }
+    try {
+      const res = await postJSON("/api/reprice",
+        { card_id: r.id, market_value: raw === "" ? null : parseFloat(raw) });
+      r.market_value = res.market_value; r.gain = res.gain; r.repriced = res.repriced || "";
+    } catch (e) { alert("Save failed: " + e.message); }
+    render();
+    if (moveNext && focusIdx < view.length - 1) { focusIdx++; render(); beginEdit(focusIdx); }
+  };
+  inp.addEventListener("keydown", ev => {
+    if (ev.key === "Enter") { ev.preventDefault(); commit(false); }
+    else if (ev.key === "Tab") { ev.preventDefault(); commit(true); }
+    else if (ev.key === "Escape") { render(); }
+    ev.stopPropagation();
+  });
+  inp.addEventListener("blur", () => { if (tbody.contains(inp)) commit(false); });
+}
+
+/* interactions */
+document.querySelectorAll("thead th").forEach(th => th.addEventListener("click", () => {
+  const k = th.dataset.k;
+  if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = 1; }
+  applyFilters();
+}));
+tbody.addEventListener("click", e => {
+  const cell = e.target.closest("td.mv-cell");
+  const row = e.target.closest("tr");
+  if (row) { focusIdx = +row.dataset.i; render(); }
+  if (cell) beginEdit(+cell.dataset.i);
+});
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") {
+    if (e.key === "/" ) e.stopPropagation();
+    return;
+  }
+  if (e.key === "/") { e.preventDefault(); $("f-search").focus(); return; }
+  if (e.key === "ArrowDown") { e.preventDefault(); focusIdx = Math.min(focusIdx + 1, view.length - 1); render(); scrollFocus(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); focusIdx = Math.max(focusIdx - 1, 0); render(); scrollFocus(); }
+  else if (e.key === "Enter" && focusIdx >= 0) { e.preventDefault(); beginEdit(focusIdx); }
+});
+function scrollFocus() {
+  const row = tbody.querySelector("tr.focused");
+  if (row) row.scrollIntoView({ block: "nearest" });
+}
+["f-search", "f-set", "f-kind", "f-grade", "f-status"].forEach(id =>
+  $(id).addEventListener("input", () => { focusIdx = -1; applyFilters(); }));
+
+applyFilters();
+</script>
+{% endblock %}

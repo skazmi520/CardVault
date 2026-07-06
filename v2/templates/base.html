@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}CardVault{% endblock %} · CardVault v2</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+<div class="shell">
+  <nav class="sidebar">
+    <div class="brand">Card<span>Vault</span></div>
+    <a class="nav-link {{ 'active' if active=='dashboard' }}" href="/">Dashboard</a>
+    <a class="nav-link {{ 'active' if active=='collection' }}" href="/collection">Collection</a>
+    <a class="nav-link {{ 'active' if active=='deals' }}" href="/deals">Deals</a>
+    <a class="nav-link {{ 'active' if active=='raw' }}" href="/raw">Raw &amp; Grading</a>
+    <div class="spacer"></div>
+    <div class="foot">v2 · local</div>
+  </nav>
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

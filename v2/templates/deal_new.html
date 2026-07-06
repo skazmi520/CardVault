@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}New Deal{% endblock %}
+{% block content %}
+<div class="page-title">New Deal</div>
+
+<div class="panel">
+  <div class="row">
+    <div><label>Counterparty</label><input type="text" id="d-counterparty" placeholder="Name or table #" autofocus></div>
+    <div><label>Location</label><input type="text" id="d-location" placeholder="optional"></div>
+    <div><label>Payment</label>
+      <select id="d-method">{% for m in methods %}<option>{{ m }}</option>{% endfor %}</select>
+    </div>
+    <div><label>When</label><input type="datetime-local" id="d-when"></div>
+  </div>
+</div>
+
+<div class="deal-grid">
+  <div class="panel deal-col">
+    <h2><span>Cards Out <span class="muted">(from inventory)</span></span><span id="out-total" class="muted"></span></h2>
+    <div style="position:relative;margin-bottom:10px">
+      <input type="text" id="out-search" placeholder="Search inventory to add…" style="width:100%">
+      <div class="picker-results" id="out-results" hidden></div>
+    </div>
+    <div id="out-lines"></div>
+    <div class="row" style="margin-top:8px">
+      <div><label>Side total (optional — allocates pro rata)</label>
+        <input type="text" id="out-side-total" placeholder="$"></div>
+    </div>
+  </div>
+
+  <div class="panel deal-col">
+    <h2><span>Cards In <span class="muted">(quick entry)</span></span><span id="in-total" class="muted"></span></h2>
+    <div id="in-lines"></div>
+    <button class="btn ghost small" id="add-in">+ Add card</button>
+    <div class="row" style="margin-top:12px">
+      <div><label>Side total (optional)</label>
+        <input type="text" id="in-side-total" placeholder="$"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <div><label>Cash — positive = I receive, negative = I pay</label>
+      <input type="text" id="d-cash" placeholder="0.00" style="width:160px"></div>
+    <div style="flex:1"><label>Notes</label><input type="text" id="d-notes" style="width:100%"></div>
+  </div>
+</div>
+
+<div class="totals-bar">
+  <div>Giving <span class="big" id="t-out">$0.00</span></div>
+  <div>Getting <span class="big" id="t-in">$0.00</span></div>
+  <div>Cash <span class="big" id="t-cash">$0.00</span></div>
+  <div id="t-balance" class="muted"></div>
+  <div style="flex:1"></div>
+  <button class="btn" id="save">Save Deal</button>
+</div>
+<div id="save-msg" style="margin-top:10px"></div>
+
+<script>
+const INVENTORY = {{ cards_json|safe }};
+const outLines = [];   // {table,id,name,label,mv,deal_value(str)}
+const inLines  = [];   // {name,set,number,year,company,grade,cert,is_graded,deal_value(str)}
+
+const $ = id => document.getElementById(id);
+const num = s => { const v = parseFloat(String(s).replace(/[$,]/g, "")); return isNaN(v) ? null : v; };
+
+/* default timestamp = now */
+(() => {
+  const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  $("d-when").value = d.toISOString().slice(0, 16);
+})();
+
+/* ── cards-out picker ── */
+const search = $("out-search"), results = $("out-results");
+search.addEventListener("input", () => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) { results.hidden = true; return; }
+  const taken = new Set(outLines.map(l => l.table + ":" + l.id));
+  const hits = INVENTORY.filter(c =>
+    !taken.has(c.table + ":" + c.id) &&
+    (c.name + " " + c.set + " " + c.cert).toLowerCase().includes(q)).slice(0, 12);
+  results.innerHTML = hits.map((c, i) =>
+    `<div data-i="${INVENTORY.indexOf(c)}">
+       ${c.kind === "slab" ? `<span class="chip">${esc(c.company)} ${esc(c.grade)}</span>` : '<span class="chip raw">RAW</span>'}
+       ${esc(c.name)} <span class="muted">${esc(c.set)}</span>
+       <span class="muted" style="float:right">${fmt(c.market_value ?? c.basis)}</span>
+     </div>`).join("") || '<div class="muted">no matches</div>';
+  results.hidden = false;
+});
+search.addEventListener("keydown", e => {
+  if (e.key === "Enter") {
+    const first = results.querySelector("div[data-i]");
+    if (first) pickOut(+first.dataset.i);
+  } else if (e.key === "Escape") results.hidden = true;
+});
+results.addEventListener("mousedown", e => {
+  const el = e.target.closest("div[data-i]"); if (el) pickOut(+el.dataset.i);
+});
+function pickOut(i) {
+  const c = INVENTORY[i];
+  outLines.push({ table: c.table, id: c.id, name: c.name,
+    label: (c.kind === "slab" ? `${c.company} ${c.grade} · ` : "RAW · ") + c.name,
+    mv: c.market_value ?? c.basis,
+    deal_value: c.market_value != null ? String(c.market_value) : "" });
+  search.value = ""; results.hidden = true;
+  renderLines(); search.focus();
+}
+
+/* ── cards-in quick entry ── */
+$("add-in").addEventListener("click", () => { addIn(); renderLines(); focusLastIn(); });
+function addIn() {
+  inLines.push({ name: "", set: "", number: "", year: "", company: "PSA",
+                 grade: "", cert: "", is_graded: true, deal_value: "" });
+}
+function focusLastIn() {
+  const rows = document.querySelectorAll("#in-lines .deal-line");
+  const last = rows[rows.length - 1];
+  if (last) last.querySelector("input").focus();
+}
+
+function renderLines() {
+  $("out-lines").innerHTML = outLines.map((l, i) => `
+    <div class="deal-line">
+      <span class="grow">${esc(l.label)} <span class="muted">mv ${fmt(l.mv)}</span></span>
+      <input class="val" data-side="out" data-i="${i}" type="text"
+             placeholder="value" value="${esc(l.deal_value)}">
+      <span class="x" data-out="${i}">✕</span>
+    </div>`).join("") || '<div class="muted" style="margin-bottom:8px">No cards out — pure buy.</div>';
+
+  $("in-lines").innerHTML = inLines.map((l, i) => `
+    <div class="deal-line" style="flex-wrap:wrap">
+      <input type="text" placeholder="Card name" style="flex:2;min-width:140px"
+             data-in="${i}" data-f="name" value="${esc(l.name)}">
+      <input type="text" placeholder="Set" style="flex:1;min-width:90px"
+             data-in="${i}" data-f="set" value="${esc(l.set)}">
+      <select data-in="${i}" data-f="is_graded" style="width:86px">
+        <option value="1" ${l.is_graded ? "selected" : ""}>Slab</option>
+        <option value="" ${!l.is_graded ? "selected" : ""}>Raw</option>
+      </select>
+      ${l.is_graded ? `
+        <select data-in="${i}" data-f="company" style="width:80px">
+          ${["PSA","BGS","CGC","TAG"].map(co => `<option ${l.company===co?"selected":""}>${co}</option>`).join("")}
+        </select>
+        <input type="text" placeholder="Grade" style="width:70px" data-in="${i}" data-f="grade" value="${esc(l.grade)}">
+        <input type="text" placeholder="Cert #" style="width:110px" data-in="${i}" data-f="cert" value="${esc(l.cert)}">` : ""}
+      <input class="val" type="text" placeholder="value" data-side="in" data-i="${i}" value="${esc(l.deal_value)}">
+      <span class="x" data-inx="${i}">✕</span>
+    </div>`).join("") || '<div class="muted" style="margin-bottom:8px">No cards in — pure sale.</div>';
+
+  bindLineEvents();
+  updateTotals();
+}
+
+function bindLineEvents() {
+  document.querySelectorAll("#out-lines .x").forEach(x =>
+    x.addEventListener("click", () => { outLines.splice(+x.dataset.out, 1); renderLines(); }));
+  document.querySelectorAll("#in-lines .x").forEach(x =>
+    x.addEventListener("click", () => { inLines.splice(+x.dataset.inx, 1); renderLines(); }));
+  document.querySelectorAll("input.val").forEach(inp =>
+    inp.addEventListener("input", () => {
+      const arr = inp.dataset.side === "out" ? outLines : inLines;
+      arr[+inp.dataset.i].deal_value = inp.value;
+      updateTotals();
+    }));
+  document.querySelectorAll("[data-in][data-f]").forEach(el =>
+    el.addEventListener("change", () => {
+      const l = inLines[+el.dataset.in], f = el.dataset.f;
+      if (f === "is_graded") { l.is_graded = !!el.value; renderLines(); }
+      else l[f] = el.value;
+    }));
+}
+
+function updateTotals() {
+  const cash = num($("d-cash").value) ?? 0;
+  const outVals = outLines.map(l => num(l.deal_value));
+  const inVals  = inLines.map(l => num(l.deal_value));
+  const vOut = outVals.every(v => v !== null) && outLines.length
+    ? outVals.reduce((a, b) => a + b, 0) : num($("out-side-total").value);
+  const vIn = inVals.every(v => v !== null) && inLines.length
+    ? inVals.reduce((a, b) => a + b, 0)
+    : (inLines.length ? num($("in-side-total").value) : 0);
+
+  $("t-out").textContent = vOut !== null ? fmt(vOut) : "…";
+  $("t-in").textContent  = vIn  !== null ? fmt(vIn)  : "…";
+  $("t-cash").textContent = fmtGain(cash);
+  $("out-total").textContent = outLines.length + " cards";
+  $("in-total").textContent  = inLines.length + " cards";
+
+  const bal = $("t-balance");
+  if (vOut !== null && vIn !== null && (outLines.length && inLines.length)) {
+    const diff = vOut - (vIn + cash);
+    if (Math.abs(diff) < 0.01) { bal.textContent = "Balanced ✓"; bal.className = "pos"; }
+    else { bal.textContent = `Off by ${fmt(Math.abs(diff))}`; bal.className = Math.abs(diff) / Math.max(vOut, 0.01) > 0.05 ? "neg" : "muted"; }
+  } else bal.textContent = "";
+}
+["d-cash", "out-side-total", "in-side-total"].forEach(id =>
+  $(id).addEventListener("input", updateTotals));
+
+/* ── save ── */
+$("save").addEventListener("click", async () => {
+  const msg = $("save-msg");
+  msg.innerHTML = "";
+  try {
+    const res = await postJSON("/api/deals", {
+      counterparty: $("d-counterparty").value, location: $("d-location").value,
+      payment_method: $("d-method").value,
+      occurred_at: $("d-when").value ? $("d-when").value + ":00" : null,
+      notes: $("d-notes").value,
+      cash_amount: num($("d-cash").value) ?? 0,
+      out_side_total: num($("out-side-total").value),
+      in_side_total: num($("in-side-total").value),
+      cards_out: outLines.map(l => ({ table: l.table, id: l.id, deal_value: num(l.deal_value) })),
+      cards_in: inLines.map(l => ({ name: l.name, set: l.set, number: l.number,
+        year: l.year, company: l.company, grade: l.grade, cert: l.cert,
+        is_graded: l.is_graded, deal_value: num(l.deal_value) })),
+    });
+    (res.warnings || []).forEach(w => msg.innerHTML += `<div class="warn">${esc(w)}</div>`);
+    location.href = "/deals/" + res.deal_id;
+  } catch (e) {
+    msg.innerHTML = `<div class="warn">${esc(e.message)}</div>`;
+  }
+});
+
+addIn();       /* seed one incoming row */
+renderLines();
+</script>
+{% endblock %}

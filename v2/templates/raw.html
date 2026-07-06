@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Raw & Grading{% endblock %}
+{% block content %}
+<div class="page-title">Raw &amp; Grading <span class="sub">{{ cards|length }} cards</span></div>
+
+<div class="panel">
+  <div class="table-wrap"><table>
+    <thead><tr>
+      <th>Card</th><th>Set</th><th class="num">Basis</th>
+      <th>Grading Status</th><th>Target</th><th style="width:220px"></th>
+    </tr></thead>
+    <tbody>
+      {% for c in cards %}
+      <tr id="raw-{{ c.id }}">
+        <td><strong>{{ c.name }}</strong>{% if c.number %} <span class="muted">#{{ c.number }}</span>{% endif %}</td>
+        <td class="muted">{{ c.set or '—' }}</td>
+        <td class="num">{{ c.basis|money }}</td>
+        <td>
+          <select data-status="{{ c.id }}">
+            {% for s in ["Not Slated", "Slated", "At Grading"] %}
+            <option {{ 'selected' if c.grading_status == s }}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td class="muted">{{ c.target_company or '—' }}</td>
+        <td><button class="btn ghost small" data-promote="{{ c.id }}"
+                    data-name="{{ c.name }}" data-basis="{{ c.basis }}">Record grading return…</button></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<div class="panel" id="promo-panel" hidden>
+  <h2>Record Grading Return — <span id="promo-name"></span></h2>
+  <p class="muted" style="margin-bottom:12px">
+    The card moves to your graded collection.
+    <strong>Basis = raw cost + grading cost</strong> — preview updates below.
+  </p>
+  <div class="row">
+    <div><label>Company</label>
+      <select id="promo-company">{% for co in companies %}<option>{{ co }}</option>{% endfor %}</select></div>
+    <div><label>Grade *</label><input type="text" id="promo-grade" style="width:80px"></div>
+    <div><label>Cert #</label><input type="text" id="promo-cert" style="width:140px"></div>
+    <div><label>Grading cost</label><input type="text" id="promo-cost" placeholder="0.00" style="width:110px"></div>
+    <div><label>Return date</label><input type="date" id="promo-date"></div>
+    <div><button class="btn" id="promo-save">Promote to Graded</button></div>
+    <div><button class="btn ghost" id="promo-cancel">Cancel</button></div>
+  </div>
+  <div style="margin-top:10px" class="muted" id="promo-preview"></div>
+  <div id="promo-msg" style="margin-top:8px"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let promoteId = null, promoteBasis = 0;
+
+document.querySelectorAll("[data-promote]").forEach(b => b.addEventListener("click", () => {
+  promoteId = +b.dataset.promote;
+  promoteBasis = parseFloat(b.dataset.basis) || 0;
+  $("promo-name").textContent = b.dataset.name;
+  $("promo-date").value = new Date().toISOString().slice(0, 10);
+  $("promo-panel").hidden = false;
+  preview();
+  $("promo-panel").scrollIntoView({ behavior: "smooth" });
+  $("promo-grade").focus();
+}));
+$("promo-cancel").addEventListener("click", () => { $("promo-panel").hidden = true; });
+
+function preview() {
+  const cost = parseFloat(String($("promo-cost").value).replace(/[$,]/g, "")) || 0;
+  $("promo-preview").textContent =
+    `New basis: ${fmt(promoteBasis)} raw + ${fmt(cost)} grading = ${fmt(promoteBasis + cost)}`;
+}
+$("promo-cost").addEventListener("input", preview);
+
+$("promo-save").addEventListener("click", async () => {
+  const msg = $("promo-msg");
+  if (!$("promo-grade").value.trim()) { msg.innerHTML = '<div class="warn">Grade is required.</div>'; return; }
+  try {
+    await postJSON("/api/promote", {
+      ungraded_id: promoteId,
+      company: $("promo-company").value, grade: $("promo-grade").value.trim(),
+      cert: $("promo-cert").value.trim(),
+      grading_cost: parseFloat(String($("promo-cost").value).replace(/[$,]/g, "")) || 0,
+      return_date: $("promo-date").value,
+    });
+    location.reload();
+  } catch (e) { msg.innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
+});
+
+document.querySelectorAll("[data-status]").forEach(sel =>
+  sel.addEventListener("change", () =>
+    postJSON("/api/grading-status",
+      { ungraded_id: +sel.dataset.status, grading_status: sel.value })
+      .catch(e => alert(e.message))));
+</script>
+{% endblock %}

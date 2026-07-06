@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Deal #{{ d.id }}{% endblock %}
+{% block content %}
+<div class="page-title">Deal #{{ d.id }}
+  <span class="sub">{{ d.occurred_at[:16].replace('T', ' ') }}
+    {% if d.counterparty %} · {{ d.counterparty }}{% endif %}
+    {% if d.location %} · {{ d.location }}{% endif %}
+    · {{ d.payment_method }}</span>
+</div>
+
+<div class="tiles">
+  <div class="tile"><div class="v {{ 'pos' if d.cash_amount > 0 else 'neg' if d.cash_amount < 0 else '' }}">{{ d.cash_amount|gain if d.cash_amount else "—" }}</div><div class="l">Cash ({{ 'received' if d.cash_amount >= 0 else 'paid' }})</div></div>
+  <div class="tile"><div class="v">{{ cards_out|length }}</div><div class="l">Cards Out</div></div>
+  <div class="tile"><div class="v">{{ cards_in|length }}</div><div class="l">Cards In</div></div>
+  {% set gain = cards_out|map(attribute='realized_gain')|select|sum %}
+  <div class="tile"><div class="v {{ 'pos' if gain >= 0 else 'neg' }}">{{ gain|gain }}</div><div class="l">Realized Gain</div></div>
+</div>
+
+{% if d.notes %}<div class="panel"><h2>Notes</h2>{{ d.notes }}</div>{% endif %}
+
+{% if cards_out %}
+<div class="panel">
+  <h2>Cards Out</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Card</th><th>Type</th><th class="num">Basis</th>
+      <th class="num">Proceeds</th><th class="num">Gain</th></tr></thead>
+    <tbody>
+      {% for c in cards_out %}
+      <tr>
+        <td><strong>{{ c.card_name }}</strong>{% if c.set_name %} <span class="muted">{{ c.set_name }}</span>{% endif %}</td>
+        <td>{% if c._table == 'graded_cards' %}<span class="chip">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
+        <td class="num">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</td>
+        <td class="num">{{ c.disposal_proceeds|money }}</td>
+        <td class="num {{ 'pos' if (c.realized_gain or 0) >= 0 else 'neg' }}">{{ c.realized_gain|gain }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+
+{% if cards_in %}
+<div class="panel">
+  <h2>Cards In</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Card</th><th>Type</th><th class="num">Basis</th><th class="num">Market Value</th></tr></thead>
+    <tbody>
+      {% for c in cards_in %}
+      <tr>
+        <td><strong>{{ c.card_name }}</strong>{% if c.set_name %} <span class="muted">{{ c.set_name }}</span>{% endif %}</td>
+        <td>{% if c._table == 'graded_cards' %}<span class="chip">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
+        <td class="num">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</td>
+        <td class="num">{{ c.market_value|money if c._table == 'graded_cards' else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>Photos <span class="muted">(documentation only)</span></h2>
+  <div class="photo-grid" id="photo-grid">
+    {% for p in photos %}
+      <a href="/deal-photos/{{ p.file_path }}" target="_blank"><img src="/deal-photos/{{ p.file_path }}" alt="deal photo"></a>
+    {% endfor %}
+  </div>
+  <div style="margin-top:12px">
+    <input type="file" id="photo-file" accept="image/*" multiple>
+    <button class="btn ghost small" id="photo-upload">Upload</button>
+    <span id="photo-msg" class="muted"></span>
+  </div>
+</div>
+
+<script>
+document.getElementById("photo-upload").addEventListener("click", async () => {
+  const files = document.getElementById("photo-file").files;
+  const msg = document.getElementById("photo-msg");
+  if (!files.length) { msg.textContent = "choose a file first"; return; }
+  for (const f of files) {
+    const fd = new FormData(); fd.append("photo", f);
+    const r = await fetch("/api/deals/{{ d.id }}/photos", { method: "POST", body: fd });
+    const data = await r.json();
+    if (data.ok) {
+      const a = document.createElement("a");
+      a.href = "/deal-photos/" + data.file; a.target = "_blank";
+      a.innerHTML = `<img src="/deal-photos/${data.file}">`;
+      document.getElementById("photo-grid").appendChild(a);
+    } else msg.textContent = data.error || "upload failed";
+  }
+  msg.textContent = "uploaded ✓";
+});
+</script>
+{% endblock %}
