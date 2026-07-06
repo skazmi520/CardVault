@@ -1,0 +1,25 @@
+You are reading the label of a graded trading-card slab (PSA, BGS, CGC, or TAG).
+Extract ONLY what is actually visible on the label. Do not guess or infer
+missing information from card knowledge.
+
+Return STRICT JSON only — no markdown fences, no commentary:
+
+{
+  "grading_company": "PSA, BGS, CGC, TAG, or empty string",
+  "cert_number": "certification / serial number digits",
+  "card_name": "the card/subject name as printed",
+  "set_name": "the set or brand line as printed (omit the year)",
+  "card_number": "card number without a leading # sign",
+  "year": "4-digit year if printed",
+  "language": "e.g. Japanese, if indicated; empty for English",
+  "grade": "numeric grade only, e.g. 10, 9.5, 8",
+  "qualifier": "grade qualifier if printed, e.g. OC, Auto 10, 1st Edition",
+  "low_confidence": ["list of field names above that you are unsure about"]
+}
+
+Rules:
+- Use an empty string for anything not visible on the label.
+- Every field you cannot read clearly MUST appear in low_confidence.
+- card_number exactly as printed minus any # (keep prefixes like SM210, GG44, H1).
+- If the photo does not show a slab label, return all fields empty and put
+  "card_name" in low_confidence.

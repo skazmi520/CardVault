@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Review Photo #{{ imp.id }}{% endblock %}
+{% block content %}
+<div class="page-title">Review — Photo #{{ imp.id }}
+  {% if cert %}<span class="sub pos">PSA cert verified ✓ (cert data wins on disagreement)</span>{% endif %}
+</div>
+
+<div class="deal-grid">
+  <div class="panel">
+    <a href="/slab-photos/{{ imp.file_path }}" target="_blank">
+      <img src="/slab-photos/{{ imp.file_path }}" style="width:100%;border-radius:10px;border:1px solid var(--border)">
+    </a>
+  </div>
+
+  <div>
+    <div class="panel">
+      <h2>Match target</h2>
+      {% if current %}
+      <label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--text)">
+        <input type="radio" name="target" value="{{ current.id }}" checked>
+        <span><strong>{{ current.card_name }}</strong>
+          <span class="chip">{{ current.grading_company }} {{ current.grade }}</span>
+          <span class="muted">{{ current.set_name or 'no set' }} · cert {{ current.serial_number or '—' }}</span></span>
+      </label>
+      {% endif %}
+      {% for c in candidates %}
+      <label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--text);margin-top:6px">
+        <input type="radio" name="target" value="{{ c.id }}" {{ 'checked' if loop.first and not current }}>
+        <span><strong>{{ c.card_name }}</strong>
+          <span class="chip">{{ c.grading_company }} {{ c.grade }}</span>
+          <span class="muted">{{ c.set_name or 'no set' }} · match {{ (c._score * 100)|round|int }}%</span></span>
+      </label>
+      {% endfor %}
+      <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin-top:6px;color:var(--text)">
+        <input type="radio" name="target" value="new" {{ 'checked' if not current and not candidates }}>
+        <span>Create a new card from this photo</span>
+      </label>
+    </div>
+
+    <div class="panel">
+      <h2>Fields <span class="muted">(check = write this value)</span></h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th></th><th>Field</th><th>Extracted</th><th>Cert</th>
+          <th>Current</th><th>Proposed</th></tr></thead>
+        <tbody>
+          {% for r in rows %}
+          <tr {% if r.low_conf %}style="outline:1px solid #b98a3f;outline-offset:-1px"{% endif %}>
+            <td><input type="checkbox" data-field="{{ r.key }}" data-value="{{ r.proposed }}"
+                       {{ 'checked' if r.changed and not r.low_conf }}></td>
+            <td class="muted">{{ r.label }}{% if r.low_conf %} <span style="color:#b98a3f">⚠ low conf.</span>{% endif %}</td>
+            <td>{{ r.extracted or '—' }}</td>
+            <td class="{{ 'pos' if r.cert }}">{{ r.cert or '—' }}</td>
+            <td class="muted">{{ r.current or '—' }}</td>
+            <td><strong>{{ r.proposed or '—' }}</strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+      <div class="actions" style="display:flex;justify-content:flex-end;gap:10px;margin-top:14px">
+        <span id="msg" class="neg" style="align-self:center;font-size:12px"></span>
+        <button class="btn danger" id="reject">Reject photo</button>
+        <button class="btn" id="apply">Apply checked fields</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById("apply").addEventListener("click", async () => {
+  const target = document.querySelector('input[name="target"]:checked');
+  if (!target) { document.getElementById("msg").textContent = "pick a match target"; return; }
+  const fields = {};
+  document.querySelectorAll("input[data-field]:checked").forEach(cb => {
+    fields[cb.dataset.field] = cb.dataset.value;
+  });
+  if (!Object.keys(fields).length && target.value !== "new") {
+    document.getElementById("msg").textContent = "no fields checked"; return;
+  }
+  try {
+    const res = await postJSON("/api/photos/{{ imp.id }}/apply", {
+      card_id: target.value === "new" ? null : +target.value, fields });
+    location.href = "/photos";
+  } catch (e) { document.getElementById("msg").textContent = e.message; }
+});
+document.getElementById("reject").addEventListener("click", async () => {
+  await postJSON("/api/photos/{{ imp.id }}/reject", {});
+  location.href = "/photos";
+});
+</script>
+{% endblock %}
