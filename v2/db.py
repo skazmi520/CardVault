@@ -23,7 +23,7 @@ PHOTO_DIR  = DATA_DIR / "photos"              # shared, read-only from v2's pers
 DEAL_PHOTO_DIR = DATA_DIR / "deal_photos"     # v2-only
 SLAB_PHOTO_DIR = DATA_DIR / "slab_photos"     # v2-only: slab label photos
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 GRADING_COMPANIES = ["PSA", "BGS", "CGC", "TAG"]
 PAYMENT_METHODS   = ["cash", "venmo", "zelle", "paypal", "trade", "mixed"]
@@ -129,6 +129,24 @@ CREATE TABLE IF NOT EXISTS psa_budget (
     day  TEXT PRIMARY KEY,
     used INTEGER NOT NULL DEFAULT 0
 );
+
+-- cash pool: starting balance + manual add/subtract entries.
+-- current balance = SUM(cash_ledger.amount) + SUM(deals.cash_amount)
+CREATE TABLE IF NOT EXISTS cash_ledger (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at TEXT NOT NULL,
+    amount      REAL NOT NULL,          -- signed: + deposit, - withdrawal
+    memo        TEXT NOT NULL DEFAULT ''
+);
+
+-- per-card market value history (recorded on every reprice)
+CREATE TABLE IF NOT EXISTS price_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id      INTEGER NOT NULL REFERENCES graded_cards(id),
+    recorded_at  TEXT NOT NULL,
+    market_value REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_price_history_card ON price_history(card_id, recorded_at);
 """
 
 # New columns for both card tables. Existing columns are preserved exactly.
@@ -154,6 +172,9 @@ def migrate_schema(conn: sqlite3.Connection):
         # graded_cards gains a year column (slab labels carry it; v1 never had one)
         if table == "graded_cards" and "year" not in existing:
             conn.execute("ALTER TABLE graded_cards ADD COLUMN year TEXT NOT NULL DEFAULT ''")
+        # ungraded_cards gains submitted_at (stamped when sent to grading)
+        if table == "ungraded_cards" and "submitted_at" not in existing:
+            conn.execute("ALTER TABLE ungraded_cards ADD COLUMN submitted_at TEXT")
 
     conn.execute(
         "INSERT OR REPLACE INTO v2_meta (key, value) VALUES ('is_v2', '1')")

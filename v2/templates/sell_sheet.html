@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sell at {{ pct }}% — CardVault</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font: 12px/1.45 -apple-system, "Helvetica Neue", Arial, sans-serif;
+         color: #1a1a1a; padding: 26px 30px; background: #fff; }
+  h1 { font-size: 19px; margin-bottom: 2px; }
+  .sub { color: #666; font-size: 11px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #1a1a1a; color: #fff; text-align: left; padding: 6px 8px;
+       font-size: 9px; text-transform: uppercase; letter-spacing: .5px; }
+  td { padding: 6px 8px; border-bottom: 1px solid #eee; font-size: 11px; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .chip { display: inline-block; padding: 1px 6px; border: 1px solid #999;
+          border-radius: 4px; font-size: 9px; font-weight: 700; }
+  .pos { color: #1a7f37; font-weight: 600; }
+  .tip { color: #555; font-size: 11px; float: right; }
+  @media print {
+    body { padding: 0; }
+    @page { margin: 1.2cm 1.4cm; }
+    .tip { display: none; }
+    tr:nth-child(even) td { background: #fafafa !important;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+  <span class="tip">Cmd+P to print</span>
+  <h1>Sell at {{ pct }}% of market</h1>
+  <div class="sub">{{ rows|length }} cards · total potential profit
+    ${{ "{:,.2f}".format(total_profit) }} · CardVault v2</div>
+  <table>
+    <thead><tr>
+      <th style="width:24px">#</th><th style="width:70px">Grade</th><th>Card</th>
+      <th style="width:56px">Card #</th><th class="num" style="width:80px">Basis</th>
+      <th class="num" style="width:84px">Market</th>
+      <th class="num" style="width:84px">{{ pct }}% Price</th>
+      <th class="num" style="width:80px">Profit</th>
+      <th style="width:90px">Sold ✓</th>
+    </tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td><span class="chip">{{ r.company }} {{ r.grade }}</span></td>
+        <td><strong>{{ r.name }}</strong></td>
+        <td>{{ ('#' + r.number) if r.number else '' }}</td>
+        <td class="num">${{ "{:,.2f}".format(r.basis) }}</td>
+        <td class="num">${{ "{:,.2f}".format(r.market) }}</td>
+        <td class="num">${{ "{:,.2f}".format(r.sale) }}</td>
+        <td class="num pos">${{ "{:,.2f}".format(r.profit) }}</td>
+        <td style="border-bottom:1px solid #bbb"></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

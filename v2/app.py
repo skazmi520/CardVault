@@ -63,9 +63,15 @@ def dashboard():
             "n_out": len(det["cards_out"]), "n_in": len(det["cards_in"]),
             "gain": round(sum((x["realized_gain"] or 0) for x in det["cards_out"]), 2),
         })
+    tstats = v2cards.trade_stats(c)
+    cash = v2cards.cash_summary(c)
+    movers = v2cards.top_movers(c)
+    grading = v2cards.at_grading(c)
+    sell = v2cards.sell_candidates(c)
     c.close()
     return render_template("dashboard.html", active="dashboard",
-                           stats=stats, extras=extras,
+                           stats=stats, extras=extras, tstats=tstats,
+                           cash=cash, movers=movers, grading=grading, sell=sell,
                            snaps_json=json.dumps(snaps), recent=recent)
 
 
@@ -283,6 +289,150 @@ def api_photo_reject(import_id):
     v2photos.reject(c, import_id)
     c.close()
     return jsonify({"ok": True})
+
+
+@app.post("/api/cash")
+def api_cash():
+    p = request.get_json(force=True)
+    try:
+        amount = float(str(p.get("amount", "")).replace("$", "").replace(",", ""))
+    except ValueError:
+        return jsonify({"ok": False, "error": "amount must be a number"}), 400
+    if amount == 0:
+        return jsonify({"ok": False, "error": "amount cannot be zero"}), 400
+    c = conn()
+    v2cards.add_cash_entry(c, amount, p.get("memo", ""))
+    summary = v2cards.cash_summary(c)
+    c.close()
+    return jsonify({"ok": True, "balance": summary["balance"]})
+
+
+# ── Phase 5: reports ────────────────────────────────────────────────────────────
+
+def _realized_rows(c, year: str | None):
+    rows = []
+    for table in ("graded_cards", "ungraded_cards"):
+        for r in c.execute(f"SELECT * FROM {table} WHERE status='disposed' OR is_sold=1"
+                           if table == "graded_cards" else
+                           f"SELECT * FROM {table} WHERE status='disposed'"):
+            disposed = (r["disposed_at"] or (r["sale_date"] if table == "graded_cards" else "") or "")
+            if year and not disposed.startswith(year):
+                continue
+            basis = (r["acquisition_price"] if table == "graded_cards" else r["purchase_price"]) or 0
+            proceeds = r["disposal_proceeds"]
+            if proceeds is None and table == "graded_cards":
+                proceeds = r["sale_price"]
+            gain = r["realized_gain"]
+            if gain is None and proceeds is not None:
+                gain = round(proceeds - basis, 2)
+            rows.append({
+                "name": r["card_name"], "kind": "slab" if table == "graded_cards" else "raw",
+                "company": r["grading_company"] if table == "graded_cards" else "",
+                "grade": r["grade"] if table == "graded_cards" else "",
+                "acq_date": (r["acquisition_date"] if table == "graded_cards"
+                             else r["purchase_date"]) or "",
+                "basis": basis, "disposed": disposed[:10],
+                "proceeds": proceeds, "gain": gain,
+                "deal_id": r["disposed_via_deal_id"],
+            })
+    rows.sort(key=lambda x: x["disposed"], reverse=True)
+    return rows
+
+
+@app.get("/reports")
+def reports_page():
+    year = request.args.get("year") or ""
+    c = conn()
+    years = sorted({(r[0] or "")[:4] for r in c.execute(
+        "SELECT disposed_at FROM graded_cards WHERE disposed_at IS NOT NULL "
+        "UNION SELECT sale_date FROM graded_cards WHERE sale_date IS NOT NULL "
+        "UNION SELECT disposed_at FROM ungraded_cards WHERE disposed_at IS NOT NULL")
+        if r[0]}, reverse=True)
+    rows = _realized_rows(c, year or None)
+    c.close()
+    totals = {"basis": round(sum(r["basis"] or 0 for r in rows), 2),
+              "proceeds": round(sum(r["proceeds"] or 0 for r in rows), 2),
+              "gain": round(sum(r["gain"] or 0 for r in rows), 2)}
+    return render_template("reports.html", active="reports", rows=rows,
+                           years=years, year=year, totals=totals)
+
+
+@app.get("/reports/realized.csv")
+def realized_csv():
+    import csv
+    import io
+    year = request.args.get("year") or None
+    c = conn()
+    rows = _realized_rows(c, year)
+    c.close()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Card", "Type", "Company", "Grade", "Acquired", "Basis",
+                "Disposed", "Proceeds", "Gain", "Deal ID"])
+    for r in rows:
+        w.writerow([r["name"], r["kind"], r["company"], r["grade"], r["acq_date"],
+                    r["basis"], r["disposed"], r["proceeds"], r["gain"],
+                    r["deal_id"] or ""])
+    return app.response_class(
+        buf.getvalue(), mimetype="text/csv",
+        headers={"Content-Disposition":
+                 f"attachment; filename=realized_gains{('_' + year) if year else ''}.csv"})
+
+
+@app.get("/reports/deals.csv")
+def deals_csv():
+    import csv
+    import io
+    c = conn()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Deal ID", "Date", "Counterparty", "Location", "Method",
+                "Cash Amount", "Direction", "Line Type", "Card", "Company",
+                "Grade", "Basis", "Proceeds", "Gain", "Notes"])
+    for d in list_deals(c):
+        det = get_deal(c, d["id"])
+        base = [d["id"], d["occurred_at"], d["counterparty"], d["location"],
+                d["payment_method"], d["cash_amount"]]
+        if not det["cards_out"] and not det["cards_in"]:
+            w.writerow(base + ["", "", "", "", "", "", "", "", d["notes"]])
+        for x in det["cards_out"]:
+            basis = (x["acquisition_price"] if x["_table"] == "graded_cards"
+                     else x["purchase_price"]) or 0
+            w.writerow(base + ["out", "slab" if x["_table"] == "graded_cards" else "raw",
+                               x["card_name"], x.get("grading_company", ""),
+                               x.get("grade", ""), basis, x["disposal_proceeds"],
+                               x["realized_gain"], d["notes"]])
+        for x in det["cards_in"]:
+            basis = (x["acquisition_price"] if x["_table"] == "graded_cards"
+                     else x["purchase_price"]) or 0
+            w.writerow(base + ["in", "slab" if x["_table"] == "graded_cards" else "raw",
+                               x["card_name"], x.get("grading_company", ""),
+                               x.get("grade", ""), basis, "", "", d["notes"]])
+    c.close()
+    return app.response_class(
+        buf.getvalue(), mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=deal_history.csv"})
+
+
+@app.get("/sell-sheet")
+def sell_sheet():
+    pct = int(request.args.get("pct", 85))
+    c = conn()
+    rows = []
+    for r in c.execute("SELECT * FROM graded_cards WHERE status='active' "
+                       "AND market_value IS NOT NULL"):
+        sale = r["market_value"] * pct / 100
+        profit = sale - (r["acquisition_price"] or 0)
+        if profit > 0:
+            rows.append({"name": r["card_name"], "company": r["grading_company"],
+                         "grade": r["grade"], "number": r["card_number"] or "",
+                         "basis": r["acquisition_price"] or 0,
+                         "market": r["market_value"], "sale": round(sale, 2),
+                         "profit": round(profit, 2)})
+    c.close()
+    rows.sort(key=lambda x: -x["profit"])
+    return render_template("sell_sheet.html", rows=rows, pct=pct,
+                           total_profit=round(sum(r["profit"] for r in rows), 2))
 
 
 @app.get("/backfill")

@@ -302,6 +302,11 @@ def save_deal(conn, *,
                      basis, deal_date, acq_type,
                      (v_out if acq_type != "Cash" else 0.0), trade_details,
                      ln.notes, datetime.now().isoformat(), deal_id))
+            if ln.is_graded and agreed > 0:
+                # seed price history so movers/repricing have a baseline
+                conn.execute(
+                    "INSERT INTO price_history (card_id, recorded_at, market_value) "
+                    "VALUES (?,?,?)", (cur.lastrowid, occurred_at, agreed))
             in_lines.append({"table": "graded_cards" if ln.is_graded else "ungraded_cards",
                              "card_id": cur.lastrowid, "name": ln.card_name,
                              "agreed_value": agreed, "basis": basis})

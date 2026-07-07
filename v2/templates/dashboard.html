@@ -16,6 +16,11 @@
   <div class="tile"><div class="v {{ 'pos' if stats.unrealized >= 0 else 'neg' }}">{{ stats.unrealized|gain }}</div><div class="l">Unrealized Gain</div></div>
   <div class="tile"><div class="v {{ 'pos' if stats.realized_ytd >= 0 else 'neg' }}">{{ stats.realized_ytd|gain }}</div><div class="l">Realized Gain YTD</div></div>
   <div class="tile"><div class="v">{{ stats.slabs }} <span class="muted" style="font-size:13px">slabs</span> · {{ stats.raw }} <span class="muted" style="font-size:13px">raw</span></div><div class="l">Active Cards</div></div>
+  <div class="tile"><div class="v">{{ cash.balance|money }}</div><div class="l">Cash on Hand</div>
+    <div class="d muted">{{ cash.days }}d: <span class="pos">+{{ cash.flow_in|money }}</span> / <span class="neg">-{{ cash.flow_out|money }}</span></div></div>
+  <div class="tile"><div class="v">{{ tstats.win_rate ~ '%' if tstats.win_rate is not none else '—' }}</div><div class="l">Win Rate ({{ tstats.disposals }} disposals)</div></div>
+  <div class="tile"><div class="v {{ 'pos' if tstats.avg_profit and tstats.avg_profit >= 0 else 'neg' if tstats.avg_profit else '' }}">{{ tstats.avg_profit|gain if tstats.avg_profit is not none else '—' }}</div><div class="l">Avg Profit / Disposal</div></div>
+  <div class="tile"><div class="v">{{ tstats.deals }}</div><div class="l">Deals Recorded</div></div>
 </div>
 
 <div class="panel">
@@ -46,6 +51,78 @@
       <span class="num {{ 'pos' if t.gain >= 0 else 'neg' }}" style="width:92px;text-align:right">{{ t.gain|gain }}</span>
     </div>
     {% endfor %}
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="panel">
+    <h2>Top Movers <span class="muted">(vs previous reprice)</span></h2>
+    {% if movers %}
+      {% for m in movers %}
+      <div class="list-row">
+        <span class="chip">{{ m.company }} {{ m.grade }}</span>
+        <span class="grow"><strong>{{ m.name }}</strong></span>
+        <span class="muted num">{{ m.prev|money }} → {{ m.now|money }}</span>
+        <span class="num {{ 'pos' if m.delta >= 0 else 'neg' }}" style="width:110px;text-align:right">
+          {{ m.delta|gain }}{% if m.pct is not none %} ({{ m.pct }}%){% endif %}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+    <div class="muted">No movement recorded yet — every reprice now logs price history,
+      so this fills in as you do repricing passes.</div>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Cash Pool</h2>
+    <div class="row" style="margin-bottom:10px">
+      <div><label>Adjust (+ deposit / − withdraw)</label>
+        <input type="text" id="cash-amt" placeholder="e.g. 500 or -200" style="width:150px"></div>
+      <div style="flex:1"><label>Memo</label>
+        <input type="text" id="cash-memo" placeholder="starting pool, ATM, show float…" style="width:100%"></div>
+      <div><button class="btn" id="cash-add">Add entry</button></div>
+    </div>
+    <div class="muted" id="cash-msg" style="font-size:12px">
+      {% if not cash.has_ledger %}Set your starting pool with a first deposit entry —
+      deal cash flows are layered on top automatically.{% endif %}
+    </div>
+    {% for e in cash.recent %}
+    <div class="list-row">
+      <span class="muted" style="width:82px">{{ e.occurred_at[:10] }}</span>
+      <span class="grow">{{ e.memo or '—' }}</span>
+      <span class="num {{ 'pos' if e.amount >= 0 else 'neg' }}">{{ e.amount|gain }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="panel">
+    <h2>Sell-List Candidates</h2>
+    <div class="attention">
+      <a href="/sell-sheet?pct=85" target="_blank">
+        <div class="n pos">{{ sell[85].count }}</div>
+        <div class="t">profitable at 85% · {{ sell[85].profit|money }} potential → print sheet</div>
+      </a>
+      <a href="/sell-sheet?pct=88" target="_blank">
+        <div class="n pos">{{ sell[88].count }}</div>
+        <div class="t">profitable at 88% · {{ sell[88].profit|money }} potential → print sheet</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>At Grading</h2>
+    {% if grading %}
+      {% for g in grading %}
+      <div class="list-row">
+        <span class="grow"><strong>{{ g.name }}</strong> <span class="muted">→ {{ g.target }}</span></span>
+        <span class="muted">{{ (g.days ~ ' days out') if g.days is not none else 'submitted date unknown' }}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+    <div class="muted">Nothing out at grading.</div>
+    {% endif %}
   </div>
 </div>
 
@@ -88,5 +165,15 @@
 
 <script>
   lineChart(document.getElementById("chart"), {{ snaps_json|safe }});
+  document.getElementById("cash-add").addEventListener("click", async () => {
+    const msg = document.getElementById("cash-msg");
+    try {
+      await postJSON("/api/cash", {
+        amount: document.getElementById("cash-amt").value,
+        memo: document.getElementById("cash-memo").value,
+      });
+      location.reload();
+    } catch (e) { msg.textContent = e.message; msg.className = "neg"; }
+  });
 </script>
 {% endblock %}
