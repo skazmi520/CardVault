@@ -53,3 +53,15 @@ def get_keys() -> dict:
         "anthropic_api_key": pick("ANTHROPIC_API_KEY"),
         "psa_api_token": pick("PSA_API_TOKEN"),
     }
+
+
+def get_host() -> str:
+    """Bind address for the web server.
+
+    Default 127.0.0.1 (this Mac only). Set CARDVAULT_HOST=0.0.0.0 in
+    ~/.cardvaultmac/v2.env to reach the app from other devices — e.g. your
+    phone over Tailscale (http://<laptop-tailscale-name>:5177).
+    """
+    file_vals = _read_env_file()
+    return (os.environ.get("CARDVAULT_HOST")
+            or file_vals.get("CARDVAULT_HOST") or "127.0.0.1")
