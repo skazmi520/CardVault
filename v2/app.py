@@ -592,8 +592,11 @@ def main():
     v2db.migrate_schema(guard)      # idempotent — applies any new v2 tables
     guard.close()
     config.ensure_env_file()        # create ~/.cardvaultmac/v2.env template
-    print("CardVault v2 — http://127.0.0.1:5177  (Ctrl+C to stop)")
-    app.run(host="127.0.0.1", port=5177, debug=False)
+    host = config.get_host()
+    print(f"CardVault v2 — http://{'127.0.0.1' if host == '127.0.0.1' else host}:5177  (Ctrl+C to stop)")
+    if host != "127.0.0.1":
+        print("  bound to all interfaces — reachable from your tailnet/LAN devices")
+    app.run(host=host, port=5177, debug=False)
 
 
 if __name__ == "__main__":
