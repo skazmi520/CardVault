@@ -329,6 +329,8 @@ def _realized_rows(c, year: str | None):
                 "name": r["card_name"], "kind": "slab" if table == "graded_cards" else "raw",
                 "company": r["grading_company"] if table == "graded_cards" else "",
                 "grade": r["grade"] if table == "graded_cards" else "",
+                "set": r["set_name"] or "",
+                "cert": (r["serial_number"] or "") if table == "graded_cards" else "",
                 "acq_date": (r["acquisition_date"] if table == "graded_cards"
                              else r["purchase_date"]) or "",
                 "basis": basis, "disposed": disposed[:10],
@@ -367,12 +369,12 @@ def realized_csv():
     c.close()
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Card", "Type", "Company", "Grade", "Acquired", "Basis",
-                "Moved", "Proceeds", "Gain", "Deal ID"])
+    w.writerow(["Card", "Type", "Company", "Grade", "Set", "Cert", "Acquired",
+                "Basis", "Moved", "Proceeds", "Gain", "Deal ID"])
     for r in rows:
-        w.writerow([r["name"], r["kind"], r["company"], r["grade"], r["acq_date"],
-                    r["basis"], r["disposed"], r["proceeds"], r["gain"],
-                    r["deal_id"] or ""])
+        w.writerow([r["name"], r["kind"], r["company"], r["grade"], r["set"],
+                    r["cert"], r["acq_date"], r["basis"], r["disposed"],
+                    r["proceeds"], r["gain"], r["deal_id"] or ""])
     return app.response_class(
         buf.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition":
