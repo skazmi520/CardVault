@@ -50,12 +50,16 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
 # ── repricing ───────────────────────────────────────────────────────────────────
 
 def reprice(conn, card_id: int, market_value: float | None):
-    """Update a graded card's market value; stamps market_value_updated."""
+    """Update a graded card's market value; stamps market_value_updated and
+    appends to price_history (which feeds the Top Movers panel)."""
+    now = datetime.now().isoformat(timespec="seconds")
     conn.execute(
         "UPDATE graded_cards SET market_value=?, market_value_updated=? WHERE id=?",
-        (market_value,
-         datetime.now().isoformat(timespec="seconds") if market_value is not None else None,
-         card_id))
+        (market_value, now if market_value is not None else None, card_id))
+    if market_value is not None:
+        conn.execute(
+            "INSERT INTO price_history (card_id, recorded_at, market_value) VALUES (?,?,?)",
+            (card_id, now, market_value))
     conn.commit()
 
 
@@ -102,6 +106,13 @@ def set_grading_status(conn, ungraded_id: int, grading_status: str):
     conn.execute(
         "UPDATE ungraded_cards SET grading_status=?, status=? WHERE id=? AND status != 'promoted'",
         (grading_status, status, ungraded_id))
+    if grading_status == "At Grading":
+        # stamp submission time once (kept if already set)
+        conn.execute(
+            "UPDATE ungraded_cards SET submitted_at=COALESCE(submitted_at, ?) WHERE id=?",
+            (datetime.now().isoformat(timespec="seconds"), ungraded_id))
+    else:
+        conn.execute("UPDATE ungraded_cards SET submitted_at=NULL WHERE id=?", (ungraded_id,))
     conn.commit()
 
 
@@ -194,6 +205,109 @@ def dashboard_extras(conn) -> dict:
 
     return {"companies": comp, "top": top, "stale": stale,
             "at_grading": at_grading, "never_priced": never_priced, "delta": delta}
+
+
+# ── cash ledger ─────────────────────────────────────────────────────────────────
+
+def add_cash_entry(conn, amount: float, memo: str = "", occurred_at: str | None = None):
+    conn.execute(
+        "INSERT INTO cash_ledger (occurred_at, amount, memo) VALUES (?,?,?)",
+        (occurred_at or datetime.now().isoformat(timespec="seconds"),
+         round(float(amount), 2), memo))
+    conn.commit()
+
+
+def cash_summary(conn, days: int = 30) -> dict:
+    """Current balance (ledger + all deal cash) and last-N-days flow."""
+    ledger = conn.execute("SELECT COALESCE(SUM(amount),0) FROM cash_ledger").fetchone()[0]
+    deals = conn.execute("SELECT COALESCE(SUM(cash_amount),0) FROM deals").fetchone()[0]
+    cutoff = date.fromordinal(date.today().toordinal() - days).isoformat()
+    flow_in = conn.execute(
+        "SELECT COALESCE(SUM(cash_amount),0) FROM deals WHERE cash_amount>0 AND occurred_at>=?",
+        (cutoff,)).fetchone()[0] + conn.execute(
+        "SELECT COALESCE(SUM(amount),0) FROM cash_ledger WHERE amount>0 AND occurred_at>=?",
+        (cutoff,)).fetchone()[0]
+    flow_out = conn.execute(
+        "SELECT COALESCE(SUM(cash_amount),0) FROM deals WHERE cash_amount<0 AND occurred_at>=?",
+        (cutoff,)).fetchone()[0] + conn.execute(
+        "SELECT COALESCE(SUM(amount),0) FROM cash_ledger WHERE amount<0 AND occurred_at>=?",
+        (cutoff,)).fetchone()[0]
+    recent = conn.execute(
+        "SELECT * FROM cash_ledger ORDER BY occurred_at DESC, id DESC LIMIT 5").fetchall()
+    return {"balance": round(ledger + deals, 2),
+            "flow_in": round(flow_in, 2), "flow_out": round(abs(flow_out), 2),
+            "net": round(flow_in + flow_out, 2), "days": days,
+            "recent": [dict(r) for r in recent],
+            "has_ledger": conn.execute("SELECT COUNT(*) FROM cash_ledger").fetchone()[0] > 0}
+
+
+# ── dashboard: trade stats / movers / grading / sell candidates ────────────────
+
+def trade_stats(conn) -> dict:
+    rows = conn.execute(
+        "SELECT realized_gain FROM graded_cards WHERE realized_gain IS NOT NULL "
+        "UNION ALL SELECT realized_gain FROM ungraded_cards WHERE realized_gain IS NOT NULL"
+    ).fetchall()
+    gains = [r["realized_gain"] for r in rows]
+    wins = sum(1 for g in gains if g > 0)
+    n_deals = conn.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+    return {"disposals": len(gains),
+            "win_rate": round(wins / len(gains) * 100, 1) if gains else None,
+            "avg_profit": round(sum(gains) / len(gains), 2) if gains else None,
+            "deals": n_deals}
+
+
+def top_movers(conn, limit: int = 5) -> list[dict]:
+    """Cards whose two most recent price points differ — biggest $ moves first."""
+    movers = []
+    cards = conn.execute(
+        "SELECT id, card_name, grading_company, grade FROM graded_cards "
+        "WHERE status='active'").fetchall()
+    for c in cards:
+        pts = conn.execute(
+            "SELECT market_value, recorded_at FROM price_history WHERE card_id=? "
+            "ORDER BY recorded_at DESC, id DESC LIMIT 2", (c["id"],)).fetchall()
+        if len(pts) == 2 and pts[0]["market_value"] != pts[1]["market_value"]:
+            delta = round(pts[0]["market_value"] - pts[1]["market_value"], 2)
+            movers.append({"name": c["card_name"], "company": c["grading_company"],
+                           "grade": c["grade"], "now": pts[0]["market_value"],
+                           "prev": pts[1]["market_value"], "delta": delta,
+                           "pct": round(delta / pts[1]["market_value"] * 100, 1)
+                                  if pts[1]["market_value"] else None})
+    movers.sort(key=lambda m: -abs(m["delta"]))
+    return movers[:limit]
+
+
+def at_grading(conn) -> list[dict]:
+    out = []
+    today = date.today()
+    for r in conn.execute("SELECT * FROM ungraded_cards WHERE status='submitted_for_grading'"):
+        days = None
+        if r["submitted_at"]:
+            try:
+                days = (today - date.fromisoformat(r["submitted_at"][:10])).days
+            except ValueError:
+                pass
+        out.append({"id": r["id"], "name": r["card_name"],
+                    "target": r["target_grading_company"] or "—", "days": days})
+    return out
+
+
+def sell_candidates(conn) -> dict:
+    """How many active slabs are profitable sold at 85% / 88% of market."""
+    res = {}
+    for pct in (85, 88):
+        n = profit = 0.0
+        n = 0
+        for r in conn.execute(
+                "SELECT acquisition_price, market_value FROM graded_cards "
+                "WHERE status='active' AND market_value IS NOT NULL"):
+            p = r["market_value"] * pct / 100 - (r["acquisition_price"] or 0)
+            if p > 0:
+                n += 1
+                profit += p
+        res[pct] = {"count": n, "profit": round(profit, 2)}
+    return res
 
 
 def record_snapshot(conn):
