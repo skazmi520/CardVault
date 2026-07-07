@@ -250,9 +250,12 @@ def trade_stats(conn) -> dict:
     ).fetchall()
     gains = [r["realized_gain"] for r in rows]
     wins = sum(1 for g in gains if g > 0)
+    # win rate over decided outcomes only — even trades ($0 gain, e.g. trade
+    # settlements at cost) are excluded from the denominator
+    decided = [g for g in gains if g != 0]
     n_deals = conn.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
-    return {"disposals": len(gains),
-            "win_rate": round(wins / len(gains) * 100, 1) if gains else None,
+    return {"moved": len(gains), "decided": len(decided),
+            "win_rate": round(wins / len(decided) * 100, 1) if decided else None,
             "avg_profit": round(sum(gains) / len(gains), 2) if gains else None,
             "deals": n_deals}
 

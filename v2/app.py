@@ -368,7 +368,7 @@ def realized_csv():
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Card", "Type", "Company", "Grade", "Acquired", "Basis",
-                "Disposed", "Proceeds", "Gain", "Deal ID"])
+                "Moved", "Proceeds", "Gain", "Deal ID"])
     for r in rows:
         w.writerow([r["name"], r["kind"], r["company"], r["grade"], r["acq_date"],
                     r["basis"], r["disposed"], r["proceeds"], r["gain"],
