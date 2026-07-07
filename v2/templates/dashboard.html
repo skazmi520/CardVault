@@ -18,8 +18,8 @@
   <div class="tile"><div class="v">{{ stats.slabs }} <span class="muted" style="font-size:13px">slabs</span> · {{ stats.raw }} <span class="muted" style="font-size:13px">raw</span></div><div class="l">Active Cards</div></div>
   <div class="tile"><div class="v">{{ cash.balance|money }}</div><div class="l">Cash on Hand</div>
     <div class="d muted">{{ cash.days }}d: <span class="pos">+{{ cash.flow_in|money }}</span> / <span class="neg">-{{ cash.flow_out|money }}</span></div></div>
-  <div class="tile"><div class="v">{{ tstats.win_rate ~ '%' if tstats.win_rate is not none else '—' }}</div><div class="l">Win Rate ({{ tstats.disposals }} disposals)</div></div>
-  <div class="tile"><div class="v {{ 'pos' if tstats.avg_profit and tstats.avg_profit >= 0 else 'neg' if tstats.avg_profit else '' }}">{{ tstats.avg_profit|gain if tstats.avg_profit is not none else '—' }}</div><div class="l">Avg Profit / Disposal</div></div>
+  <div class="tile"><div class="v">{{ tstats.win_rate ~ '%' if tstats.win_rate is not none else '—' }}</div><div class="l">Win Rate ({{ tstats.decided }} decided · even trades excl.)</div></div>
+  <div class="tile"><div class="v {{ 'pos' if tstats.avg_profit and tstats.avg_profit >= 0 else 'neg' if tstats.avg_profit else '' }}">{{ tstats.avg_profit|gain if tstats.avg_profit is not none else '—' }}</div><div class="l">Avg Profit / Card Moved ({{ tstats.moved }})</div></div>
   <div class="tile"><div class="v">{{ tstats.deals }}</div><div class="l">Deals Recorded</div></div>
 </div>
 

@@ -12,7 +12,7 @@
     </select>
     <a class="btn ghost small" href="/reports/realized.csv{{ ('?year=' + year) if year }}">Export CSV</a>
     <a class="btn ghost small" href="/reports/deals.csv">Export deal history CSV</a>
-    <span class="muted">{{ rows|length }} disposals · basis {{ totals.basis|money }} ·
+    <span class="muted">{{ rows|length }} cards moved · basis {{ totals.basis|money }} ·
       proceeds {{ totals.proceeds|money }} ·
       gain <span class="{{ 'pos' if totals.gain >= 0 else 'neg' }}">{{ totals.gain|gain }}</span></span>
   </div>
@@ -20,7 +20,7 @@
   <div class="table-wrap"><table>
     <thead><tr>
       <th>Card</th><th>Type</th><th>Acquired</th><th class="num">Basis</th>
-      <th>Disposed</th><th class="num">Proceeds</th><th class="num">Gain</th><th>Deal</th>
+      <th>Moved</th><th class="num">Proceeds</th><th class="num">Gain</th><th>Deal</th>
     </tr></thead>
     <tbody>
       {% for r in rows %}
