@@ -30,13 +30,24 @@ cat > "$APP/Contents/MacOS/launcher" <<EOF
 #!/bin/bash
 DIR="$PROJ"
 URL="http://127.0.0.1:5177"
+LOG="\$HOME/.cardvaultmac/v2_server.log"
+
 if ! curl -s -o /dev/null --max-time 1 "\$URL"; then
-  cd "\$DIR"
-  nohup "$PYTHON" -m v2.app >> "\$HOME/.cardvaultmac/v2_server.log" 2>&1 &
+  echo "=== launch \$(date '+%Y-%m-%d %H:%M:%S') ===" >> "\$LOG"
+  # Don't depend on cd (Documents may be TCC-blocked for app bundles):
+  # PYTHONPATH makes the v2 package importable from anywhere.
+  export PYTHONPATH="\$DIR"
+  cd "\$DIR" 2>>"\$LOG" || echo "cd failed (Documents access?) — using PYTHONPATH" >> "\$LOG"
+  nohup "$PYTHON" -m v2.app >> "\$LOG" 2>&1 &
+  ok=""
   for i in \$(seq 1 40); do
-    curl -s -o /dev/null --max-time 1 "\$URL" && break
+    curl -s -o /dev/null --max-time 1 "\$URL" && ok=1 && break
     sleep 0.3
   done
+  if [ -z "\$ok" ]; then
+    osascript -e 'display dialog "CardVault v2 failed to start.\n\nIf macOS asked about Documents access, click Allow and try again.\n\nDetails: ~/.cardvaultmac/v2_server.log" buttons {"OK"} default button 1 with title "CardVault v2"' >/dev/null 2>&1
+    exit 1
+  fi
 fi
 open "\$URL"
 EOF
