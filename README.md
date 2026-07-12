@@ -1,137 +1,106 @@
-# CardVault Mac
+# CardVault
 
-A macOS desktop app for tracking Pokemon card inventory, grading submissions, sales history, and portfolio analytics. Built with Python and customtkinter for a native-feeling macOS UI that follows system dark/light mode.
+Track a Pokémon card collection like a portfolio: inventory, deals (buy / sell /
+multi-card trades with cash), raw-card grading workflow, slab-photo recognition,
+repricing, and realized-gains reporting.
 
----
-
-## Features
-
-- **Dashboard** — portfolio stats, company breakdown, value-over-time chart, monthly P&L chart, top holdings, inventory aging, recent sales, and favorited cards
-- **Inventory** — graded card collection (PSA, CGC, BGS, TAG) with photos, market values, and profit/loss tracking
-- **Ungraded** — raw card tracking with grading submission workflow and grading-return conversion
-- **Sold** — complete sales history with realized profit, acquisition type, and notes
-- **Deal Calculator** — calculate cost basis and profit projections at any market percentage
-- **Trade Evaluator** — compare multi-card trades side by side, optionally pulling cards from your live inventory
+**CardVault v2** is a local web app (Flask + a dark, Collectr-style UI) that runs
+on your Mac and is usable from your phone over Tailscale. The original desktop
+app (**v1**, CustomTkinter) remains in the repo as legacy.
 
 ---
 
-## Requirements
+## Install (v2 — fresh install, no v1 required)
 
-### macOS system dependencies
-
-**Python 3.10+** is required. macOS does not ship with Python 3 by default on modern versions (Ventura and later). Install one of two ways:
-
-**Option A — python.org installer (recommended, includes Tkinter):**
-1. Download from https://www.python.org/downloads/
-2. Run the `.pkg` installer — Tkinter is bundled automatically
-
-**Option B — Homebrew:**
-```bash
-brew install python
-brew install python-tk   # required — Tkinter is NOT included with Homebrew Python by default
-```
-
-> **Note:** If you see `ModuleNotFoundError: No module named 'tkinter'`, you are missing the Tk dependency. Use the python.org installer or run `brew install python-tk`.
-
-### Python packages
-
-All Python dependencies are installed automatically by `run.sh`. They are listed in `requirements.txt`:
-
-| Package | Version | Purpose |
-|---|---|---|
-| `customtkinter` | ≥ 5.2.0 | Modern macOS-style UI widgets |
-| `Pillow` | ≥ 10.0.0 | Card photo thumbnails |
-| `matplotlib` | ≥ 3.7.0 | Portfolio and profit charts |
-| `tkcalendar` | ≥ 1.6.1 | Date pickers in add/edit dialogs |
-
----
-
-## Installation & Running
+**Requirement:** Python 3.10+ (`brew install python` or [python.org](https://www.python.org/downloads/)).
 
 ```bash
-# Clone the repo
 git clone <repo-url>
 cd CardVaultMac
-
-# Run (creates .venv and installs deps automatically)
-bash run.sh
+./v2/install.sh
 ```
 
-Or manually:
+The installer:
+1. installs the Python dependencies (`flask`, `Pillow`)
+2. creates the v2 database at `~/.cardvaultmac/cardvault_v2.db`
+   - **fresh machine** → a new empty database
+   - **existing v1 database found** → migrates your v1 data into v2
+     (v1 is opened read-only and never modified)
+3. builds **CardVault v2.app** — drag it to your Dock
+
+Run it:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python3 main.py
+python3 -m v2.app          # → http://127.0.0.1:5177
+# or double-click "CardVault v2.app"
 ```
 
----
+## v2 features
 
-## Data Storage
+- **Dashboard** — market value, cost basis, unrealized & realized YTD gains,
+  cash pool with ledger, value-over-time chart, grader breakdown, top holdings,
+  top movers, sell-list candidates, at-grading tracker
+- **Collection** — dense sortable table over slabs + raw, search/filters,
+  inline market-value repricing with keyboard flow, per-card edit modal
+- **Deals** — every transaction is one deal: cards out, cards in, signed cash;
+  pro-rata allocation, reconcile warnings, per-card realized gains; Show Day
+  running totals for shows
+- **Raw & Grading** — grading pipeline; promotion rolls grading cost into basis
+- **Slab Photos** — batch label extraction via the Anthropic API
+  (claude-haiku-4-5 vision, <1¢/slab), PSA cert verification (free public API,
+  permanently cached), review screen with per-field accept, legacy backfill mode
+- **Reports** — realized gains by year, sold-card search, CSV exports
 
-All persistent data is stored in `~/.cardvaultmac/`:
+### Optional API keys
+
+Put keys in `~/.cardvaultmac/v2.env` (created on first run, never committed):
+
+```
+ANTHROPIC_API_KEY=   # slab photo extraction (pay-as-you-go)
+PSA_API_TOKEN=       # free — register at psacard.com/publicapi
+CARDVAULT_HOST=      # set to 0.0.0.0 to use from your phone via Tailscale
+```
+
+Without keys, photo features degrade to manual entry; everything else works.
+
+### Data locations
 
 ```
 ~/.cardvaultmac/
-├── cardvault.db        # SQLite database
-└── photos/             # Card photo files
+├── cardvault_v2.db     # v2 database (all v2 data)
+├── cardvault.db        # v1 database (legacy — never written by v2)
+├── v2.env              # API keys / config
+├── slab_photos/        # slab label photos
+├── deal_photos/        # deal documentation photos
+├── photos/             # v1 card photos
+└── backups/            # v1 daily local backups
 ```
 
-The database is created automatically on first launch. It is **not** stored in the project directory and is excluded from version control.
+See [v2/README.md](v2/README.md) for architecture, schema, and rollback details.
 
 ---
 
-## CSV Import (one-time backfill)
+## v1 (legacy desktop app)
 
-`import_from_csv.py` supports importing from Google Sheets exports. Export each sheet as a separate CSV and run:
+The original CustomTkinter desktop app. Not required for v2 — kept for
+reference and rollback.
+
+<details>
+<summary>v1 install &amp; usage</summary>
+
+Requires Tkinter (`brew install python-tk` if using Homebrew Python).
 
 ```bash
-source .venv/bin/activate
-python3 import_from_csv.py
+bash run.sh          # creates .venv, installs deps, launches
 ```
 
-The script will prompt for the path to each CSV file. Supported sheets:
+v1 stores data in `~/.cardvaultmac/cardvault.db` with daily backups to
+`~/.cardvaultmac/backups/` and iCloud Drive.
 
-| Sheet | Columns |
-|---|---|
-| PSA / CGC / BGS / TAG | Card Name, Grade, Purchase Price, Grading Fee, Current Value, Potential Profit/Loss, Total Cost |
-| SOLD | Card Name, Grade, Purchase Price, Grade Fee, Total Cost, Trade Value, Cash Value, Profit/Loss |
-| RAW | Card Name, Purchase Price, Current Value, Expected Grade, Graded Price, At PSA? |
+**CSV import** (one-time Google Sheets backfill): `python3 import_from_csv.py`
+with PSA/CGC/BGS/TAG/SOLD/RAW sheet exports.
 
-- Trade Value and Cash Value are **summed** to support partial trade + partial cash deals
-- "At PSA?" = Yes sets grading status to "At Grading"
-- All imported records are tagged with `"Imported from Google Sheets"` in the notes field
-
----
-
-## Project Structure
-
-```
-CardVaultMac/
-├── main.py                  # App entry point, window, sidebar navigation
-├── database.py              # SQLite schema, migrations, and all CRUD helpers
-├── dashboard_view.py        # Dashboard with stats, charts, and summary sections
-├── inventory_view.py        # Graded card list, add/edit/detail dialogs
-├── ungraded_view.py         # Ungraded card list and grading return workflow
-├── sold_view.py             # Sold history table
-├── deal_calculator_view.py  # Market % cost and profit projection calculator
-├── trade_evaluator_view.py  # Multi-card trade comparison tool
-├── import_from_csv.py       # One-time CSV backfill from Google Sheets exports
-├── requirements.txt         # Python package dependencies
-└── run.sh                   # Launcher script (creates venv, installs deps, runs app)
-```
-
----
-
-## Portfolio Snapshots
-
-Because market values are updated manually (no live pricing API), the "Portfolio Value Over Time" chart is powered by manual snapshots. After repricing your cards:
-
-1. Open the Dashboard
-2. Click **Save Snapshot** in the "Portfolio Value Over Time" section
-
-Each snapshot records the date and total portfolio value. One snapshot per day is stored (re-saving the same day updates it in place).
+</details>
 
 ---
 

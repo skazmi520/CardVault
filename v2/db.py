@@ -160,6 +160,82 @@ _CARD_NEW_COLS = [
 ]
 
 
+# Base card tables for a FRESH v2 install (no v1 to copy). Column-compatible
+# with v1 so migrate_v1_to_v2 and init_fresh produce identical schemas.
+_BASE_DDL = """
+CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date TEXT    NOT NULL,
+    total_value   REAL    NOT NULL,
+    card_count    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS graded_cards (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    serial_number        TEXT    NOT NULL DEFAULT '',
+    grading_company      TEXT    NOT NULL,
+    grade                TEXT    NOT NULL DEFAULT '',
+    card_name            TEXT    NOT NULL,
+    card_number          TEXT    NOT NULL DEFAULT '',
+    set_name             TEXT    NOT NULL DEFAULT '',
+    photo_filename       TEXT,
+    acquisition_type     TEXT    NOT NULL DEFAULT 'Cash',
+    acquisition_price    REAL    NOT NULL DEFAULT 0,
+    grading_fee          REAL    NOT NULL DEFAULT 0,
+    trade_value          REAL    NOT NULL DEFAULT 0,
+    trade_details        TEXT    NOT NULL DEFAULT '',
+    acquisition_date     TEXT    NOT NULL,
+    notes                TEXT    NOT NULL DEFAULT '',
+    date_added           TEXT    NOT NULL,
+    market_value         REAL,
+    market_value_updated TEXT,
+    is_favorited         INTEGER NOT NULL DEFAULT 0,
+    is_sold              INTEGER NOT NULL DEFAULT 0,
+    sale_price           REAL,
+    sale_date            TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ungraded_cards (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_name              TEXT    NOT NULL,
+    card_number            TEXT    NOT NULL DEFAULT '',
+    set_name               TEXT    NOT NULL DEFAULT '',
+    year                   TEXT    NOT NULL DEFAULT '',
+    photo_filename         TEXT,
+    purchase_price         REAL    NOT NULL DEFAULT 0,
+    purchase_date          TEXT    NOT NULL,
+    acquisition_type       TEXT    NOT NULL DEFAULT 'Cash',
+    trade_value            REAL    NOT NULL DEFAULT 0,
+    trade_details          TEXT    NOT NULL DEFAULT '',
+    notes                  TEXT    NOT NULL DEFAULT '',
+    grading_status         TEXT    NOT NULL DEFAULT 'Not Slated',
+    target_grading_company TEXT    NOT NULL DEFAULT '',
+    is_favorited           INTEGER NOT NULL DEFAULT 0,
+    date_added             TEXT    NOT NULL,
+    is_converted           INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
+def init_fresh(db_path: Path | None = None) -> Path:
+    """Create a brand-new, EMPTY v2 database (no v1 required).
+
+    Refuses to overwrite an existing database. Returns the path created.
+    """
+    path = db_path or V2_DB_PATH
+    if path.exists():
+        raise FileExistsError(f"{path} already exists — refusing to overwrite")
+    DATA_DIR.mkdir(exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.executescript(_BASE_DDL)
+        migrate_schema(conn)
+    finally:
+        conn.close()
+    return path
+
+
 def migrate_schema(conn: sqlite3.Connection):
     """Apply v2 schema additions. Idempotent."""
     conn.executescript(_V2_DDL)
