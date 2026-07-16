@@ -20,7 +20,12 @@
     <option value="unchecked">Unchecked only</option>
     <option value="checked">Checked only</option>
   </select>
-  <span class="muted" style="font-size:12px">Tap a row to check it off · progress is saved on this device</span>
+  <select id="f-stale">
+    <option value="">Any price age</option>
+    <option value="stale">Not repriced in 30+ days</option>
+    <option value="none">No market value</option>
+  </select>
+  <span class="muted" style="font-size:12px">Tap a row to check off · click a price to edit · saved on this device</span>
 </div>
 
 <div class="table-wrap">
@@ -30,7 +35,8 @@
       <th style="width:86px">Grade</th>
       <th>Card</th>
       <th style="width:70px">Card #</th>
-      <th class="num" style="width:120px">Market Value</th>
+      <th class="num" style="width:130px">Market Value</th>
+      <th style="width:96px">Repriced</th>
     </tr></thead>
     <tbody id="tbody"></tbody>
   </table>
@@ -46,13 +52,20 @@ let view = [];
 
 function save() { localStorage.setItem(KEY, JSON.stringify([...checked])); }
 
+function isStale(r) {
+  if (!r.repriced) return true;
+  return (Date.now() - new Date(r.repriced.slice(0, 10))) / 864e5 > 30;
+}
+
 function applyFilters() {
   const q = $("f-search").value.trim().toLowerCase();
-  const co = $("f-company").value, show = $("f-show").value;
+  const co = $("f-company").value, show = $("f-show").value, stale = $("f-stale").value;
   view = CARDS.filter(r => {
     if (co && r.company !== co) return false;
     if (show === "checked" && !checked.has(r.id)) return false;
     if (show === "unchecked" && checked.has(r.id)) return false;
+    if (stale === "stale" && !isStale(r)) return false;
+    if (stale === "none" && r.market_value !== null) return false;
     if (q) {
       const hay = (r.name + " " + r.set + " " + r.cert + " " + r.number).toLowerCase();
       if (!hay.includes(q)) return false;
@@ -63,15 +76,17 @@ function applyFilters() {
 }
 
 function render() {
-  tbody.innerHTML = view.map(r => `
-    <tr data-id="${r.id}" style="cursor:pointer${checked.has(r.id) ? ';opacity:.5' : ''}">
+  tbody.innerHTML = view.map((r, i) => `
+    <tr data-id="${r.id}" data-i="${i}" style="cursor:pointer${checked.has(r.id) ? ';opacity:.5' : ''}">
       <td style="text-align:center;font-size:16px">${checked.has(r.id) ? "☑" : "☐"}</td>
       <td><span class="chip">${esc(r.company)} ${esc(r.grade)}</span></td>
       <td><strong style="${checked.has(r.id) ? 'text-decoration:line-through' : ''}">${esc(r.name)}</strong>
         ${r.set ? `<span class="muted"> · ${esc(r.set)}</span>` : ''}
         ${r.cert ? `<div class="muted" style="font-size:11px">cert ${esc(r.cert)}</div>` : ''}</td>
       <td class="muted">${r.number ? "#" + esc(r.number) : "—"}</td>
-      <td class="num">${fmt(r.market_value)}</td>
+      <td class="num mv-cell" data-i="${i}" title="Click to reprice">${fmt(r.market_value)}</td>
+      <td class="${isStale(r) ? 'stale' : 'muted'}" style="font-size:11px">
+        ${r.repriced ? r.repriced.slice(0, 10) : "never"}</td>
     </tr>`).join("");
   const total = CARDS.length;
   const done = CARDS.filter(c => checked.has(c.id)).length;
@@ -79,8 +94,45 @@ function render() {
   $("progress").className = "sub " + (done === total && total ? "pos" : "");
 }
 
+/* inline repricing — same flow as Collection: Enter saves, Tab saves + next row */
+function beginPrice(i) {
+  const r = view[i];
+  if (!r) return;
+  const cell = tbody.querySelector(`td.mv-cell[data-i="${i}"]`);
+  if (!cell || cell.querySelector("input")) return;
+  cell.innerHTML = `<input type="text" value="${r.market_value ?? ""}">`;
+  const inp = cell.querySelector("input");
+  inp.focus(); inp.select();
+
+  const commit = async (moveNext) => {
+    const raw = inp.value.trim().replace(/[$,]/g, "");
+    if (raw !== "" && isNaN(parseFloat(raw))) { inp.focus(); return; }
+    try {
+      const res = await postJSON("/api/reprice",
+        { card_id: r.id, market_value: raw === "" ? null : parseFloat(raw) });
+      r.market_value = res.market_value;
+      r.repriced = res.repriced || "";
+    } catch (e) { alert("Save failed: " + e.message); }
+    applyFilters();
+    if (moveNext) {
+      // row may have filtered out from under us — land on the same index
+      const next = Math.min(i + 1, view.length - 1);
+      if (next >= 0 && view.length) beginPrice(next);
+    }
+  };
+  inp.addEventListener("keydown", ev => {
+    if (ev.key === "Enter") { ev.preventDefault(); commit(false); }
+    else if (ev.key === "Tab") { ev.preventDefault(); commit(true); }
+    else if (ev.key === "Escape") { render(); }
+    ev.stopPropagation();
+  });
+  inp.addEventListener("blur", () => { if (tbody.contains(inp)) commit(false); });
+}
+
 const tbody = $("tbody");
 tbody.addEventListener("click", e => {
+  const priceCell = e.target.closest("td.mv-cell");
+  if (priceCell) { beginPrice(+priceCell.dataset.i); return; }   // price edit, not a check-off
   const tr = e.target.closest("tr");
   if (!tr) return;
   const id = +tr.dataset.id;
@@ -93,7 +145,7 @@ $("reset").addEventListener("click", () => {
   if (!checked.size || confirm("Clear all check marks?")) { checked.clear(); save(); applyFilters(); }
 });
 
-["f-search", "f-company", "f-show"].forEach(id =>
+["f-search", "f-company", "f-show", "f-stale"].forEach(id =>
   $(id).addEventListener("input", applyFilters));
 
 // keep the print link scoped to the grader filter

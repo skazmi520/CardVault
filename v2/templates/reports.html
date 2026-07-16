@@ -42,6 +42,24 @@
   </table></div>
 </div>
 
+<div class="panel">
+  <h2>Google Sheets Export</h2>
+  <p class="muted" style="margin-bottom:12px">
+    Same sheet layout as the old Google Drive workbook — PSA / BGS / CGC / TAG /
+    SOLD / RAW. Download the zip, drop the CSVs into Drive, and you can look up
+    your collection from your phone with the laptop off.
+  </p>
+  <div class="row">
+    <div><a class="btn" href="/reports/sheets.zip">Download all sheets (.zip)</a></div>
+    <div style="align-self:center" class="muted">
+      or single sheets:
+      {% for s in ["PSA", "BGS", "CGC", "TAG", "SOLD", "RAW"] %}
+      <a href="/reports/sheet/{{ s }}.csv">{{ s }}</a>{{ " · " if not loop.last }}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 <script>
 const search = document.getElementById("search");
 const allRows = [...document.querySelectorAll("tbody tr")];
