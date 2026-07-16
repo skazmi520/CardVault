@@ -6,29 +6,21 @@
   <button class="btn ghost small" id="clear">Clear</button>
 </div>
 
-<div class="panel">
-  <div class="row">
-    <div>
-      <label>Value my cards at</label>
-      <div style="display:flex;gap:4px;align-items:center">
-        {% for p in [70, 75, 80, 85, 90, 100] %}
-        <button type="button" class="btn ghost small pct-btn" data-pct="{{ p }}">{{ p }}%</button>
-        {% endfor %}
-        <input type="text" id="pct" value="100" style="width:64px;text-align:right">
-        <span class="muted">%</span>
-      </div>
-    </div>
-    <div style="align-self:center" class="muted" style="font-size:12px">
-      Applies to inventory cards on the giving side — model what you'd accept.
-    </div>
-  </div>
-</div>
-
 <div class="deal-grid">
   <!-- ── giving ── -->
   <div class="panel deal-col">
     <h2><span>I Give <span class="muted">(from inventory)</span></span>
         <span id="give-count" class="muted"></span></h2>
+
+    <div style="display:flex;gap:4px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <span class="muted" style="font-size:12px">value at</span>
+      {% for p in [80, 85, 90, 100] %}
+      <button type="button" class="btn ghost small pct-btn" data-side="give" data-pct="{{ p }}">{{ p }}%</button>
+      {% endfor %}
+      <input type="text" id="give-pct" value="100" style="width:56px;text-align:right">
+      <span class="muted">% of market</span>
+    </div>
+
     <div style="position:relative;margin-bottom:10px">
       <input type="text" id="give-search" placeholder="Search inventory to add…" style="width:100%">
       <div class="picker-results" id="give-results" hidden></div>
@@ -40,6 +32,16 @@
   <!-- ── getting ── -->
   <div class="panel deal-col">
     <h2><span>I Get</span><span id="get-count" class="muted"></span></h2>
+
+    <div style="display:flex;gap:4px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <span class="muted" style="font-size:12px">take at</span>
+      {% for p in [70, 75, 80, 85, 90, 100] %}
+      <button type="button" class="btn ghost small pct-btn" data-side="get" data-pct="{{ p }}">{{ p }}%</button>
+      {% endfor %}
+      <input type="text" id="get-pct" value="80" style="width:56px;text-align:right">
+      <span class="muted">% of market</span>
+    </div>
+
     <div id="get-lines"></div>
     <button class="btn ghost small" id="add-get">+ Add card</button>
   </div>
@@ -55,7 +57,8 @@
 <div class="totals-bar">
   <div>Giving <span class="big" id="t-give">$0.00</span>
     <span class="muted" id="t-give-note" style="font-size:11px"></span></div>
-  <div>Getting <span class="big" id="t-get">$0.00</span></div>
+  <div>Getting <span class="big" id="t-get">$0.00</span>
+    <span class="muted" id="t-get-note" style="font-size:11px"></span></div>
   <div>Cash <span class="big" id="t-cash">$0.00</span></div>
   <div id="t-net" class="big"></div>
   <div style="flex:1"></div>
@@ -69,47 +72,61 @@ const KEY = "cardvault_evaluator";
 const $ = id => document.getElementById(id);
 const num = s => { const v = parseFloat(String(s).replace(/[$,]/g, "")); return isNaN(v) ? null : v; };
 
-// give: {table,id,name,label,mv,basis,manual?,value?}   get: {name,value}
-let give = [], get = [], cash = "", pct = "100";
+// give: {table,id,name,label,mv,basis,manual?,value?}
+// get:  {name, mv, value?}   — value overrides the %-derived figure
+let give = [], get = [];
 
-/* ── persistence so a half-built deal survives a refresh ── */
+/* ── persistence so a half-built evaluation survives a refresh ── */
 function save() {
-  localStorage.setItem(KEY, JSON.stringify({ give, get, cash: $("cash").value, pct: $("pct").value }));
+  localStorage.setItem(KEY, JSON.stringify({
+    give, get, cash: $("cash").value,
+    givePct: $("give-pct").value, getPct: $("get-pct").value }));
 }
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) || "{}");
     give = s.give || []; get = s.get || [];
-    $("cash").value = s.cash || ""; $("pct").value = s.pct || "100";
+    $("cash").value = s.cash || "";
+    $("give-pct").value = s.givePct || "100";
+    $("get-pct").value = s.getPct || "80";
   } catch {}
 }
 
-/* ── value maths ── */
-function pctVal() { return num($("pct").value) ?? 100; }
+/* ── value maths: each side has its own % of market ── */
+const givePct = () => num($("give-pct").value) ?? 100;
+const getPct  = () => num($("get-pct").value) ?? 100;
+
 function giveValue(l) {
-  if (l.manual) return num(l.value) ?? 0;
-  if (l.value !== undefined && l.value !== "") return num(l.value) ?? 0;  // explicit override
-  return (l.mv ?? 0) * pctVal() / 100;                                     // % of market
+  if (l.value !== undefined && l.value !== "") return num(l.value) ?? 0;   // explicit override
+  if (l.manual) return 0;                                                  // manual needs a value
+  return (l.mv ?? 0) * givePct() / 100;
 }
-function getValue(l) { return num(l.value) ?? 0; }
+function getValue(l) {
+  if (l.value !== undefined && l.value !== "") return num(l.value) ?? 0;   // explicit override
+  return (num(l.mv) ?? 0) * getPct() / 100;
+}
 
 function render() {
   $("give-lines").innerHTML = give.map((l, i) => `
     <div class="deal-line">
       <span class="grow">${esc(l.label)}
-        ${l.manual ? "" : `<span class="muted">mv ${fmt(l.mv)}${l.basis != null ? " · basis " + fmt(l.basis) : ""}</span>`}</span>
+        ${l.manual ? "" : `<span class="muted">mv ${fmt(l.mv)}</span>`}</span>
       <input class="val" type="text" data-side="give" data-i="${i}"
-             placeholder="${l.manual ? "value" : fmt((l.mv ?? 0) * pctVal() / 100)}"
-             value="${esc(l.value ?? "")}">
+             placeholder="${l.manual ? "value" : fmt((l.mv ?? 0) * givePct() / 100)}"
+             value="${esc(l.value ?? "")}" title="Override the %-derived value">
       <span class="x" data-rm-give="${i}">✕</span>
     </div>`).join("") || '<div class="muted" style="margin-bottom:8px">Nothing yet.</div>';
 
   $("get-lines").innerHTML = get.map((l, i) => `
     <div class="deal-line">
-      <input type="text" placeholder="Card name" style="flex:1;min-width:120px"
+      <input type="text" placeholder="Card name" style="flex:1;min-width:110px"
              data-get="${i}" data-f="name" value="${esc(l.name)}">
-      <input class="val" type="text" placeholder="value" data-side="get" data-i="${i}"
-             value="${esc(l.value ?? "")}">
+      <input type="text" placeholder="market $" style="width:92px;text-align:right"
+             data-get="${i}" data-f="mv" value="${esc(l.mv ?? "")}">
+      <input class="val" type="text" data-side="get" data-i="${i}"
+             placeholder="${fmt((num(l.mv) ?? 0) * getPct() / 100)}"
+             value="${esc(l.value ?? "")}" style="width:92px"
+             title="Override the %-derived value">
       <span class="x" data-rm-get="${i}">✕</span>
     </div>`).join("") || '<div class="muted" style="margin-bottom:8px">Nothing yet.</div>';
 
@@ -124,7 +141,13 @@ function bind() {
       save(); totals();
     }));
   document.querySelectorAll("[data-get][data-f]").forEach(el =>
-    el.addEventListener("input", () => { get[+el.dataset.get].name = el.value; save(); }));
+    el.addEventListener("input", () => {
+      const l = get[+el.dataset.get];
+      l[el.dataset.f] = el.value;
+      save();
+      if (el.dataset.f === "mv") render();   // refresh the %-derived placeholder
+      else totals();
+    }));
   document.querySelectorAll("[data-rm-give]").forEach(x =>
     x.addEventListener("click", () => { give.splice(+x.dataset.rmGive, 1); save(); render(); }));
   document.querySelectorAll("[data-rm-get]").forEach(x =>
@@ -142,7 +165,8 @@ function totals() {
   $("t-cash").textContent = fmtGain(c);
   $("give-count").textContent = give.length + " cards";
   $("get-count").textContent  = get.length + " cards";
-  $("t-give-note").textContent = pctVal() !== 100 ? `@ ${pctVal()}% of market` : "";
+  $("t-give-note").textContent = givePct() !== 100 ? `@ ${givePct()}%` : "";
+  $("t-get-note").textContent  = getPct() !== 100 ? `@ ${getPct()}%` : "";
 
   const n = $("t-net");
   if (!give.length && !get.length && !c) { n.textContent = ""; return; }
@@ -151,7 +175,7 @@ function totals() {
   n.className = "big " + gainClass(Math.abs(net) < 0.01 ? 0 : net);
 }
 
-/* ── inventory picker ── */
+/* ── inventory picker (give side) ── */
 const search = $("give-search"), results = $("give-results");
 search.addEventListener("input", () => {
   const q = search.value.trim().toLowerCase();
@@ -189,18 +213,24 @@ $("add-give-manual").addEventListener("click", () => {
   give.push({ manual: true, name: "", label: "Manual line", value: "" });
   save(); render();
 });
-$("add-get").addEventListener("click", () => { get.push({ name: "", value: "" }); save(); render(); });
+$("add-get").addEventListener("click", () => {
+  get.push({ name: "", mv: "", value: "" }); save(); render();
+});
 
-/* ── % controls ── */
+/* ── % controls (independent per side) ── */
 document.querySelectorAll(".pct-btn").forEach(b =>
-  b.addEventListener("click", () => { $("pct").value = b.dataset.pct; save(); render(); }));
-$("pct").addEventListener("input", () => { save(); render(); });
+  b.addEventListener("click", () => {
+    $(b.dataset.side + "-pct").value = b.dataset.pct;
+    save(); render();
+  }));
+["give-pct", "get-pct"].forEach(id => $(id).addEventListener("input", () => { save(); render(); }));
 $("cash").addEventListener("input", () => { save(); totals(); });
 
 $("clear").addEventListener("click", () => {
   if (!give.length && !get.length) return;
   if (confirm("Clear this evaluation?")) {
-    give = []; get = []; $("cash").value = ""; $("pct").value = "100";
+    give = []; get = []; $("cash").value = "";
+    $("give-pct").value = "100"; $("get-pct").value = "80";
     save(); render();
   }
 });
@@ -215,7 +245,7 @@ $("convert").addEventListener("click", () => {
     cards_out: give.filter(l => !l.manual).map(l => ({
       table: l.table, id: l.id, deal_value: giveValue(l).toFixed(2) })),
     cards_in: get.filter(l => (l.name || "").trim()).map(l => ({
-      name: l.name, deal_value: (num(l.value) ?? 0).toFixed(2) })),
+      name: l.name, deal_value: getValue(l).toFixed(2) })),
     cash: $("cash").value,
   };
   const dropped = give.filter(l => l.manual).length;
