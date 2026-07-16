@@ -514,6 +514,34 @@ def api_card_update():
     }})
 
 
+@app.post("/api/psa/lookup")
+def api_psa_lookup():
+    """Look up a PSA cert on demand (e.g. from the New Deal 'cards in' row).
+    Cache-first and budget-aware — reuses the same client as Slab Photos."""
+    p = request.get_json(force=True)
+    cert = str(p.get("cert", "")).strip()
+    if not cert:
+        return jsonify({"ok": False, "error": "Enter a cert number first."}), 400
+
+    c = conn()
+    token = config.get_keys()["psa_api_token"]
+    res = psa_api.lookup_cert(c, cert, token)
+    c.close()
+
+    if res["status"] in ("cached", "fetched"):
+        return jsonify({"ok": True, "status": res["status"], "data": res["data"]})
+
+    messages = {
+        "not_found": "No PSA record found for that cert number.",
+        "no_token": "No PSA_API_TOKEN configured — add one in ~/.cardvaultmac/v2.env.",
+        "rate_limited": "PSA API is briefly throttled — try again in a moment.",
+        "queued": res.get("error") or "Today's PSA lookup budget is used up — resumes tomorrow.",
+        "error": res.get("error") or "PSA lookup failed.",
+    }
+    return jsonify({"ok": False, "status": res["status"],
+                    "error": messages.get(res["status"], res["status"])}), 200
+
+
 @app.post("/api/deals")
 def api_save_deal():
     p = request.get_json(force=True)
