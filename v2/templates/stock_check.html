@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Stock Check{% endblock %}
+{% block content %}
+<div class="page-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+  <span>Stock Check <span class="sub" id="progress">0 / {{ total }} checked</span></span>
+  <span style="display:flex;gap:8px">
+    <a class="btn ghost small" id="print-link" href="/stock-check/print" target="_blank">Print list</a>
+    <button class="btn ghost small" id="reset">Reset all</button>
+  </span>
+</div>
+
+<div class="filters">
+  <input type="text" id="f-search" placeholder="Search name, set, cert…  ( / )">
+  <select id="f-company">
+    <option value="">All graders</option>
+    {% for c in companies %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+  </select>
+  <select id="f-show">
+    <option value="">Show all</option>
+    <option value="unchecked">Unchecked only</option>
+    <option value="checked">Checked only</option>
+  </select>
+  <span class="muted" style="font-size:12px">Tap a row to check it off · progress is saved on this device</span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th style="width:44px"></th>
+      <th style="width:86px">Grade</th>
+      <th>Card</th>
+      <th style="width:70px">Card #</th>
+      <th class="num" style="width:120px">Market Value</th>
+    </tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+const CARDS = {{ cards_json|safe }};
+const KEY = "cardvault_stock_check";
+const $ = id => document.getElementById(id);
+
+let checked = new Set(JSON.parse(localStorage.getItem(KEY) || "[]"));
+let view = [];
+
+function save() { localStorage.setItem(KEY, JSON.stringify([...checked])); }
+
+function applyFilters() {
+  const q = $("f-search").value.trim().toLowerCase();
+  const co = $("f-company").value, show = $("f-show").value;
+  view = CARDS.filter(r => {
+    if (co && r.company !== co) return false;
+    if (show === "checked" && !checked.has(r.id)) return false;
+    if (show === "unchecked" && checked.has(r.id)) return false;
+    if (q) {
+      const hay = (r.name + " " + r.set + " " + r.cert + " " + r.number).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  render();
+}
+
+function render() {
+  tbody.innerHTML = view.map(r => `
+    <tr data-id="${r.id}" style="cursor:pointer${checked.has(r.id) ? ';opacity:.5' : ''}">
+      <td style="text-align:center;font-size:16px">${checked.has(r.id) ? "☑" : "☐"}</td>
+      <td><span class="chip">${esc(r.company)} ${esc(r.grade)}</span></td>
+      <td><strong style="${checked.has(r.id) ? 'text-decoration:line-through' : ''}">${esc(r.name)}</strong>
+        ${r.set ? `<span class="muted"> · ${esc(r.set)}</span>` : ''}
+        ${r.cert ? `<div class="muted" style="font-size:11px">cert ${esc(r.cert)}</div>` : ''}</td>
+      <td class="muted">${r.number ? "#" + esc(r.number) : "—"}</td>
+      <td class="num">${fmt(r.market_value)}</td>
+    </tr>`).join("");
+  const total = CARDS.length;
+  const done = CARDS.filter(c => checked.has(c.id)).length;
+  $("progress").textContent = `${done} / ${total} checked`;
+  $("progress").className = "sub " + (done === total && total ? "pos" : "");
+}
+
+const tbody = $("tbody");
+tbody.addEventListener("click", e => {
+  const tr = e.target.closest("tr");
+  if (!tr) return;
+  const id = +tr.dataset.id;
+  checked.has(id) ? checked.delete(id) : checked.add(id);
+  save();
+  applyFilters();
+});
+
+$("reset").addEventListener("click", () => {
+  if (!checked.size || confirm("Clear all check marks?")) { checked.clear(); save(); applyFilters(); }
+});
+
+["f-search", "f-company", "f-show"].forEach(id =>
+  $(id).addEventListener("input", applyFilters));
+
+// keep the print link scoped to the grader filter
+$("f-company").addEventListener("input", () => {
+  const co = $("f-company").value;
+  $("print-link").href = "/stock-check/print" + (co ? "?company=" + encodeURIComponent(co) : "");
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key === "/" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") {
+    e.preventDefault(); $("f-search").focus();
+  }
+});
+
+applyFilters();
+</script>
+{% endblock %}

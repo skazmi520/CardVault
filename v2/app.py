@@ -416,6 +416,31 @@ def deals_csv():
         headers={"Content-Disposition": "attachment; filename=deal_history.csv"})
 
 
+@app.get("/stock-check")
+def stock_check():
+    c = conn()
+    cards = [x for x in v2cards.list_cards(c) if x["kind"] == "slab"
+             and x["status"] == "active"]
+    c.close()
+    cards.sort(key=lambda x: ((x["company"] or ""), (x["name"] or "").lower()))
+    companies = sorted({x["company"] for x in cards if x["company"]})
+    return render_template("stock_check.html", active="stock-check",
+                           cards_json=json.dumps(cards), companies=companies,
+                           total=len(cards))
+
+
+@app.get("/stock-check/print")
+def stock_check_print():
+    company = request.args.get("company") or ""
+    c = conn()
+    cards = [x for x in v2cards.list_cards(c) if x["kind"] == "slab"
+             and x["status"] == "active"
+             and (not company or x["company"] == company)]
+    c.close()
+    cards.sort(key=lambda x: ((x["company"] or ""), (x["name"] or "").lower()))
+    return render_template("stock_check_print.html", cards=cards, company=company)
+
+
 @app.get("/sell-sheet")
 def sell_sheet():
     pct = int(request.args.get("pct", 85))
@@ -621,6 +646,7 @@ def main():
     guard = v2db.get_connection()   # startup guard: refuse to boot against v1
     v2db.migrate_schema(guard)      # idempotent — applies any new v2 tables
     guard.close()
+    v2db.backup_v2()                # daily local + iCloud snapshot of the v2 db
     config.ensure_env_file()        # create ~/.cardvaultmac/v2.env template
     host = config.get_host()
     print(f"CardVault v2 — http://{'127.0.0.1' if host == '127.0.0.1' else host}:5177  (Ctrl+C to stop)")
