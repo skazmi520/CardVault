@@ -143,9 +143,13 @@ function renderLines() {
           ${["PSA","BGS","CGC","TAG"].map(co => `<option ${l.company===co?"selected":""}>${co}</option>`).join("")}
         </select>
         <input type="text" placeholder="Grade" style="width:70px" data-in="${i}" data-f="grade" value="${esc(l.grade)}">
-        <input type="text" placeholder="Cert #" style="width:110px" data-in="${i}" data-f="cert" value="${esc(l.cert)}">` : ""}
+        <input type="text" placeholder="Cert #" style="width:110px" data-in="${i}" data-f="cert" value="${esc(l.cert)}">
+        <input type="text" placeholder="Year" style="width:64px" data-in="${i}" data-f="year" value="${esc(l.year)}">
+        ${l.company === "PSA" ? `<button type="button" class="btn ghost small" data-cert-lookup="${i}"
+            title="Fetch name/set/# from PSA">${l._certBusy ? "…" : "PSA ↻"}</button>` : ""}` : ""}
       <input class="val" type="text" placeholder="value" data-side="in" data-i="${i}" value="${esc(l.deal_value)}">
       <span class="x" data-inx="${i}">✕</span>
+      ${l._certMsg ? `<div style="width:100%;font-size:11px;color:var(--${l._certOk ? "pos" : "neg"})">${esc(l._certMsg)}</div>` : ""}
     </div>`).join("") || '<div class="muted" style="margin-bottom:8px">No cards in — pure sale.</div>';
 
   bindLineEvents();
@@ -167,8 +171,34 @@ function bindLineEvents() {
     el.addEventListener("change", () => {
       const l = inLines[+el.dataset.in], f = el.dataset.f;
       if (f === "is_graded") { l.is_graded = !!el.value; renderLines(); }
+      else if (f === "company") { l.company = el.value; renderLines(); }
       else l[f] = el.value;
     }));
+  document.querySelectorAll("[data-cert-lookup]").forEach(btn =>
+    btn.addEventListener("click", () => certLookup(+btn.dataset.certLookup)));
+}
+
+async function certLookup(i) {
+  const l = inLines[i];
+  const cert = (l.cert || "").trim();
+  if (!cert) { l._certMsg = "Enter a cert number first."; l._certOk = false; renderLines(); return; }
+  l._certBusy = true; renderLines();
+  try {
+    const res = await postJSON("/api/psa/lookup", { cert });
+    const d = res.data;
+    if (!l.name)   l.name   = d.card_name   || l.name;
+    if (!l.set)    l.set    = d.set_name    || l.set;
+    if (!l.number) l.number = d.card_number || l.number;
+    if (!l.year)   l.year   = d.year        || l.year;
+    if (!l.grade)  l.grade  = d.grade       || l.grade;
+    l._certMsg = `Filled from PSA cert${res.status === "cached" ? " (cached)" : ""} ✓`;
+    l._certOk = true;
+  } catch (err) {
+    l._certMsg = err.message;
+    l._certOk = false;
+  }
+  l._certBusy = false;
+  renderLines();
 }
 
 function updateTotals() {
