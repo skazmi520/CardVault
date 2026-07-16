@@ -120,7 +120,8 @@ function applyFilters() {
 function render() {
   tbody.innerHTML = view.map((r, i) => `
     <tr data-i="${i}" class="${i === focusIdx ? 'focused' : ''}">
-      <td><strong>${esc(r.name)}</strong>${r.number ? ' <span class="muted">#' + esc(r.number) + '</span>' : ''}</td>
+      <td><strong>${esc(r.name)}</strong>${r.number ? ' <span class="muted">#' + esc(r.number) + '</span>' : ''}
+        ${r.cert ? `<div class="muted" style="font-size:11px">cert ${esc(r.cert)}</div>` : ''}</td>
       <td class="muted">${esc(r.set) || "—"}</td>
       <td>${r.kind === "slab" ? `<span class="chip">${esc(r.company)} ${esc(r.grade)}</span>` : '<span class="chip raw">RAW</span>'}</td>
       <td class="muted">${r.kind}</td>
