@@ -381,6 +381,40 @@ def realized_csv():
                  f"attachment; filename=realized_gains{('_' + year) if year else ''}.csv"})
 
 
+@app.get("/reports/sheets.zip")
+def sheets_zip():
+    """Google Sheets-compatible CSVs (PSA/BGS/CGC/TAG/SOLD/RAW) in one zip —
+    drop into Drive for phone lookups when the laptop is off."""
+    from . import sheets_export
+    c = conn()
+    data, counts = sheets_export.build_zip(c)
+    c.close()
+    return app.response_class(
+        data, mimetype="application/zip",
+        headers={"Content-Disposition":
+                 f"attachment; filename={sheets_export.zip_filename()}"})
+
+
+@app.get("/reports/sheet/<name>.csv")
+def single_sheet(name):
+    """Individual sheet download (PSA, BGS, CGC, TAG, SOLD, RAW)."""
+    from . import sheets_export
+    name = name.upper()
+    c = conn()
+    if name in sheets_export.COMPANIES:
+        content, _ = sheets_export.graded_sheet(c, name)
+    elif name == "SOLD":
+        content, _ = sheets_export.sold_sheet(c)
+    elif name == "RAW":
+        content, _ = sheets_export.raw_sheet(c)
+    else:
+        c.close(); abort(404)
+    c.close()
+    return app.response_class(
+        content, mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={name}.csv"})
+
+
 @app.get("/reports/deals.csv")
 def deals_csv():
     import csv
@@ -414,6 +448,17 @@ def deals_csv():
     return app.response_class(
         buf.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=deal_history.csv"})
+
+
+@app.get("/evaluator")
+def evaluator():
+    """Scratchpad for sizing a trade/deal before committing — combines v1's
+    Trade Evaluator and Deal Calculator. Writes nothing; hands off to /deals/new."""
+    c = conn()
+    cards = [x for x in v2cards.list_cards(c) if x["status"] == "active"]
+    c.close()
+    return render_template("evaluator.html", active="evaluator",
+                           cards_json=json.dumps(cards))
 
 
 @app.get("/stock-check")

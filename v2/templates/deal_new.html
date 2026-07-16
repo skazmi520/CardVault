@@ -260,7 +260,39 @@ $("save").addEventListener("click", async () => {
   }
 });
 
-addIn();       /* seed one incoming row */
+/* ── prefill handed over from the Evaluator ── */
+function applyPrefill() {
+  const raw = sessionStorage.getItem("cardvault_deal_prefill");
+  if (!raw) return false;
+  sessionStorage.removeItem("cardvault_deal_prefill");   // one-shot
+  let p;
+  try { p = JSON.parse(raw); } catch { return false; }
+
+  (p.cards_out || []).forEach(o => {
+    const c = INVENTORY.find(x => x.table === o.table && x.id === o.id);
+    if (!c) return;   // sold/changed since evaluating — skip rather than fake it
+    outLines.push({ table: c.table, id: c.id, name: c.name,
+      label: (c.kind === "slab" ? `${c.company} ${c.grade} · ` : "RAW · ") + c.name,
+      mv: c.market_value ?? c.basis, deal_value: String(o.deal_value ?? "") });
+  });
+  (p.cards_in || []).forEach(i => {
+    inLines.push({ name: i.name || "", set: "", number: "", year: "", company: "PSA",
+                   grade: "", cert: "", is_graded: true,
+                   deal_value: String(i.deal_value ?? "") });
+  });
+  if (p.cash) $("d-cash").value = p.cash;
+
+  const missing = (p.cards_out || []).length - outLines.length;
+  if (missing > 0) {
+    $("save-msg").innerHTML =
+      `<div class="warn">${missing} card(s) from the evaluation are no longer in active inventory and were skipped.</div>`;
+  }
+  return true;
+}
+
+if (!applyPrefill()) addIn();   /* seed one blank incoming row only if not prefilled */
+if (!inLines.length) addIn();
 renderLines();
+updateTotals();
 </script>
 {% endblock %}

@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Evaluator{% endblock %}
+{% block content %}
+<div class="page-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+  <span>Evaluator <span class="sub">scratchpad — nothing is saved until you convert it</span></span>
+  <button class="btn ghost small" id="clear">Clear</button>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <div>
+      <label>Value my cards at</label>
+      <div style="display:flex;gap:4px;align-items:center">
+        {% for p in [70, 75, 80, 85, 90, 100] %}
+        <button type="button" class="btn ghost small pct-btn" data-pct="{{ p }}">{{ p }}%</button>
+        {% endfor %}
+        <input type="text" id="pct" value="100" style="width:64px;text-align:right">
+        <span class="muted">%</span>
+      </div>
+    </div>
+    <div style="align-self:center" class="muted" style="font-size:12px">
+      Applies to inventory cards on the giving side — model what you'd accept.
+    </div>
+  </div>
+</div>
+
+<div class="deal-grid">
+  <!-- ── giving ── -->
+  <div class="panel deal-col">
+    <h2><span>I Give <span class="muted">(from inventory)</span></span>
+        <span id="give-count" class="muted"></span></h2>
+    <div style="position:relative;margin-bottom:10px">
+      <input type="text" id="give-search" placeholder="Search inventory to add…" style="width:100%">
+      <div class="picker-results" id="give-results" hidden></div>
+    </div>
+    <div id="give-lines"></div>
+    <button class="btn ghost small" id="add-give-manual">+ Manual line</button>
+  </div>
+
+  <!-- ── getting ── -->
+  <div class="panel deal-col">
+    <h2><span>I Get</span><span id="get-count" class="muted"></span></h2>
+    <div id="get-lines"></div>
+    <button class="btn ghost small" id="add-get">+ Add card</button>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <div><label>Cash — positive = I receive, negative = I pay</label>
+      <input type="text" id="cash" placeholder="0.00" style="width:160px"></div>
+  </div>
+</div>
+
+<div class="totals-bar">
+  <div>Giving <span class="big" id="t-give">$0.00</span>
+    <span class="muted" id="t-give-note" style="font-size:11px"></span></div>
+  <div>Getting <span class="big" id="t-get">$0.00</span></div>
+  <div>Cash <span class="big" id="t-cash">$0.00</span></div>
+  <div id="t-net" class="big"></div>
+  <div style="flex:1"></div>
+  <button class="btn" id="convert">Convert to Deal →</button>
+</div>
+<div class="muted" style="margin-top:8px;font-size:12px" id="convert-note"></div>
+
+<script>
+const INVENTORY = {{ cards_json|safe }};
+const KEY = "cardvault_evaluator";
+const $ = id => document.getElementById(id);
+const num = s => { const v = parseFloat(String(s).replace(/[$,]/g, "")); return isNaN(v) ? null : v; };
+
+// give: {table,id,name,label,mv,basis,manual?,value?}   get: {name,value}
+let give = [], get = [], cash = "", pct = "100";
+
+/* ── persistence so a half-built deal survives a refresh ── */
+function save() {
+  localStorage.setItem(KEY, JSON.stringify({ give, get, cash: $("cash").value, pct: $("pct").value }));
+}
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY) || "{}");
+    give = s.give || []; get = s.get || [];
+    $("cash").value = s.cash || ""; $("pct").value = s.pct || "100";
+  } catch {}
+}
+
+/* ── value maths ── */
+function pctVal() { return num($("pct").value) ?? 100; }
+function giveValue(l) {
+  if (l.manual) return num(l.value) ?? 0;
+  if (l.value !== undefined && l.value !== "") return num(l.value) ?? 0;  // explicit override
+  return (l.mv ?? 0) * pctVal() / 100;                                     // % of market
+}
+function getValue(l) { return num(l.value) ?? 0; }
+
+function render() {
+  $("give-lines").innerHTML = give.map((l, i) => `
+    <div class="deal-line">
+      <span class="grow">${esc(l.label)}
+        ${l.manual ? "" : `<span class="muted">mv ${fmt(l.mv)}${l.basis != null ? " · basis " + fmt(l.basis) : ""}</span>`}</span>
+      <input class="val" type="text" data-side="give" data-i="${i}"
+             placeholder="${l.manual ? "value" : fmt((l.mv ?? 0) * pctVal() / 100)}"
+             value="${esc(l.value ?? "")}">
+      <span class="x" data-rm-give="${i}">✕</span>
+    </div>`).join("") || '<div class="muted" style="margin-bottom:8px">Nothing yet.</div>';
+
+  $("get-lines").innerHTML = get.map((l, i) => `
+    <div class="deal-line">
+      <input type="text" placeholder="Card name" style="flex:1;min-width:120px"
+             data-get="${i}" data-f="name" value="${esc(l.name)}">
+      <input class="val" type="text" placeholder="value" data-side="get" data-i="${i}"
+             value="${esc(l.value ?? "")}">
+      <span class="x" data-rm-get="${i}">✕</span>
+    </div>`).join("") || '<div class="muted" style="margin-bottom:8px">Nothing yet.</div>';
+
+  bind();
+  totals();
+}
+
+function bind() {
+  document.querySelectorAll("input.val").forEach(inp =>
+    inp.addEventListener("input", () => {
+      (inp.dataset.side === "give" ? give : get)[+inp.dataset.i].value = inp.value;
+      save(); totals();
+    }));
+  document.querySelectorAll("[data-get][data-f]").forEach(el =>
+    el.addEventListener("input", () => { get[+el.dataset.get].name = el.value; save(); }));
+  document.querySelectorAll("[data-rm-give]").forEach(x =>
+    x.addEventListener("click", () => { give.splice(+x.dataset.rmGive, 1); save(); render(); }));
+  document.querySelectorAll("[data-rm-get]").forEach(x =>
+    x.addEventListener("click", () => { get.splice(+x.dataset.rmGet, 1); save(); render(); }));
+}
+
+function totals() {
+  const vGive = give.reduce((s, l) => s + giveValue(l), 0);
+  const vGet  = get.reduce((s, l) => s + getValue(l), 0);
+  const c     = num($("cash").value) ?? 0;
+  const net   = (vGet + c) - vGive;
+
+  $("t-give").textContent = fmt(vGive);
+  $("t-get").textContent  = fmt(vGet);
+  $("t-cash").textContent = fmtGain(c);
+  $("give-count").textContent = give.length + " cards";
+  $("get-count").textContent  = get.length + " cards";
+  $("t-give-note").textContent = pctVal() !== 100 ? `@ ${pctVal()}% of market` : "";
+
+  const n = $("t-net");
+  if (!give.length && !get.length && !c) { n.textContent = ""; return; }
+  n.textContent = Math.abs(net) < 0.01 ? "Even"
+    : net > 0 ? `${fmt(net)} in your favor` : `${fmt(Math.abs(net))} against you`;
+  n.className = "big " + gainClass(Math.abs(net) < 0.01 ? 0 : net);
+}
+
+/* ── inventory picker ── */
+const search = $("give-search"), results = $("give-results");
+search.addEventListener("input", () => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) { results.hidden = true; return; }
+  const taken = new Set(give.filter(l => !l.manual).map(l => l.table + ":" + l.id));
+  const hits = INVENTORY.filter(c =>
+    !taken.has(c.table + ":" + c.id) &&
+    (c.name + " " + c.set + " " + c.cert).toLowerCase().includes(q)).slice(0, 12);
+  results.innerHTML = hits.map(c =>
+    `<div data-i="${INVENTORY.indexOf(c)}">
+       ${c.kind === "slab" ? `<span class="chip">${esc(c.company)} ${esc(c.grade)}</span>`
+                           : '<span class="chip raw">RAW</span>'}
+       ${esc(c.name)} <span class="muted">${esc(c.set)}</span>
+       <span class="muted" style="float:right">${fmt(c.market_value ?? c.basis)}</span>
+     </div>`).join("") || '<div class="muted">no matches</div>';
+  results.hidden = false;
+});
+search.addEventListener("keydown", e => {
+  if (e.key === "Enter") { const f = results.querySelector("div[data-i]"); if (f) pick(+f.dataset.i); }
+  else if (e.key === "Escape") results.hidden = true;
+});
+results.addEventListener("mousedown", e => {
+  const el = e.target.closest("div[data-i]"); if (el) pick(+el.dataset.i);
+});
+function pick(i) {
+  const c = INVENTORY[i];
+  give.push({ table: c.table, id: c.id, name: c.name,
+    label: (c.kind === "slab" ? `${c.company} ${c.grade} · ` : "RAW · ") + c.name,
+    mv: c.market_value ?? c.basis, basis: c.basis });
+  search.value = ""; results.hidden = true;
+  save(); render(); search.focus();
+}
+
+$("add-give-manual").addEventListener("click", () => {
+  give.push({ manual: true, name: "", label: "Manual line", value: "" });
+  save(); render();
+});
+$("add-get").addEventListener("click", () => { get.push({ name: "", value: "" }); save(); render(); });
+
+/* ── % controls ── */
+document.querySelectorAll(".pct-btn").forEach(b =>
+  b.addEventListener("click", () => { $("pct").value = b.dataset.pct; save(); render(); }));
+$("pct").addEventListener("input", () => { save(); render(); });
+$("cash").addEventListener("input", () => { save(); totals(); });
+
+$("clear").addEventListener("click", () => {
+  if (!give.length && !get.length) return;
+  if (confirm("Clear this evaluation?")) {
+    give = []; get = []; $("cash").value = ""; $("pct").value = "100";
+    save(); render();
+  }
+});
+
+/* ── hand off to the real deal screen ── */
+$("convert").addEventListener("click", () => {
+  if (!give.length && !get.length) {
+    $("convert-note").textContent = "Add something to evaluate first.";
+    return;
+  }
+  const payload = {
+    cards_out: give.filter(l => !l.manual).map(l => ({
+      table: l.table, id: l.id, deal_value: giveValue(l).toFixed(2) })),
+    cards_in: get.filter(l => (l.name || "").trim()).map(l => ({
+      name: l.name, deal_value: (num(l.value) ?? 0).toFixed(2) })),
+    cash: $("cash").value,
+  };
+  const dropped = give.filter(l => l.manual).length;
+  sessionStorage.setItem("cardvault_deal_prefill", JSON.stringify(payload));
+  if (dropped) {
+    $("convert-note").textContent =
+      `Note: ${dropped} manual line(s) can't carry over — only inventory cards can leave in a deal.`;
+    setTimeout(() => { location.href = "/deals/new"; }, 1200);
+  } else {
+    location.href = "/deals/new";
+  }
+});
+
+load(); render();
+</script>
+{% endblock %}
