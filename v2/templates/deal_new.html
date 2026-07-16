@@ -188,10 +188,18 @@ function updateTotals() {
   $("in-total").textContent  = inLines.length + " cards";
 
   const bal = $("t-balance");
-  if (vOut !== null && vIn !== null && (outLines.length && inLines.length)) {
-    const diff = vOut - (vIn + cash);
-    if (Math.abs(diff) < 0.01) { bal.textContent = "Balanced ✓"; bal.className = "pos"; }
-    else { bal.textContent = `Off by ${fmt(Math.abs(diff))}`; bal.className = Math.abs(diff) / Math.max(vOut, 0.01) > 0.05 ? "neg" : "muted"; }
+  if (vOut !== null && vIn !== null) {
+    // net = what I receive (cards in + cash) minus what I give up (cards out).
+    // Positive means I come out ahead on this deal — that's the goal, so it's green.
+    const net = (vIn + cash) - vOut;
+    if (Math.abs(net) < 0.01) {
+      bal.textContent = "Balanced ✓";
+    } else if (net > 0) {
+      bal.textContent = `${fmt(net)} in your favor`;
+    } else {
+      bal.textContent = `${fmt(Math.abs(net))} against you`;
+    }
+    bal.className = gainClass(net);
   } else bal.textContent = "";
 }
 ["d-cash", "out-side-total", "in-side-total"].forEach(id =>
