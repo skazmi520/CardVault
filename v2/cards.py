@@ -101,6 +101,51 @@ def promote_raw(conn, ungraded_id: int, *, grading_company: str, grade: str,
     return graded_id
 
 
+def crack_to_raw(conn, graded_id: int, *, target_company: str = "PSA",
+                 grading_status: str = "Slated", note: str = "") -> int:
+    """Reverse of promote_raw: the slab was cracked open, so the card goes back
+    to the raw section (e.g. to be resubmitted to another grader).
+
+    Basis carries over intact — cracking doesn't change what was paid, and any
+    grading fee already sunk into acquisition_price stays in the new raw basis.
+    The graded row is preserved as history with status='cracked'; it is NOT a
+    disposal (nothing sold, no proceeds, no realized gain), so it stays out of
+    realized-gains reporting while dropping out of active inventory.
+    """
+    g = conn.execute("SELECT * FROM graded_cards WHERE id=?", (graded_id,)).fetchone()
+    if g is None:
+        raise ValueError(f"graded card id={graded_id} not found")
+    if g["status"] != "active":
+        raise ValueError(f"card {g['card_name']!r} has status={g['status']!r} — "
+                         "only active slabs can be cracked")
+
+    basis = g["acquisition_price"] or 0.0
+    trail = (f"Cracked out of {g['grading_company']} {g['grade']} slab"
+             + (f" (cert {g['serial_number']})" if (g["serial_number"] or "").strip() else "")
+             + f" on {date.today().isoformat()}")
+    notes = " | ".join(x for x in [(g["notes"] or "").strip(), trail, note.strip()] if x)
+
+    cur = conn.execute(
+        """INSERT INTO ungraded_cards
+             (card_name, card_number, set_name, year, photo_filename,
+              purchase_price, purchase_date, acquisition_type, trade_value,
+              trade_details, notes, grading_status, target_grading_company,
+              date_added, status, acquired_via_deal_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?, ?)""",
+        (g["card_name"], g["card_number"], g["set_name"], g["year"] or "",
+         g["photo_filename"], basis, g["acquisition_date"],
+         g["acquisition_type"] or "Cash", g["trade_value"] or 0.0,
+         g["trade_details"] or "", notes, grading_status, target_company,
+         datetime.now().isoformat(),
+         "submitted_for_grading" if grading_status == "At Grading" else "active",
+         g["acquired_via_deal_id"]))
+    raw_id = cur.lastrowid
+
+    conn.execute("UPDATE graded_cards SET status='cracked' WHERE id=?", (graded_id,))
+    conn.commit()
+    return raw_id
+
+
 def set_grading_status(conn, ungraded_id: int, grading_status: str):
     status = "submitted_for_grading" if grading_status == "At Grading" else "active"
     conn.execute(
