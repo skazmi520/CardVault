@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stock Check{{ ' — ' ~ company if company }} — CardVault</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font: 12px/1.45 -apple-system, "Helvetica Neue", Arial, sans-serif;
+         color: #1a1a1a; padding: 26px 30px; background: #fff; }
+  h1 { font-size: 19px; margin-bottom: 2px; }
+  .sub { color: #666; font-size: 11px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #1a1a1a; color: #fff; text-align: left; padding: 6px 8px;
+       font-size: 9px; text-transform: uppercase; letter-spacing: .5px; }
+  td { padding: 7px 8px; border-bottom: 1px solid #eee; font-size: 11px; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .chip { display: inline-block; padding: 1px 6px; border: 1px solid #999;
+          border-radius: 4px; font-size: 9px; font-weight: 700; }
+  .box { width: 13px; height: 13px; border: 1.5px solid #666; border-radius: 2px; }
+  .cert { color: #888; font-size: 9px; }
+  .tip { color: #555; font-size: 11px; float: right; }
+  @media print {
+    body { padding: 0; }
+    @page { margin: 1.2cm 1.4cm; }
+    .tip { display: none; }
+    tr:nth-child(even) td { background: #fafafa !important;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+  <span class="tip">Cmd+P to print</span>
+  <h1>Stock Check{{ ' — ' ~ company if company }}</h1>
+  <div class="sub">{{ cards|length }} slabs · CardVault v2</div>
+  <table>
+    <thead><tr>
+      <th style="width:26px">✓</th>
+      <th style="width:24px">#</th>
+      <th style="width:74px">Grade</th>
+      <th>Card</th>
+      <th style="width:120px">Set</th>
+      <th style="width:56px">Card #</th>
+      <th class="num" style="width:80px">Value</th>
+    </tr></thead>
+    <tbody>
+      {% for c in cards %}
+      <tr>
+        <td><div class="box"></div></td>
+        <td>{{ loop.index }}</td>
+        <td><span class="chip">{{ c.company }} {{ c.grade }}</span></td>
+        <td><strong>{{ c.name }}</strong>
+          {% if c.cert %}<div class="cert">cert {{ c.cert }}</div>{% endif %}</td>
+        <td>{{ c.set or '' }}</td>
+        <td>{{ ('#' ~ c.number) if c.number else '' }}</td>
+        <td class="num">{{ "${:,.2f}".format(c.market_value) if c.market_value is not none else '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

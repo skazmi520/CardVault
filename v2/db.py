@@ -23,6 +23,11 @@ PHOTO_DIR  = DATA_DIR / "photos"              # shared, read-only from v2's pers
 DEAL_PHOTO_DIR = DATA_DIR / "deal_photos"     # v2-only
 SLAB_PHOTO_DIR = DATA_DIR / "slab_photos"     # v2-only: slab label photos
 
+BACKUP_DIR  = DATA_DIR / "backups"
+ICLOUD_DIR  = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/CardVault Backups"
+LOCAL_KEEP  = 7     # daily local snapshots to retain
+ICLOUD_KEEP = 30    # daily iCloud snapshots to retain
+
 SCHEMA_VERSION = 3
 
 GRADING_COMPANIES = ["PSA", "BGS", "CGC", "TAG"]
@@ -68,6 +73,42 @@ def get_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def backup_v2():
+    """Daily snapshot of the v2 database (local + iCloud). Runs once per day
+    on app start; a failure never blocks startup.
+
+    v1 backed itself up on every launch but only ever covered cardvault.db —
+    the v2 database (deals, cash ledger, price history) had no coverage at all.
+    Files are named cardvault_v2_YYYY-MM-DD.db so they never collide with the
+    v1 backups sitting in the same directories.
+    """
+    if not V2_DB_PATH.exists():
+        return
+    today = date.today().isoformat()
+    destinations = [
+        (BACKUP_DIR / f"cardvault_v2_{today}.db", LOCAL_KEEP, BACKUP_DIR),
+        (ICLOUD_DIR / f"cardvault_v2_{today}.db", ICLOUD_KEEP, ICLOUD_DIR),
+    ]
+    src = sqlite3.connect(V2_DB_PATH)
+    try:
+        for dest_path, keep, dest_dir in destinations:
+            if dest_path.exists():
+                continue                      # already backed up today
+            try:
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dst = sqlite3.connect(dest_path)
+                src.backup(dst)               # WAL-safe consistent snapshot
+                dst.close()
+                # prune old snapshots — only our own v2 dailies
+                old = sorted(dest_dir.glob("cardvault_v2_????-??-??.db"))
+                for f in old[:-keep]:
+                    f.unlink(missing_ok=True)
+            except Exception:
+                pass                          # one bad destination can't block the other
+    finally:
+        src.close()
 
 
 def open_v1_readonly() -> sqlite3.Connection:
