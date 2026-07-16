@@ -34,9 +34,12 @@ GRADING_COMPANIES = ["PSA", "BGS", "CGC", "TAG"]
 PAYMENT_METHODS   = ["cash", "venmo", "zelle", "paypal", "trade", "mixed"]
 
 # Card lifecycle status values (v2)
-#   graded_cards:   active | disposed
+#   graded_cards:   active | disposed | cracked
 #   ungraded_cards: active | submitted_for_grading | promoted
-CARD_STATUSES = ["active", "disposed", "submitted_for_grading", "promoted"]
+# 'cracked' = the slab was broken out and the card returned to raw. The row is
+# kept as history (what it graded, its cert) but is NOT a disposal — nothing was
+# sold and no proceeds were realized; the basis moves to the new raw row.
+CARD_STATUSES = ["active", "disposed", "cracked", "submitted_for_grading", "promoted"]
 
 
 class V2GuardError(RuntimeError):
