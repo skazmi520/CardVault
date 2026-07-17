@@ -23,6 +23,8 @@
     </div>
     <div id="out-lines"></div>
     <div class="row" style="margin-top:8px">
+      <div><label>Cash I pay</label>
+        <input type="text" id="cash-paid" placeholder="0.00" style="width:130px"></div>
       <div><label>Side total (optional — allocates pro rata)</label>
         <input type="text" id="out-side-total" placeholder="$"></div>
     </div>
@@ -33,6 +35,8 @@
     <div id="in-lines"></div>
     <button class="btn ghost small" id="add-in">+ Add card</button>
     <div class="row" style="margin-top:12px">
+      <div><label>Cash I receive</label>
+        <input type="text" id="cash-received" placeholder="0.00" style="width:130px"></div>
       <div><label>Side total (optional)</label>
         <input type="text" id="in-side-total" placeholder="$"></div>
     </div>
@@ -41,8 +45,6 @@
 
 <div class="panel">
   <div class="row">
-    <div><label>Cash — positive = I receive, negative = I pay</label>
-      <input type="text" id="d-cash" placeholder="0.00" style="width:160px"></div>
     <div style="flex:1"><label>Notes</label><input type="text" id="d-notes" style="width:100%"></div>
   </div>
 </div>
@@ -207,18 +209,28 @@ async function certLookup(i) {
   renderLines();
 }
 
+/* Cash is entered per side — no signs to get wrong. The engine still takes one
+   signed amount, so net it here: received - paid. */
+function cashPaid()     { return num($("cash-paid").value) ?? 0; }
+function cashReceived() { return num($("cash-received").value) ?? 0; }
+function netCash()      { return cashReceived() - cashPaid(); }
+
 function updateTotals() {
-  const cash = num($("d-cash").value) ?? 0;
+  const cash = netCash();
   const outVals = outLines.map(l => num(l.deal_value));
   const inVals  = inLines.map(l => num(l.deal_value));
-  const vOut = outVals.every(v => v !== null) && outLines.length
-    ? outVals.reduce((a, b) => a + b, 0) : num($("out-side-total").value);
+  // no cards out is a real value (0 — a pure buy), not an unknown side
+  const vOut = outLines.length
+    ? (outVals.every(v => v !== null)
+        ? outVals.reduce((a, b) => a + b, 0) : num($("out-side-total").value))
+    : 0;
   const vIn = inVals.every(v => v !== null) && inLines.length
     ? inVals.reduce((a, b) => a + b, 0)
     : (inLines.length ? num($("in-side-total").value) : 0);
 
-  $("t-out").textContent = vOut !== null ? fmt(vOut) : "…";
-  $("t-in").textContent  = vIn  !== null ? fmt(vIn)  : "…";
+  // each side's headline includes its own cash, mirroring how the deal is entered
+  $("t-out").textContent = vOut !== null ? fmt(vOut + cashPaid()) : "…";
+  $("t-in").textContent  = vIn  !== null ? fmt(vIn + cashReceived()) : "…";
   $("t-cash").textContent = fmtGain(cash);
   $("out-total").textContent = outLines.length + " cards";
   $("in-total").textContent  = inLines.length + " cards";
@@ -238,7 +250,7 @@ function updateTotals() {
     bal.className = gainClass(net);
   } else bal.textContent = "";
 }
-["d-cash", "out-side-total", "in-side-total"].forEach(id =>
+["cash-paid", "cash-received", "out-side-total", "in-side-total"].forEach(id =>
   $(id).addEventListener("input", updateTotals));
 
 /* ── save ── */
@@ -251,7 +263,7 @@ $("save").addEventListener("click", async () => {
       payment_method: $("d-method").value,
       occurred_at: $("d-when").value ? $("d-when").value + ":00" : null,
       notes: $("d-notes").value,
-      cash_amount: num($("d-cash").value) ?? 0,
+      cash_amount: netCash(),
       out_side_total: num($("out-side-total").value),
       in_side_total: num($("in-side-total").value),
       cards_out: outLines.map(l => ({ table: l.table, id: l.id, deal_value: num(l.deal_value) })),
@@ -300,7 +312,10 @@ function applyPrefill() {
                    deal_value: String(i.deal_value ?? ""),
                    market_value: String(i.market_value ?? "") });
   });
-  if (p.cash) $("d-cash").value = p.cash;
+  // evaluator hands over one signed figure; split it onto the correct side
+  const c = num(p.cash) ?? 0;
+  if (c > 0) $("cash-received").value = c;
+  else if (c < 0) $("cash-paid").value = Math.abs(c);
 
   const missing = (p.cards_out || []).length - outLines.length;
   if (missing > 0) {
