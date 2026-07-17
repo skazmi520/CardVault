@@ -271,6 +271,28 @@ def run(open_browser: bool = True) -> list[Path]:
     return paths
 
 
+def _v1_staleness_warning():
+    """v1 reads cardvault.db. CardVault v2 has its own database, so anything
+    generated here is frozen at whatever v1 last knew — no deals, no basis
+    corrections, none of the cards added since. Refuse to run silently."""
+    import sys
+    from pathlib import Path
+    if not (Path.home() / ".cardvaultmac" / "cardvault_v2.db").exists():
+        return
+    print("=" * 72)
+    print("WARNING: this is the v1 generator and reads the v1 database.")
+    print("A v2 database exists, so this output will be STALE — it will not")
+    print("include deals, corrected cost bases, or any card added in v2.")
+    print("")
+    print("Use v2 instead (python3 -m v2.app):")
+    print("    Reports -> Printable sheet      (full inventory + write-in rows)")
+    print("    Reports -> Sell List            (any % of market)")
+    print("    Stock Check -> Print list       (physical count sheet)")
+    print("=" * 72)
+    if input("Generate stale v1 sheets anyway? [y/N] ").strip().lower() != "y":
+        sys.exit(1)
+
 if __name__ == "__main__":
+    _v1_staleness_warning()
     for p in run(open_browser=False):
         print(p)

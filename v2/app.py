@@ -579,6 +579,24 @@ def stock_check_print():
     return render_template("stock_check_print.html", cards=cards, company=company)
 
 
+@app.get("/inventory-sheet")
+def inventory_sheet():
+    """Printable full-inventory sheet — blank Sold Price column plus write-in
+    rows, for working a show table with a pen."""
+    kind = request.args.get("kind", "")       # "" | slab | raw
+    c = conn()
+    cards = [x for x in v2cards.list_cards(c) if not kind or x["kind"] == kind]
+    c.close()
+    cards.sort(key=lambda x: ((x["company"] or "zz"), (x["name"] or "").lower()))
+    total_basis = sum(0 if x.get("basis_unknown") else (x["basis"] or 0) for x in cards)
+    total_market = sum((x["market_value"] or 0) for x in cards)
+    return render_template("inventory_sheet.html", cards=cards,
+                           total_basis=round(total_basis, 2),
+                           total_market=round(total_market, 2),
+                           write_in_rows=18,
+                           today=date.today().isoformat())
+
+
 @app.get("/sell-sheet")
 def sell_sheet():
     pct = int(request.args.get("pct", 85))
