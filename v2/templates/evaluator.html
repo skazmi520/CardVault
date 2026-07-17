@@ -245,7 +245,8 @@ $("convert").addEventListener("click", () => {
     cards_out: give.filter(l => !l.manual).map(l => ({
       table: l.table, id: l.id, deal_value: giveValue(l).toFixed(2) })),
     cards_in: get.filter(l => (l.name || "").trim()).map(l => ({
-      name: l.name, deal_value: getValue(l).toFixed(2) })),
+      name: l.name, deal_value: getValue(l).toFixed(2),
+      market_value: (num(l.mv) ?? "") === "" ? "" : String(num(l.mv)) })),
     cash: $("cash").value,
   };
   const dropped = give.filter(l => l.manual).length;

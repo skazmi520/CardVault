@@ -524,15 +524,24 @@ def backfill_page():
 def api_reprice():
     p = request.get_json(force=True)
     val = p.get("market_value")
+    table = p.get("table", "graded_cards")
+    if table not in ("graded_cards", "ungraded_cards"):
+        return jsonify({"ok": False, "error": "bad table"}), 400
+    basis_col = "acquisition_price" if table == "graded_cards" else "purchase_price"
     c = conn()
-    v2cards.reprice(c, int(p["card_id"]), float(val) if val not in (None, "") else None)
-    row = c.execute("SELECT market_value, market_value_updated, acquisition_price "
-                    "FROM graded_cards WHERE id=?", (p["card_id"],)).fetchone()
+    try:
+        v2cards.reprice(c, int(p["card_id"]),
+                        float(val) if val not in (None, "") else None, table=table)
+    except ValueError as e:
+        c.close()
+        return jsonify({"ok": False, "error": str(e)}), 400
+    row = c.execute(f"SELECT market_value, market_value_updated, {basis_col} AS basis "
+                    f"FROM {table} WHERE id=?", (p["card_id"],)).fetchone()
     c.close()
     mv = row["market_value"]
     return jsonify({"ok": True, "market_value": mv,
                     "repriced": row["market_value_updated"],
-                    "gain": (round(mv - (row["acquisition_price"] or 0), 2)
+                    "gain": (round(mv - (row["basis"] or 0), 2)
                              if mv is not None else None)})
 
 
@@ -624,7 +633,9 @@ def api_save_deal():
                   year=x.get("year", ""), grading_company=x.get("company", ""),
                   grade=x.get("grade", ""), serial_number=x.get("cert", ""),
                   deal_value=(float(x["deal_value"])
-                              if x.get("deal_value") not in (None, "") else None))
+                              if x.get("deal_value") not in (None, "") else None),
+                  market_value=(float(x["market_value"])
+                                if x.get("market_value") not in (None, "") else None))
            for x in p.get("cards_in", []) if x.get("name", "").strip()]
     c = conn()
     try:

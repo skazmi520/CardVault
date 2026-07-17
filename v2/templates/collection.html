@@ -127,7 +127,7 @@ function render() {
       <td class="muted">${r.kind}</td>
       <td class="num">${fmt(r.acq_cost)}</td>
       <td class="num">${fmt(r.basis)}</td>
-      <td class="num mv-cell" data-i="${i}">${r.kind === "slab" ? fmt(r.market_value) : '<span class="muted">—</span>'}</td>
+      <td class="num mv-cell" data-i="${i}" title="Click to reprice">${fmt(r.market_value)}</td>
       <td class="num ${gainClass(r.gain)}">${fmtGain(r.gain)}</td>
       <td class="${staleClass(r)}">${r.repriced ? r.repriced.slice(0, 10) : "never"}</td>
       <td><button class="rowedit" data-edit="${i}" title="Edit card (E)">✎</button></td>
@@ -137,7 +137,7 @@ function render() {
 
 function beginEdit(i) {
   const r = view[i];
-  if (!r || r.kind !== "slab") return;
+  if (!r) return;   // raw cards carry a market value too — both are repriceable
   const cell = tbody.querySelector(`td.mv-cell[data-i="${i}"]`);
   if (!cell || cell.querySelector("input")) return;
   const cur = r.market_value ?? "";
@@ -150,7 +150,8 @@ function beginEdit(i) {
     if (raw !== "" && isNaN(parseFloat(raw))) { inp.focus(); return; }
     try {
       const res = await postJSON("/api/reprice",
-        { card_id: r.id, market_value: raw === "" ? null : parseFloat(raw) });
+        { card_id: r.id, table: r.table,
+          market_value: raw === "" ? null : parseFloat(raw) });
       r.market_value = res.market_value; r.gain = res.gain; r.repriced = res.repriced || "";
     } catch (e) { alert("Save failed: " + e.message); }
     render();

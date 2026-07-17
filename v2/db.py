@@ -295,6 +295,13 @@ def migrate_schema(conn: sqlite3.Connection):
         # ungraded_cards gains submitted_at (stamped when sent to grading)
         if table == "ungraded_cards" and "submitted_at" not in existing:
             conn.execute("ALTER TABLE ungraded_cards ADD COLUMN submitted_at TEXT")
+        # raw cards can carry a market value too — v1 never tracked one, so a
+        # value entered against a raw card in a deal had nowhere to live and
+        # was silently dropped.
+        if table == "ungraded_cards" and "market_value" not in existing:
+            conn.execute("ALTER TABLE ungraded_cards ADD COLUMN market_value REAL")
+        if table == "ungraded_cards" and "market_value_updated" not in existing:
+            conn.execute("ALTER TABLE ungraded_cards ADD COLUMN market_value_updated TEXT")
 
     conn.execute(
         "INSERT OR REPLACE INTO v2_meta (key, value) VALUES ('is_v2', '1')")

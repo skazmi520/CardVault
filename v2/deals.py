@@ -55,7 +55,13 @@ class CardOut:
 
 @dataclass
 class CardIn:
-    """A card entering inventory via quick entry."""
+    """A card entering inventory via quick entry.
+
+    deal_value   = what the card counts for in this deal (for a cash buy, what
+                   you paid). Drives the balance identity and becomes the basis.
+    market_value = what the card is worth (optional, independent of what you
+                   paid). Purely informational — never affects basis.
+    """
     card_name: str
     is_graded: bool = True
     set_name: str = ""
@@ -65,6 +71,7 @@ class CardIn:
     grade: str = ""
     serial_number: str = ""      # cert
     deal_value: float | None = None
+    market_value: float | None = None
     notes: str = ""
 
 
@@ -220,6 +227,15 @@ def save_deal(conn, *,
     if cards_in and basis_pool < 0:
         warnings.append("Cards-in basis pool was negative; clamped to $0.")
         basis_pool = 0.0
+    # Guard: cards coming in with nothing going out and no cash means every one
+    # of them lands at $0 basis. That is nearly always a forgotten cash amount,
+    # and it used to happen silently (the old warning was skipped when cash was
+    # exactly 0, and the UI redirected before any warning could be read).
+    if cards_in and basis_pool <= 0:
+        raise ValueError(
+            f"{len(cards_in)} card(s) coming in, but nothing given up and no cash paid — "
+            "they would all be recorded at $0 cost basis. Enter the cash you paid as a "
+            "negative amount (e.g. -3000), or a per-card paid value.")
     in_basis = _allocate(basis_pool, [v if v > 0 else 1.0 for v in in_vals]) \
         if cards_in else []
 
@@ -271,6 +287,11 @@ def save_deal(conn, *,
 
         in_lines = []
         for ln, agreed, basis in zip(cards_in, in_vals, in_basis):
+            # Market value is whatever was stated for the card; if none was given
+            # fall back to the deal value (in a straight buy they're the same).
+            mv = ln.market_value if ln.market_value not in (None, "") else (
+                agreed if agreed > 0 else None)
+            mv_date = deal_date if mv else None
             if ln.is_graded:
                 cur = conn.execute(
                     """INSERT INTO graded_cards
@@ -286,27 +307,25 @@ def save_deal(conn, *,
                      acq_type, basis,
                      (v_out if acq_type != "Cash" else 0.0), trade_details,
                      deal_date, ln.notes, datetime.now().isoformat(),
-                     (agreed if agreed > 0 else None),
-                     (deal_date if agreed > 0 else None),
-                     deal_id))
+                     mv, mv_date, deal_id))
             else:
                 cur = conn.execute(
                     """INSERT INTO ungraded_cards
                          (card_name, card_number, set_name, year, photo_filename,
                           purchase_price, purchase_date, acquisition_type,
                           trade_value, trade_details, notes, grading_status,
-                          target_grading_company, date_added,
-                          status, acquired_via_deal_id)
-                       VALUES (?,?,?,?,NULL,?,?,?,?,?,?, 'Not Slated', '', ?, 'active', ?)""",
+                          target_grading_company, date_added, market_value,
+                          market_value_updated, status, acquired_via_deal_id)
+                       VALUES (?,?,?,?,NULL,?,?,?,?,?,?, 'Not Slated', '', ?,?,?, 'active', ?)""",
                     (ln.card_name, ln.card_number, ln.set_name, ln.year,
                      basis, deal_date, acq_type,
                      (v_out if acq_type != "Cash" else 0.0), trade_details,
-                     ln.notes, datetime.now().isoformat(), deal_id))
-            if ln.is_graded and agreed > 0:
+                     ln.notes, datetime.now().isoformat(), mv, mv_date, deal_id))
+            if ln.is_graded and mv:
                 # seed price history so movers/repricing have a baseline
                 conn.execute(
                     "INSERT INTO price_history (card_id, recorded_at, market_value) "
-                    "VALUES (?,?,?)", (cur.lastrowid, occurred_at, agreed))
+                    "VALUES (?,?,?)", (cur.lastrowid, occurred_at, mv))
             in_lines.append({"table": "graded_cards" if ln.is_graded else "ungraded_cards",
                              "card_id": cur.lastrowid, "name": ln.card_name,
                              "agreed_value": agreed, "basis": basis})
