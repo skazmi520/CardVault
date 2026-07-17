@@ -3,9 +3,11 @@ CardVault v2 — PSA public cert API with permanent cache and daily budget.
 
 - Cert data never changes → every response is cached forever in
   psa_cert_cache and a cached cert is NEVER re-queried.
-- Free tier is rate limited (~100/day) → psa_budget counts lookups per day
-  (default budget 90, leaving headroom). When exhausted, lookups return
-  status 'queued'; re-running the backfill the next day resumes them.
+- Collectors cut the free tier to 1 call/day (verified 2026-07: the 429 body
+  reads "maximum admitted 1 per Day. Please contact collectors-apis@
+  collectors.com"). psa_budget counts lookups per day; once used, lookups
+  return status 'queued' without hitting PSA. Re-running the backfill each
+  day drains the queue one cert at a time unless a bigger quota is granted.
 """
 
 import json
@@ -13,7 +15,7 @@ import urllib.error
 import urllib.request
 from datetime import date, datetime
 
-DAILY_BUDGET = 90
+DAILY_BUDGET = 1
 ENDPOINT = "https://api.psacard.com/publicapi/cert/GetByCertNumber/{cert}"
 
 
@@ -91,9 +93,16 @@ def lookup_cert(conn, cert_number: str, token: str) -> dict:
             raw = json.loads(r.read())
     except urllib.error.HTTPError as e:
         if e.code == 429:
-            # short-window throttle — call was refused, don't burn budget
+            # call was refused, don't burn budget; PSA also 429s invalid
+            # tokens, so surface their body text — it names the real cause
+            try:
+                detail = e.read().decode("utf-8", "replace").strip().strip('"')[:200]
+            except Exception:
+                detail = ""
             return {"status": "rate_limited", "data": None,
-                    "error": "PSA API throttled (429) — will retry on next run"}
+                    "error": "PSA refused the call (429): "
+                             + (detail or "no detail — either the daily quota "
+                                "is used or the token is invalid")}
         _bump_budget(conn)                      # other failed calls still count
         if e.code == 500:
             # per PSA docs, 500 usually means invalid credentials
