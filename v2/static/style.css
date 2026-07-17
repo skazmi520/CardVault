@@ -48,6 +48,10 @@ a:hover { text-decoration: underline; }
 .nav-link:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 .nav-link.active { background: var(--surface-3); color: var(--text); }
 .sidebar .spacer { flex: 1; }
+.nav-section {
+  font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--muted); opacity: .7; padding: 14px 12px 4px;
+}
 .sidebar .foot { color: var(--muted); font-size: 11px; padding: 0 10px; }
 
 .main { flex: 1; min-width: 0; padding: 26px 30px 60px; }
@@ -57,6 +61,10 @@ a:hover { text-decoration: underline; }
 
 /* ── cards / tiles ─────────────────────────────────── */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 22px; }
+.tiles.compact { grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 10px; margin-top: -12px; }
+.tiles.compact .tile { padding: 10px 14px; }
+.tiles.compact .tile .v { font-size: 15px; }
+.tiles.compact .tile .l { font-size: 10px; }
 .tile {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 14px 16px;
@@ -172,6 +180,18 @@ label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px
   margin-bottom: 10px;
 }
 
+/* ── feedback ──────────────────────────────────────── */
+@keyframes saved-flash {
+  0%   { background: rgba(63, 185, 124, .35); }
+  100% { background: transparent; }
+}
+td.saved-flash { animation: saved-flash .9s ease-out; }
+
+.btn.danger-ghost {
+  background: transparent; border: 1px solid var(--neg); color: var(--neg);
+}
+.btn.danger-ghost:hover { background: rgba(229, 99, 108, .12); }
+
 /* ── modal ─────────────────────────────────────────── */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 60;
@@ -238,6 +258,7 @@ label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px
     padding: 10px 12px; gap: 4px;
   }
   .brand { padding: 0 10px 0 0; white-space: nowrap; }
+  .nav-section { display: none; }
   .nav-link { white-space: nowrap; padding: 7px 10px; }
   .sidebar .spacer, .sidebar .foot { display: none; }
   .main { padding: 18px 14px 50px; }

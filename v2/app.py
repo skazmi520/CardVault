@@ -329,6 +329,35 @@ def api_photo_reject(import_id):
     return jsonify({"ok": True})
 
 
+@app.post("/api/quick-sale")
+def api_quick_sale():
+    """One-card cash sale without the full deal screen. Still books a real
+    deal underneath, so cash pool, Show Day and reports all stay coherent."""
+    p = request.get_json(force=True)
+    try:
+        table = p["table"]
+        card_id = int(p["card_id"])
+        price = float(str(p["price"]).replace("$", "").replace(",", ""))
+    except (ValueError, TypeError, KeyError):
+        return jsonify({"ok": False, "error": "table, card_id and a numeric price are required"}), 400
+    if table not in ("graded_cards", "ungraded_cards"):
+        return jsonify({"ok": False, "error": "bad table"}), 400
+    if price <= 0:
+        return jsonify({"ok": False, "error": "price must be positive"}), 400
+    c = conn()
+    try:
+        res = save_deal(
+            c, cards_out=[CardOut(table, card_id, price)],
+            cash_amount=price,
+            counterparty=p.get("counterparty", ""),
+            payment_method=p.get("payment_method", "cash"),
+            notes=p.get("notes", "Quick sale"))
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "deal_id": res["deal_id"],
+                    "realized_gain": res["out_lines"][0]["realized_gain"]})
+
+
 @app.post("/api/deals/<int:deal_id>/void")
 def api_void_deal(deal_id):
     """Undo a mistaken deal: restores cards that left, removes cards it

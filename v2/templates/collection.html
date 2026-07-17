@@ -70,7 +70,19 @@
     <div class="row">
       <div style="flex:1"><label>Notes</label><input type="text" id="e-notes" style="width:100%"></div>
     </div>
+    <div class="row" id="e-sell-row" hidden
+         style="border-top:1px solid var(--border);padding-top:12px;margin-top:6px">
+      <div><label>Sold for ($)</label><input type="text" id="e-sell-price" style="width:110px"></div>
+      <div><label>Buyer</label><input type="text" id="e-sell-buyer" placeholder="optional" style="width:140px"></div>
+      <div><label>Method</label>
+        <select id="e-sell-method">
+          <option>cash</option><option>venmo</option><option>zelle</option><option>paypal</option>
+        </select></div>
+      <div><button class="btn" id="e-sell-confirm">Confirm sale</button></div>
+    </div>
     <div class="actions">
+      <button class="btn ghost small" id="e-sell" style="margin-right:6px;color:var(--pos);border-color:var(--pos)"
+              title="One-card cash sale — books a deal underneath">Sell…</button>
       <button class="btn ghost small" id="e-crack" style="margin-right:auto;color:var(--neg);border-color:var(--neg)"
               title="Break the card out of its slab and move it to the raw section">Crack to raw…</button>
       <span id="e-msg" class="neg" style="align-self:center;font-size:12px"></span>
@@ -125,6 +137,12 @@ function applyFilters() {
 }
 
 function render() {
+  if (!view.length) {
+    tbody.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:28px">
+      No cards match these filters.</td></tr>`;
+    $("count-sub").textContent = "0 cards";
+    return;
+  }
   tbody.innerHTML = view.map((r, i) => `
     <tr data-i="${i}" class="${i === focusIdx ? 'focused' : ''}">
       <td><strong>${esc(r.name)}</strong>${r.number ? ' <span class="muted">#' + esc(r.number) + '</span>' : ''}
@@ -165,6 +183,9 @@ function beginEdit(i) {
       r.market_value = res.market_value; r.gain = res.gain; r.repriced = res.repriced || "";
     } catch (e) { alert("Save failed: " + e.message); }
     render();
+    const saved = tbody.querySelector(`td.mv-cell[data-i="${i}"]`);
+    if (saved) { saved.classList.add("saved-flash");
+                 setTimeout(() => saved.classList.remove("saved-flash"), 900); }
     if (moveNext && focusIdx < view.length - 1) { focusIdx++; render(); beginEdit(focusIdx); }
   };
   inp.addEventListener("keydown", ev => {
@@ -197,12 +218,37 @@ function openCardEdit(i) {
   E("e-date").value = (r.acq_date || "").slice(0, 10);
   E("e-notes").value = r.notes || "";
   E("e-msg").textContent = "";
+  E("e-sell-row").hidden = true;
   E("edit-backdrop").hidden = false;
   E("e-name").focus();
 }
 
 function closeCardEdit() { E("edit-backdrop").hidden = true; editIdx = -1; }
 E("e-cancel").addEventListener("click", closeCardEdit);
+E("e-sell").addEventListener("click", () => {
+  const r = view[editIdx];
+  if (!r) return;
+  const row = E("e-sell-row");
+  row.hidden = !row.hidden;
+  if (!row.hidden) {
+    E("e-sell-price").value = r.market_value ?? "";
+    E("e-sell-price").focus(); E("e-sell-price").select();
+  }
+});
+E("e-sell-confirm").addEventListener("click", async () => {
+  const r = view[editIdx];
+  if (!r) return;
+  const price = E("e-sell-price").value.trim();
+  if (!price) { E("e-msg").textContent = "Enter the sale price."; return; }
+  try {
+    const res = await postJSON("/api/quick-sale", {
+      table: r.table, card_id: r.id, price,
+      counterparty: E("e-sell-buyer").value.trim(),
+      payment_method: E("e-sell-method").value,
+    });
+    location.href = "/deals/" + res.deal_id;
+  } catch (err) { E("e-msg").textContent = err.message; }
+});
 E("e-crack").addEventListener("click", async () => {
   const r = view[editIdx];
   if (!r || r.kind !== "slab") return;
@@ -253,6 +299,10 @@ document.querySelectorAll("thead th").forEach(th => th.addEventListener("click",
   if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = 1; }
   applyFilters();
 }));
+tbody.addEventListener("dblclick", e => {
+  const row = e.target.closest("tr");
+  if (row && !e.target.closest("td.mv-cell")) openCardEdit(+row.dataset.i);
+});
 tbody.addEventListener("click", e => {
   const editBtn = e.target.closest("[data-edit]");
   if (editBtn) { focusIdx = +editBtn.dataset.edit; render(); openCardEdit(+editBtn.dataset.edit); return; }
