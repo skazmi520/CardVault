@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inventory Sheet — CardVault</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font: 11px/1.4 -apple-system, "Helvetica Neue", Arial, sans-serif;
+         color: #1a1a1a; padding: 24px 28px; background: #fff; }
+  h1 { font-size: 19px; margin-bottom: 2px; }
+  .sub { color: #666; font-size: 11px; margin-bottom: 14px; }
+  h2 { font-size: 13px; margin: 22px 0 8px; padding-bottom: 4px;
+       border-bottom: 1px solid #ccc; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #1a1a1a; color: #fff; text-align: left; padding: 5px 7px;
+       font-size: 8px; text-transform: uppercase; letter-spacing: .5px; }
+  td { padding: 5px 7px; border-bottom: 1px solid #eee; font-size: 10px; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .idx { width: 26px; color: #aaa; font-size: 9px; }
+  .chip { display: inline-block; padding: 1px 5px; border: 1px solid #999;
+          border-radius: 4px; font-size: 8px; font-weight: 700; white-space: nowrap; }
+  .cert { color: #999; font-size: 8px; }
+  .blank { border-bottom: 1px solid #bbb; height: 20px; }
+  .write td { height: 26px; }
+  .totals td { border-top: 2px solid #bbb; background: #f0f0f0; font-weight: 700; }
+  .unknown { color: #8a6d1f; }
+  .tip { color: #555; font-size: 11px; float: right; }
+  @media print {
+    body { padding: 0; }
+    @page { margin: 1cm 1.2cm; size: letter portrait; }
+    .tip { display: none; }
+    tr:nth-child(even) td, .totals td { background: #fafafa !important;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+  <span class="tip">Cmd+P to print</span>
+  <h1>Inventory Sheet</h1>
+  <div class="sub">{{ cards|length }} cards · basis ${{ "{:,.2f}".format(total_basis) }}
+    · market ${{ "{:,.2f}".format(total_market) }} · generated {{ today }} · CardVault v2</div>
+
+  <table>
+    <thead><tr>
+      <th class="idx">#</th>
+      <th style="width:74px">Grade</th>
+      <th>Card</th>
+      <th style="width:52px">Card #</th>
+      <th class="num" style="width:74px">Basis</th>
+      <th class="num" style="width:78px">Market</th>
+      <th style="width:92px">Sold Price</th>
+    </tr></thead>
+    <tbody>
+      {% for c in cards %}
+      <tr>
+        <td class="idx">{{ loop.index }}</td>
+        <td>{% if c.kind == 'slab' %}<span class="chip">{{ c.company }} {{ c.grade }}</span>
+            {% else %}<span class="chip">RAW</span>{% endif %}</td>
+        <td><strong>{{ c.name }}</strong>{% if c.set %} <span style="color:#888">· {{ c.set }}</span>{% endif %}
+            {% if c.cert %}<div class="cert">cert {{ c.cert }}</div>{% endif %}</td>
+        <td>{{ ('#' ~ c.number) if c.number else '' }}</td>
+        <td class="num">{% if c.basis_unknown %}<span class="unknown">unknown</span>
+            {% else %}${{ "{:,.2f}".format(c.basis) }}{% endif %}</td>
+        <td class="num">{{ "${:,.2f}".format(c.market_value) if c.market_value is not none else '' }}</td>
+        <td class="blank"></td>
+      </tr>
+      {% endfor %}
+      <tr class="totals">
+        <td colspan="4" style="text-align:right">TOTALS ({{ cards|length }} cards)</td>
+        <td class="num">${{ "{:,.2f}".format(total_basis) }}</td>
+        <td class="num">${{ "{:,.2f}".format(total_market) }}</td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>New Acquisitions (write-in)</h2>
+  <table>
+    <thead><tr>
+      <th class="idx">#</th>
+      <th>Card Name</th>
+      <th style="width:110px">Set</th>
+      <th style="width:56px">Card #</th>
+      <th class="num" style="width:90px">Market</th>
+      <th class="num" style="width:90px">Price Paid</th>
+    </tr></thead>
+    <tbody>
+      {% for i in range(write_in_rows) %}
+      <tr class="write">
+        <td class="idx"></td>
+        <td class="blank"></td>
+        <td class="blank"></td>
+        <td class="blank"></td>
+        <td class="blank"></td>
+        <td class="blank"></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>
