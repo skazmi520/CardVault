@@ -117,6 +117,9 @@ function beginPrice(i) {
       r.repriced = res.repriced || "";
     } catch (e) { alert("Save failed: " + e.message); }
     applyFilters();
+    const saved = tbody.querySelector(`tr[data-id="${r.id}"] td.mv-cell`);
+    if (saved) { saved.classList.add("saved-flash");
+                 setTimeout(() => saved.classList.remove("saved-flash"), 900); }
     if (moveNext && view.length) {
       // if the committed row filtered itself out of view, index i already
       // points at the next card — advancing again would skip one
