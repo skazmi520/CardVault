@@ -78,14 +78,16 @@
 
 <script>
 document.getElementById("void-deal").addEventListener("click", async () => {
-  const sure = confirm(
-    "Void deal #{{ d.id }}?\n\nCards that left will return to inventory, " +
-    "cards this deal created will be removed, and the cash flow is reversed. " +
-    "This cannot itself be undone.");
+  const sure = await confirmDialog({
+    title: "Void deal #{{ d.id }}?",
+    body: "Cards that left will return to inventory, cards this deal created will be " +
+          "removed, and the cash flow is reversed. This cannot itself be undone.",
+    confirmText: "Void deal", danger: true,
+  });
   if (!sure) return;
   try {
     const res = await postJSON("/api/deals/{{ d.id }}/void", {});
-    alert(`Voided. Restored: ${res.restored.length} · removed: ${res.removed.length}`);
+    toastAfterReload(`Deal voided — restored ${res.restored.length}, removed ${res.removed.length}.`, "info");
     location.href = "/deals";
   } catch (e) {
     document.getElementById("void-msg").innerHTML =

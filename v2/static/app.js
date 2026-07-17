@@ -28,6 +28,65 @@ async function postJSON(url, body) {
   return data;
 }
 
+/* ── toasts ────────────────────────────────────────── */
+function toast(msg, type = "success", ms = 3500) {
+  let stack = document.querySelector(".toast-stack");
+  if (!stack) {
+    stack = document.createElement("div");
+    stack.className = "toast-stack";
+    document.body.appendChild(stack);
+  }
+  const t = document.createElement("div");
+  t.className = "toast " + type;
+  t.textContent = msg;
+  stack.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
+}
+
+/* queue a toast to show after the page reloads / navigates */
+function toastAfterReload(msg, type = "success") {
+  sessionStorage.setItem("cardvault_toast", JSON.stringify({ msg, type }));
+}
+document.addEventListener("DOMContentLoaded", () => {
+  const raw = sessionStorage.getItem("cardvault_toast");
+  if (!raw) return;
+  sessionStorage.removeItem("cardvault_toast");
+  try { const q = JSON.parse(raw); toast(q.msg, q.type); } catch (e) { /* stale entry */ }
+});
+
+/* promise-based replacement for confirm() — resolves true/false */
+function confirmDialog({ title = "Are you sure?", body = "", confirmText = "Confirm", danger = false } = {}) {
+  return new Promise(resolve => {
+    const bd = document.createElement("div");
+    bd.className = "modal-backdrop";
+    bd.innerHTML = `<div class="modal cdialog">
+      <h2></h2><p class="muted cdialog-body"></p>
+      <div class="actions">
+        <button class="btn ghost cd-cancel">Cancel</button>
+        <button class="btn${danger ? " danger" : ""} cd-ok"></button>
+      </div></div>`;
+    bd.querySelector("h2").textContent = title;
+    bd.querySelector(".cdialog-body").textContent = body;
+    bd.querySelector(".cd-ok").textContent = confirmText;
+    const done = val => {
+      document.removeEventListener("keydown", onKey, true);
+      bd.remove();
+      resolve(val);
+    };
+    const onKey = e => {
+      if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); done(false); }
+      else if (e.key === "Enter") { e.stopPropagation(); e.preventDefault(); done(true); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    bd.addEventListener("click", e => { if (e.target === bd) done(false); });
+    bd.querySelector(".cd-cancel").addEventListener("click", () => done(false));
+    bd.querySelector(".cd-ok").addEventListener("click", () => done(true));
+    document.body.appendChild(bd);
+    bd.querySelector(".cd-ok").focus();
+  });
+}
+
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g,
     c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

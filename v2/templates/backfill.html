@@ -37,7 +37,7 @@
 document.querySelectorAll("[data-go]").forEach(btn => btn.addEventListener("click", async () => {
   const cardId = btn.dataset.go;
   const input = document.querySelector(`input[data-card="${cardId}"]`);
-  if (!input.files.length) { alert("Choose the slab photo for this card first."); return; }
+  if (!input.files.length) { toast("Choose the slab photo for this card first.", "info"); return; }
   btn.textContent = "working…"; btn.disabled = true;
   try {
     const fd = new FormData();
@@ -45,15 +45,15 @@ document.querySelectorAll("[data-go]").forEach(btn => btn.addEventListener("clic
     fd.append("card_id", cardId);
     const up = await (await fetch("/api/photos/upload", { method: "POST", body: fd })).json();
     if (!up.ok || !(up.ids || []).length) {
-      alert(up.error || "upload failed");
+      toast(up.error || "Upload failed.", "error");
       btn.textContent = "Extract"; btn.disabled = false; return;
     }
     const pid = up.ids[0];
     const ex = await (await fetch(`/api/photos/${pid}/extract`, { method: "POST" })).json();
-    if (!ex.ok) { alert("Extraction failed: " + ex.error + " — you can still review manually."); }
+    if (!ex.ok) { toastAfterReload("Extraction failed: " + ex.error + " — you can still review manually.", "error"); }
     location.href = `/photos/${pid}`;
   } catch (e) {
-    alert("Failed: " + e.message);
+    toast("Failed: " + e.message, "error");
     btn.textContent = "Extract"; btn.disabled = false;
   }
 }));

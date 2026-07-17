@@ -82,9 +82,9 @@ document.querySelectorAll("[data-extract]").forEach(b => b.addEventListener("cli
     const r = await fetch(`/api/photos/${b.dataset.extract}/extract`, { method: "POST" });
     const d = await r.json();
     if (d.ok) { location.href = `/photos/${b.dataset.extract}`; return; }
-    alert(d.error || "extraction failed");
+    toast(d.error || "Extraction failed.", "error");
   } catch (e) {
-    alert("Extraction failed: " + e.message);
+    toast("Extraction failed: " + e.message, "error");
   }
   b.textContent = "Extract"; b.disabled = false;
 }));
@@ -94,10 +94,12 @@ $("extract-all").addEventListener("click", async () => {
   try {
     const r = await fetch("/api/photos/extract-all", { method: "POST" });
     const d = await r.json();
-    alert(`Processed ${d.processed} photos ($${d.cost}). ${(d.errors || []).length} errors.`);
+    const nErr = (d.errors || []).length;
+    toastAfterReload(`Processed ${d.processed} photos ($${d.cost}) — ${nErr} error${nErr === 1 ? "" : "s"}.`,
+                     nErr ? "error" : "success");
     location.reload();
   } catch (e) {
-    alert("Batch extraction failed: " + e.message);
+    toast("Batch extraction failed: " + e.message, "error");
     btn.textContent = "Extract all pending"; btn.disabled = false;
   }
 });

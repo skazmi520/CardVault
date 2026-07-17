@@ -85,6 +85,7 @@ $("promo-save").addEventListener("click", async () => {
       grading_cost: parseFloat(String($("promo-cost").value).replace(/[$,]/g, "")) || 0,
       return_date: $("promo-date").value,
     });
+    toastAfterReload("Promoted to the graded collection.");
     location.reload();
   } catch (e) { msg.innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
 });
@@ -93,6 +94,7 @@ document.querySelectorAll("[data-status]").forEach(sel =>
   sel.addEventListener("change", () =>
     postJSON("/api/grading-status",
       { ungraded_id: +sel.dataset.status, grading_status: sel.value })
-      .catch(e => alert(e.message))));
+      .then(() => toast("Grading status updated."))
+      .catch(e => toast(e.message, "error"))));
 </script>
 {% endblock %}

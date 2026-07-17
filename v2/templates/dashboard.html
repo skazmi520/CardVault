@@ -170,11 +170,17 @@
   lineChart(document.getElementById("chart"), {{ snaps|tojson }});
   document.querySelectorAll("[data-cash-del]").forEach(x =>
     x.addEventListener("click", async () => {
-      if (!confirm("Delete this cash entry? The balance adjusts immediately.")) return;
+      const ok = await confirmDialog({
+        title: "Delete this cash entry?",
+        body: "The cash balance adjusts immediately.",
+        confirmText: "Delete", danger: true,
+      });
+      if (!ok) return;
       try {
         await postJSON(`/api/cash/${x.dataset.cashDel}/delete`, {});
+        toastAfterReload("Cash entry deleted.");
         location.reload();
-      } catch (e) { alert(e.message); }
+      } catch (e) { toast(e.message, "error"); }
     }));
   document.getElementById("cash-add").addEventListener("click", async () => {
     const msg = document.getElementById("cash-msg");
@@ -183,6 +189,7 @@
         amount: document.getElementById("cash-amt").value,
         memo: document.getElementById("cash-memo").value,
       });
+      toastAfterReload("Cash entry added.");
       location.reload();
     } catch (e) { msg.textContent = e.message; msg.className = "neg"; }
   });

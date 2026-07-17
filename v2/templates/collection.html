@@ -181,7 +181,7 @@ function beginEdit(i) {
         { card_id: r.id, table: r.table,
           market_value: raw === "" ? null : parseFloat(raw) });
       r.market_value = res.market_value; r.gain = res.gain; r.repriced = res.repriced || "";
-    } catch (e) { alert("Save failed: " + e.message); }
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
     render();
     const saved = tbody.querySelector(`td.mv-cell[data-i="${i}"]`);
     if (saved) { saved.classList.add("saved-flash");
@@ -246,17 +246,23 @@ E("e-sell-confirm").addEventListener("click", async () => {
       counterparty: E("e-sell-buyer").value.trim(),
       payment_method: E("e-sell-method").value,
     });
+    toastAfterReload(`Sale booked as deal #${res.deal_id}.`);
     location.href = "/deals/" + res.deal_id;
   } catch (err) { E("e-msg").textContent = err.message; }
 });
 E("e-crack").addEventListener("click", async () => {
   const r = view[editIdx];
   if (!r || r.kind !== "slab") return;
-  if (!confirm(`Crack "${r.name}" out of its ${r.company} ${r.grade} slab?\n\n` +
-      "It moves to the raw section (Slated for regrading); basis and market value " +
-      "carry over; the slab row is kept as history.")) return;
+  const ok = await confirmDialog({
+    title: `Crack "${r.name}" out of its ${r.company} ${r.grade} slab?`,
+    body: "It moves to the raw section (Slated for regrading); basis and market value " +
+          "carry over; the slab row is kept as history.",
+    confirmText: "Crack to raw", danger: true,
+  });
+  if (!ok) return;
   try {
     await postJSON("/api/crack", { graded_id: r.id });
+    toastAfterReload(`Cracked "${r.name}" — it's now in Raw & Grading.`);
     location.reload();
   } catch (err) { E("e-msg").textContent = err.message; }
 });
@@ -289,6 +295,7 @@ E("e-save").addEventListener("click", async () => {
     const res = await postJSON("/api/card/update", { table: r.table, id: r.id, fields });
     Object.assign(r, res.card);   // refresh row data in place
     closeCardEdit(); render();
+    toast("Card saved.");
   } catch (err) { E("e-msg").textContent = err.message; }
 });
 

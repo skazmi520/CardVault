@@ -115,7 +115,7 @@ function beginPrice(i) {
         { card_id: r.id, market_value: raw === "" ? null : parseFloat(raw) });
       r.market_value = res.market_value;
       r.repriced = res.repriced || "";
-    } catch (e) { alert("Save failed: " + e.message); }
+    } catch (e) { toast("Save failed: " + e.message, "error"); }
     applyFilters();
     const saved = tbody.querySelector(`tr[data-id="${r.id}"] td.mv-cell`);
     if (saved) { saved.classList.add("saved-flash");
@@ -149,8 +149,13 @@ tbody.addEventListener("click", e => {
   applyFilters();
 });
 
-$("reset").addEventListener("click", () => {
-  if (!checked.size || confirm("Clear all check marks?")) { checked.clear(); save(); applyFilters(); }
+$("reset").addEventListener("click", async () => {
+  if (checked.size && !(await confirmDialog({
+    title: "Clear all check marks?",
+    body: "Progress is stored on this device only — this starts the stock check over.",
+    confirmText: "Clear all", danger: true,
+  }))) return;
+  checked.clear(); save(); applyFilters();
 });
 
 ["f-search", "f-company", "f-show", "f-stale"].forEach(id =>
