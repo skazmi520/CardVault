@@ -13,9 +13,13 @@
     </select>
     <a class="btn ghost small" href="/reports/realized.csv{{ ('?year=' + year) if year }}">Export CSV</a>
     <a class="btn ghost small" href="/reports/deals.csv">Export deal history CSV</a>
-    <span class="muted">{{ rows|length }} cards moved · basis {{ totals.basis|money }} ·
+    <span class="muted">{{ totals.n_known }} cards moved · basis {{ totals.basis|money }} ·
       proceeds {{ totals.proceeds|money }} ·
-      gain <span class="{{ 'pos' if totals.gain >= 0 else 'neg' }}">{{ totals.gain|gain }}</span></span>
+      gain <span class="{{ 'pos' if totals.gain >= 0 else 'neg' }}">{{ totals.gain|gain }}</span>
+      {% if totals.n_unknown %}
+      <span style="color:#b98a3f"> · {{ totals.n_unknown }} excluded (basis unknown,
+        {{ totals.unknown_proceeds|money }} proceeds)</span>
+      {% endif %}</span>
   </div>
 
   <div class="table-wrap"><table>
@@ -31,10 +35,14 @@
           {% if r.cert %}<div class="muted" style="font-size:11px">cert {{ r.cert }}</div>{% endif %}</td>
         <td>{% if r.kind == 'slab' %}<span class="chip">{{ r.company }} {{ r.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
         <td class="muted">{{ r.acq_date or '—' }}</td>
-        <td class="num">{{ r.basis|money }}</td>
+        <td class="num">
+          {% if r.basis_unknown %}<span style="color:#b98a3f" title="Purchase price was never recorded (legacy import) — excluded from gain totals">unknown</span>
+          {% else %}{{ r.basis|money }}{% endif %}</td>
         <td class="muted">{{ r.disposed or '—' }}</td>
         <td class="num">{{ r.proceeds|money if r.proceeds is not none else '—' }}</td>
-        <td class="num {{ 'pos' if (r.gain or 0) >= 0 else 'neg' }}">{{ r.gain|gain if r.gain is not none else '—' }}</td>
+        <td class="num {{ '' if r.basis_unknown else ('pos' if (r.gain or 0) >= 0 else 'neg') }}">
+          {% if r.basis_unknown %}<span style="color:#b98a3f">n/a</span>
+          {% else %}{{ r.gain|gain if r.gain is not none else '—' }}{% endif %}</td>
         <td>{% if r.deal_id %}<a href="/deals/{{ r.deal_id }}">#{{ r.deal_id }}</a>{% else %}<span class="muted">legacy</span>{% endif %}</td>
       </tr>
       {% endfor %}

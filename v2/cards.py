@@ -21,8 +21,11 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
             "company": r["grading_company"] or "", "grade": r["grade"] or "",
             "cert": r["serial_number"] or "",
             "acq_cost": basis, "basis": basis,
+            "basis_unknown": bool(r["basis_unknown"]),
             "market_value": mv,
-            "gain": (round(mv - basis, 2) if mv is not None else None),
+            # gain is unknowable without a basis — don't invent one
+            "gain": (None if r["basis_unknown"] or mv is None
+                     else round(mv - basis, 2)),
             "repriced": r["market_value_updated"] or "",
             "status": r["status"], "acq_date": r["acquisition_date"] or "",
             "notes": r["notes"] or "",
@@ -38,8 +41,10 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
             "number": r["card_number"] or "", "year": r["year"] or "",
             "company": "", "grade": "", "cert": "",
             "acq_cost": basis, "basis": basis,
+            "basis_unknown": bool(r["basis_unknown"]),
             "market_value": mv,
-            "gain": (round(mv - basis, 2) if mv is not None else None),
+            "gain": (None if r["basis_unknown"] or mv is None
+                     else round(mv - basis, 2)),
             "repriced": r["market_value_updated"] or "",
             "status": r["status"],
             "acq_date": r["purchase_date"] or "",

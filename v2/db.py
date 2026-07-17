@@ -201,6 +201,11 @@ _CARD_NEW_COLS = [
     ("disposal_proceeds",    "REAL"),
     ("realized_gain",        "REAL"),
     ("status",               "TEXT NOT NULL DEFAULT 'active'"),
+    # Legacy imports arrived with no purchase price. $0 is not the same claim as
+    # "we never knew" — a $0 basis makes a sale look like 100% profit and
+    # silently inflates realized gains. Flagged cards are reported as
+    # "basis unknown" and left out of gain statistics rather than faked.
+    ("basis_unknown",        "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

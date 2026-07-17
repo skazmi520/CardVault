@@ -125,8 +125,8 @@ function render() {
       <td class="muted">${esc(r.set) || "—"}</td>
       <td>${r.kind === "slab" ? `<span class="chip">${esc(r.company)} ${esc(r.grade)}</span>` : '<span class="chip raw">RAW</span>'}</td>
       <td class="muted">${r.kind}</td>
-      <td class="num">${fmt(r.acq_cost)}</td>
-      <td class="num">${fmt(r.basis)}</td>
+      <td class="num">${r.basis_unknown ? '<span style="color:#b98a3f">unknown</span>' : fmt(r.acq_cost)}</td>
+      <td class="num">${r.basis_unknown ? '<span style="color:#b98a3f" title="Purchase price never recorded (legacy import)">unknown</span>' : fmt(r.basis)}</td>
       <td class="num mv-cell" data-i="${i}" title="Click to reprice">${fmt(r.market_value)}</td>
       <td class="num ${gainClass(r.gain)}">${fmtGain(r.gain)}</td>
       <td class="${staleClass(r)}">${r.repriced ? r.repriced.slice(0, 10) : "never"}</td>
