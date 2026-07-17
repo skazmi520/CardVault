@@ -25,7 +25,7 @@
     <option value="stale">Not repriced in 30+ days</option>
     <option value="none">No market value</option>
   </select>
-  <span class="muted" style="font-size:12px">Tap a row to check off · click a price to edit · saved on this device</span>
+  <span class="hint">Tap a row to check off · click a price to edit · saved on this device</span>
 </div>
 
 <div class="table-wrap">
@@ -82,10 +82,10 @@ function render() {
       <td><span class="chip">${esc(r.company)} ${esc(r.grade)}</span></td>
       <td><strong style="${checked.has(r.id) ? 'text-decoration:line-through' : ''}">${esc(r.name)}</strong>
         ${r.set ? `<span class="muted"> · ${esc(r.set)}</span>` : ''}
-        ${r.cert ? `<div class="muted" style="font-size:11px">cert ${esc(r.cert)}</div>` : ''}</td>
+        ${r.cert ? `<div class="sub-line">cert ${esc(r.cert)}</div>` : ''}</td>
       <td class="muted">${r.number ? "#" + esc(r.number) : "—"}</td>
       <td class="num mv-cell" data-i="${i}" title="Click to reprice">${fmt(r.market_value)}</td>
-      <td class="${isStale(r) ? 'stale' : 'muted'}" style="font-size:11px">
+      <td class="${isStale(r) ? 'stale' : 'muted'}">
         ${r.repriced ? r.repriced.slice(0, 10) : "never"}</td>
     </tr>`).join("");
   const total = CARDS.length;

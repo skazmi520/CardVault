@@ -69,7 +69,7 @@ a:hover { text-decoration: underline; }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 14px 16px;
 }
-.tile .v { font-size: 20px; font-weight: 700; letter-spacing: .2px; }
+.tile .v { font-size: 20px; font-weight: 700; letter-spacing: .2px; font-variant-numeric: tabular-nums; }
 .tile .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .7px; margin-top: 3px; }
 
 .panel {
@@ -81,6 +81,11 @@ a:hover { text-decoration: underline; }
 .pos { color: var(--pos); }
 .neg { color: var(--neg); }
 .muted { color: var(--muted); }
+.unknown { color: #b98a3f; }
+
+/* secondary text — one size everywhere (cert lines, sub-rows, hints) */
+.sub-line { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.hint { font-size: 12px; color: var(--muted); }
 
 /* ── tables ────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
@@ -88,12 +93,13 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead th {
   background: var(--surface-2); color: var(--muted);
   font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
-  text-align: left; padding: 9px 12px; white-space: nowrap;
+  text-align: left; padding: 8px 12px; white-space: nowrap;
   position: sticky; top: 0; cursor: pointer; user-select: none;
 }
-thead th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
-tbody td { padding: 8px 12px; border-top: 1px solid var(--border); white-space: nowrap; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+tbody td { padding: 6px 12px; border-top: 1px solid var(--border); white-space: nowrap; }
 tbody tr { background: var(--surface); transition: background .1s; }
+tbody tr:nth-child(even) { background: #1b1e25; }   /* subtle zebra */
 tbody tr:hover, tbody tr.focused { background: var(--surface-2); }
 tbody tr.focused { outline: 1px solid var(--accent-dim); outline-offset: -1px; }
 
@@ -172,7 +178,7 @@ label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px
   display: flex; gap: 26px; align-items: center; flex-wrap: wrap;
   box-shadow: 0 -6px 20px rgba(0,0,0,.35);
 }
-.totals-bar .big { font-size: 17px; font-weight: 700; }
+.totals-bar .big { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 .warn {
   background: rgba(229, 99, 108, .12); border: 1px solid var(--neg);
