@@ -357,14 +357,18 @@ def at_grading(conn) -> list[dict]:
 
 
 def sell_candidates(conn) -> dict:
-    """How many active slabs are profitable sold at 85% / 88% of market."""
+    """How many active slabs are profitable sold at 85% / 88% of market.
+
+    Cards with an unknown basis are excluded — without a cost there is no
+    knowable profit, and counting proceeds as pure profit would overstate it.
+    """
     res = {}
     for pct in (85, 88):
-        n = profit = 0.0
-        n = 0
+        n, profit = 0, 0.0
         for r in conn.execute(
                 "SELECT acquisition_price, market_value FROM graded_cards "
-                "WHERE status='active' AND market_value IS NOT NULL"):
+                "WHERE status='active' AND market_value IS NOT NULL "
+                "AND basis_unknown=0"):
             p = r["market_value"] * pct / 100 - (r["acquisition_price"] or 0)
             if p > 0:
                 n += 1
