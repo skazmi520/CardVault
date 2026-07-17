@@ -79,7 +79,7 @@ function render() {
   tbody.innerHTML = view.map((r, i) => `
     <tr data-id="${r.id}" data-i="${i}" style="cursor:pointer${checked.has(r.id) ? ';opacity:.5' : ''}">
       <td style="text-align:center;font-size:16px">${checked.has(r.id) ? "☑" : "☐"}</td>
-      <td><span class="chip">${esc(r.company)} ${esc(r.grade)}</span></td>
+      <td><span class="chip ${esc(r.company)}">${esc(r.company)} ${esc(r.grade)}</span></td>
       <td><strong style="${checked.has(r.id) ? 'text-decoration:line-through' : ''}">${esc(r.name)}</strong>
         ${r.set ? `<span class="muted"> · ${esc(r.set)}</span>` : ''}
         ${r.cert ? `<div class="sub-line">cert ${esc(r.cert)}</div>` : ''}</td>

@@ -73,7 +73,7 @@
     {% if movers %}
       {% for m in movers %}
       <div class="list-row">
-        <span class="chip">{{ m.company }} {{ m.grade }}</span>
+        <span class="chip {{ m.company }}">{{ m.company }} {{ m.grade }}</span>
         <span class="grow"><strong>{{ m.name }}</strong></span>
         <span class="muted num">{{ m.prev|money }} → {{ m.now|money }}</span>
         <span class="num {{ 'pos' if m.delta >= 0 else 'neg' }}" style="width:110px;text-align:right">
@@ -146,7 +146,7 @@
     {% for c in extras.companies %}
     <div class="bar-row">
       <span class="bar-label">{{ c.company }}</span>
-      <span class="bar-track"><span class="bar-fill" style="width:{{ c.share }}%"></span></span>
+      <span class="bar-track"><span class="bar-fill {{ c.company }}" style="width:{{ c.share }}%"></span></span>
       <span class="bar-val">{{ c.count }} cards · {{ c.market|money }}</span>
     </div>
     {% endfor %}
@@ -156,7 +156,7 @@
     <h2>Top Holdings</h2>
     {% for t in extras.top %}
     <div class="list-row">
-      <span class="chip">{{ t.company }} {{ t.grade }}</span>
+      <span class="chip {{ t.company }}">{{ t.company }} {{ t.grade }}</span>
       <span class="grow"><strong>{{ t.name }}</strong>
         {% if t.set %}<span class="muted"> · {{ t.set }}</span>{% endif %}</span>
       <span class="num" style="font-weight:600">{{ t.market|money }}</span>

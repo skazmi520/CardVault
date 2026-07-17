@@ -33,7 +33,7 @@
         <td><strong>{{ r.name }}</strong>
           {% if r.set %}<span class="muted"> · {{ r.set }}</span>{% endif %}
           {% if r.cert %}<div class="sub-line">cert {{ r.cert }}</div>{% endif %}</td>
-        <td>{% if r.kind == 'slab' %}<span class="chip">{{ r.company }} {{ r.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
+        <td>{% if r.kind == 'slab' %}<span class="chip {{ r.company }}">{{ r.company }} {{ r.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
         <td class="muted">{{ r.acq_date or '—' }}</td>
         <td class="num">
           {% if r.basis_unknown %}<span class="unknown" title="Purchase price was never recorded (legacy import) — excluded from gain totals">unknown</span>

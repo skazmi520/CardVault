@@ -84,7 +84,7 @@ search.addEventListener("input", () => {
     (c.name + " " + c.set + " " + c.cert).toLowerCase().includes(q)).slice(0, 12);
   results.innerHTML = hits.map((c, i) =>
     `<div data-i="${INVENTORY.indexOf(c)}">
-       ${c.kind === "slab" ? `<span class="chip">${esc(c.company)} ${esc(c.grade)}</span>` : '<span class="chip raw">RAW</span>'}
+       ${c.kind === "slab" ? `<span class="chip ${esc(c.company)}">${esc(c.company)} ${esc(c.grade)}</span>` : '<span class="chip raw">RAW</span>'}
        ${esc(c.name)} <span class="muted">${esc(c.set)}</span>
        <span class="muted" style="float:right">${fmt(c.market_value ?? c.basis)}</span>
      </div>`).join("") || '<div class="muted">no matches</div>';

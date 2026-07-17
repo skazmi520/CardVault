@@ -32,7 +32,7 @@
       {% for c in cards_out %}
       <tr>
         <td><strong>{{ c.card_name }}</strong>{% if c.set_name %} <span class="muted">{{ c.set_name }}</span>{% endif %}</td>
-        <td>{% if c._table == 'graded_cards' %}<span class="chip">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
+        <td>{% if c._table == 'graded_cards' %}<span class="chip {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
         <td class="num">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</td>
         <td class="num">{{ c.disposal_proceeds|money }}</td>
         <td class="num {{ 'pos' if (c.realized_gain or 0) >= 0 else 'neg' }}">{{ c.realized_gain|gain }}</td>
@@ -52,7 +52,7 @@
       {% for c in cards_in %}
       <tr>
         <td><strong>{{ c.card_name }}</strong>{% if c.set_name %} <span class="muted">{{ c.set_name }}</span>{% endif %}</td>
-        <td>{% if c._table == 'graded_cards' %}<span class="chip">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
+        <td>{% if c._table == 'graded_cards' %}<span class="chip {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
         <td class="num">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</td>
         <td class="num">{{ c.market_value|money if c._table == 'graded_cards' else '—' }}</td>
       </tr>
