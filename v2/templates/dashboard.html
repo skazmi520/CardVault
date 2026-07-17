@@ -25,35 +25,46 @@
   <div class="tile"><div class="v">{{ tstats.deals }}</div><div class="l">Deals Recorded</div></div>
 </div>
 
+<div class="grid2">
+  <div class="panel">
+    <h2>Needs Attention</h2>
+    <div class="attention">
+      <a href="/stock-check?stale=stale">
+        <div class="n {{ 'neg' if extras.stale else '' }}">{{ extras.stale }}</div>
+        <div class="t">cards not repriced in 30+ days → reprice</div>
+      </a>
+      <a href="/stock-check?stale=none">
+        <div class="n">{{ extras.never_priced }}</div>
+        <div class="t">cards with no market value → price them</div>
+      </a>
+      <a href="/raw">
+        <div class="n">{{ extras.at_grading }}</div>
+        <div class="t">cards out at grading</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Recent Deals</h2>
+    {% if recent %}
+      {% for d in recent[:5] %}
+      <div class="list-row">
+        <span class="muted" style="width:82px">{{ d.occurred_at[:10] }}</span>
+        <span class="grow">{{ d.counterparty or '—' }}
+          <span class="muted">· {{ d.n_out }} out / {{ d.n_in }} in</span></span>
+        <span class="num {{ 'pos' if d.gain >= 0 else 'neg' }}">{{ d.gain|gain }}</span>
+        <a href="/deals/{{ d.id }}">view</a>
+      </div>
+      {% endfor %}
+    {% else %}
+    <div class="muted">No deals recorded yet. <a href="/deals/new">Record your first deal →</a></div>
+    {% endif %}
+  </div>
+</div>
+
 <div class="panel">
   <h2>Portfolio Value Over Time</h2>
   <div class="chart" id="chart"></div>
-</div>
-
-<div class="grid2">
-  <div class="panel">
-    <h2>Collection by Grader</h2>
-    {% for c in extras.companies %}
-    <div class="bar-row">
-      <span class="bar-label">{{ c.company }}</span>
-      <span class="bar-track"><span class="bar-fill" style="width:{{ c.share }}%"></span></span>
-      <span class="bar-val">{{ c.count }} cards · {{ c.market|money }}</span>
-    </div>
-    {% endfor %}
-  </div>
-
-  <div class="panel">
-    <h2>Top Holdings</h2>
-    {% for t in extras.top %}
-    <div class="list-row">
-      <span class="chip">{{ t.company }} {{ t.grade }}</span>
-      <span class="grow"><strong>{{ t.name }}</strong>
-        {% if t.set %}<span class="muted"> · {{ t.set }}</span>{% endif %}</span>
-      <span class="num" style="font-weight:600">{{ t.market|money }}</span>
-      <span class="num {{ '' if t.gain is none else ('pos' if t.gain >= 0 else 'neg') }}" style="width:92px;text-align:right">{{ t.gain|gain }}</span>
-    </div>
-    {% endfor %}
-  </div>
 </div>
 
 <div class="grid2">
@@ -131,38 +142,27 @@
 
 <div class="grid2">
   <div class="panel">
-    <h2>Needs Attention</h2>
-    <div class="attention">
-      <a href="/collection">
-        <div class="n {{ 'neg' if extras.stale else '' }}">{{ extras.stale }}</div>
-        <div class="t">cards not repriced in 30+ days</div>
-      </a>
-      <a href="/collection">
-        <div class="n">{{ extras.never_priced }}</div>
-        <div class="t">cards with no market value</div>
-      </a>
-      <a href="/raw">
-        <div class="n">{{ extras.at_grading }}</div>
-        <div class="t">cards out at grading</div>
-      </a>
+    <h2>Collection by Grader</h2>
+    {% for c in extras.companies %}
+    <div class="bar-row">
+      <span class="bar-label">{{ c.company }}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:{{ c.share }}%"></span></span>
+      <span class="bar-val">{{ c.count }} cards · {{ c.market|money }}</span>
     </div>
+    {% endfor %}
   </div>
 
   <div class="panel">
-    <h2>Recent Deals</h2>
-    {% if recent %}
-      {% for d in recent[:5] %}
-      <div class="list-row">
-        <span class="muted" style="width:82px">{{ d.occurred_at[:10] }}</span>
-        <span class="grow">{{ d.counterparty or '—' }}
-          <span class="muted">· {{ d.n_out }} out / {{ d.n_in }} in</span></span>
-        <span class="num {{ 'pos' if d.gain >= 0 else 'neg' }}">{{ d.gain|gain }}</span>
-        <a href="/deals/{{ d.id }}">view</a>
-      </div>
-      {% endfor %}
-    {% else %}
-    <div class="muted">No deals recorded yet. <a href="/deals/new">Record your first deal →</a></div>
-    {% endif %}
+    <h2>Top Holdings</h2>
+    {% for t in extras.top %}
+    <div class="list-row">
+      <span class="chip">{{ t.company }} {{ t.grade }}</span>
+      <span class="grow"><strong>{{ t.name }}</strong>
+        {% if t.set %}<span class="muted"> · {{ t.set }}</span>{% endif %}</span>
+      <span class="num" style="font-weight:600">{{ t.market|money }}</span>
+      <span class="num {{ '' if t.gain is none else ('pos' if t.gain >= 0 else 'neg') }}" style="width:92px;text-align:right">{{ t.gain|gain }}</span>
+    </div>
+    {% endfor %}
   </div>
 </div>
 

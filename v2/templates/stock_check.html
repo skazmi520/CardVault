@@ -173,6 +173,15 @@ document.addEventListener("keydown", e => {
   }
 });
 
+/* deep links from the dashboard: ?stale=stale|none|1, ?company=PSA, ?q=… */
+{
+  const params = new URLSearchParams(location.search);
+  const stale = params.get("stale");
+  if (stale) $("f-stale").value = stale === "1" ? "stale" : stale;
+  if (params.get("company")) $("f-company").value = params.get("company");
+  if (params.get("q")) $("f-search").value = params.get("q");
+}
+
 applyFilters();
 </script>
 {% endblock %}

@@ -340,6 +340,14 @@ function scrollFocus() {
 ["f-search", "f-set", "f-kind", "f-grade", "f-status"].forEach(id =>
   $(id).addEventListener("input", () => { focusIdx = -1; applyFilters(); }));
 
+/* deep links: ?status=submitted_for_grading, ?kind=slab|raw, ?q=… */
+{
+  const params = new URLSearchParams(location.search);
+  if (params.get("status")) $("f-status").value = params.get("status");
+  if (params.get("kind")) $("f-kind").value = params.get("kind");
+  if (params.get("q")) $("f-search").value = params.get("q");
+}
+
 applyFilters();
 </script>
 {% endblock %}
