@@ -19,7 +19,7 @@
       <label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--text)">
         <input type="radio" name="target" value="{{ current.id }}" checked>
         <span><strong>{{ current.card_name }}</strong>
-          <span class="chip">{{ current.grading_company }} {{ current.grade }}</span>
+          <span class="chip {{ current.grading_company }}">{{ current.grading_company }} {{ current.grade }}</span>
           <span class="muted">{{ current.set_name or 'no set' }} · cert {{ current.serial_number or '—' }}</span></span>
       </label>
       {% endif %}
@@ -27,7 +27,7 @@
       <label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--text);margin-top:6px">
         <input type="radio" name="target" value="{{ c.id }}" {{ 'checked' if loop.first and not current }}>
         <span><strong>{{ c.card_name }}</strong>
-          <span class="chip">{{ c.grading_company }} {{ c.grade }}</span>
+          <span class="chip {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>
           <span class="muted">{{ c.set_name or 'no set' }} · match {{ (c._score * 100)|round|int }}%</span></span>
       </label>
       {% endfor %}

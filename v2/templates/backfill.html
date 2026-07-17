@@ -18,7 +18,7 @@
       <tr>
         <td><strong>{{ c.name }}</strong>
           <span class="muted">{{ c.set or 'no set' }}{% if c.number %} · #{{ c.number }}{% endif %}</span></td>
-        <td><span class="chip">{{ c.company }} {{ c.grade }}</span></td>
+        <td><span class="chip {{ c.company }}">{{ c.company }} {{ c.grade }}</span></td>
         <td>{% for m in c.missing %}<span class="chip raw" style="margin-right:4px">{{ m }}</span>{% endfor %}</td>
         <td>
           <input type="file" accept="image/*" data-card="{{ c.id }}" style="max-width:180px">

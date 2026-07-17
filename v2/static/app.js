@@ -138,11 +138,15 @@ function lineChart(el, points, { color = "#4f8cff" } = {}) {
   const last = points[points.length - 1];
 
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">
+    <defs><linearGradient id="cv-chart-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${color}" stop-opacity=".22"/>
+      <stop offset="1" stop-color="${color}" stop-opacity="0"/>
+    </linearGradient></defs>
     ${grid}
     <line x1="${PL}" y1="${PT}" x2="${PL}" y2="${H - PB}" stroke="#2a2f39"/>
     <line x1="${PL}" y1="${H - PB}" x2="${W - PR}" y2="${H - PB}" stroke="#2a2f39"/>
     <path d="${d} L ${x(points.length - 1).toFixed(1)} ${H - PB} L ${PL} ${H - PB} Z"
-          fill="${color}" opacity="0.08"/>
+          fill="url(#cv-chart-fill)"/>
     <path d="${d}" fill="none" stroke="${color}" stroke-width="2"
           stroke-linejoin="round" stroke-linecap="round"/>
     <circle cx="${x(points.length - 1).toFixed(1)}" cy="${y(last.value).toFixed(1)}" r="3.5" fill="${color}"/>
