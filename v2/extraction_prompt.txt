@@ -2,6 +2,9 @@ You are reading the label of a graded trading-card slab (PSA, BGS, CGC, or TAG).
 Extract ONLY what is actually visible on the label. Do not guess or infer
 missing information from card knowledge.
 
+The photo may be rotated — label text often reads sideways (90° in either
+direction). Read it in whatever orientation it appears.
+
 Return STRICT JSON only — no markdown fences, no commentary:
 
 {
@@ -20,6 +23,15 @@ Return STRICT JSON only — no markdown fences, no commentary:
 Rules:
 - Use an empty string for anything not visible on the label.
 - Every field you cannot read clearly MUST appear in low_confidence.
+- cert_number: transcribe digit by digit from the label (7-10 digits, usually
+  the last line of the label or under the grade). Zoom in mentally and verify
+  each digit; NEVER pad, drop, or guess digits. If any digit is uncertain,
+  put cert_number in low_confidence.
+- grading_company is the company on the LABEL only (PSA red/white label,
+  BGS metallic label, CGC, TAG). Words printed on the card artwork itself —
+  like "TAG TEAM" on Pokémon cards — are NOT the grading company.
+- Copy the set line exactly as printed (e.g. "POKEMON SUN & MOON" stays
+  "Sun & Moon" — do not substitute a similar-sounding set name).
 - card_number exactly as printed minus any # (keep prefixes like SM210, GG44, H1).
 - If the photo does not show a slab label, return all fields empty and put
   "card_name" in low_confidence.
