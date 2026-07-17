@@ -250,9 +250,13 @@ document.querySelectorAll(".pct-btn").forEach(b =>
 ["cash-paid", "cash-received"].forEach(id =>
   $(id).addEventListener("input", () => { save(); totals(); }));
 
-$("clear").addEventListener("click", () => {
+$("clear").addEventListener("click", async () => {
   if (!give.length && !get.length) return;
-  if (confirm("Clear this evaluation?")) {
+  if (await confirmDialog({
+    title: "Clear this evaluation?",
+    body: "Both sides and the cash fields reset.",
+    confirmText: "Clear", danger: true,
+  })) {
     give = []; get = []; $("cash-paid").value = ""; $("cash-received").value = "";
     $("give-pct").value = "100"; $("get-pct").value = "80";
     save(); render();

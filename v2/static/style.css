@@ -198,6 +198,29 @@ td.saved-flash { animation: saved-flash .9s ease-out; }
 }
 .btn.danger-ghost:hover { background: rgba(229, 99, 108, .12); }
 
+/* ── toasts ────────────────────────────────────────── */
+.toast-stack {
+  position: fixed; right: 18px; bottom: 18px; z-index: 100;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  pointer-events: none;
+}
+.toast {
+  background: var(--surface-3); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  color: var(--text); border-radius: 8px; padding: 10px 14px;
+  font-size: 13px; max-width: 380px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.45);
+  opacity: 0; transform: translateY(8px);
+  transition: opacity .25s, transform .25s;
+}
+.toast.show { opacity: 1; transform: none; }
+.toast.success { border-left-color: var(--pos); }
+.toast.error   { border-left-color: var(--neg); }
+.toast.info    { border-left-color: var(--accent); }
+
+.cdialog { width: 420px; }
+.cdialog-body { white-space: pre-line; font-size: 13px; }
+
 /* ── modal ─────────────────────────────────────────── */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 60;
