@@ -31,13 +31,16 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
                if not include_disposed else "WHERE status != 'promoted'")
     for r in conn.execute(f"SELECT * FROM ungraded_cards {u_where}"):
         basis = r["purchase_price"] or 0.0
+        mv = r["market_value"]
         out.append({
             "table": "ungraded_cards", "id": r["id"], "kind": "raw",
             "name": r["card_name"], "set": r["set_name"] or "",
             "number": r["card_number"] or "", "year": r["year"] or "",
             "company": "", "grade": "", "cert": "",
             "acq_cost": basis, "basis": basis,
-            "market_value": None, "gain": None, "repriced": "",
+            "market_value": mv,
+            "gain": (round(mv - basis, 2) if mv is not None else None),
+            "repriced": r["market_value_updated"] or "",
             "status": r["status"],
             "acq_date": r["purchase_date"] or "",
             "notes": r["notes"] or "",
@@ -49,14 +52,18 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
 
 # ── repricing ───────────────────────────────────────────────────────────────────
 
-def reprice(conn, card_id: int, market_value: float | None):
-    """Update a graded card's market value; stamps market_value_updated and
-    appends to price_history (which feeds the Top Movers panel)."""
+def reprice(conn, card_id: int, market_value: float | None,
+            table: str = "graded_cards"):
+    """Update a card's market value; stamps market_value_updated. For slabs it
+    also appends to price_history (which feeds Top Movers) — price_history is
+    keyed to graded_cards, so raw repricing updates the value only."""
+    if table not in ("graded_cards", "ungraded_cards"):
+        raise ValueError(f"unknown table {table!r}")
     now = datetime.now().isoformat(timespec="seconds")
     conn.execute(
-        "UPDATE graded_cards SET market_value=?, market_value_updated=? WHERE id=?",
+        f"UPDATE {table} SET market_value=?, market_value_updated=? WHERE id=?",
         (market_value, now if market_value is not None else None, card_id))
-    if market_value is not None:
+    if market_value is not None and table == "graded_cards":
         conn.execute(
             "INSERT INTO price_history (card_id, recorded_at, market_value) VALUES (?,?,?)",
             (card_id, now, market_value))
@@ -171,8 +178,11 @@ def dashboard_stats(conn) -> dict:
     g_market = sum((c["market_value"] if c["market_value"] is not None
                     else c["acquisition_price"] or 0) for c in g)
     r_basis  = sum(c["purchase_price"] or 0 for c in r)
+    # raw uses its market value where one has been entered, else carries at cost
+    r_market = sum((c["market_value"] if c["market_value"] is not None
+                    else c["purchase_price"] or 0) for c in r)
     basis    = sum(c["acquisition_price"] or 0 for c in g) + r_basis
-    market   = g_market + r_basis          # raw carries at cost (no market data)
+    market   = g_market + r_market
 
     y0 = f"{date.today().year}-01-01"
     realized_ytd = (conn.execute(

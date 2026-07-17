@@ -111,7 +111,8 @@ function pickOut(i) {
 $("add-in").addEventListener("click", () => { addIn(); renderLines(); focusLastIn(); });
 function addIn() {
   inLines.push({ name: "", set: "", number: "", year: "", company: "PSA",
-                 grade: "", cert: "", is_graded: true, deal_value: "" });
+                 grade: "", cert: "", is_graded: true,
+                 deal_value: "", market_value: "" });
 }
 function focusLastIn() {
   const rows = document.querySelectorAll("#in-lines .deal-line");
@@ -147,7 +148,12 @@ function renderLines() {
         <input type="text" placeholder="Year" style="width:64px" data-in="${i}" data-f="year" value="${esc(l.year)}">
         ${l.company === "PSA" ? `<button type="button" class="btn ghost small" data-cert-lookup="${i}"
             title="Fetch name/set/# from PSA">${l._certBusy ? "…" : "PSA ↻"}</button>` : ""}` : ""}
-      <input class="val" type="text" placeholder="value" data-side="in" data-i="${i}" value="${esc(l.deal_value)}">
+      <input type="text" placeholder="market $" style="width:88px;text-align:right"
+             data-in="${i}" data-f="market_value" value="${esc(l.market_value)}"
+             title="What the card is worth (optional — leave blank to skip)">
+      <input class="val" type="text" placeholder="paid $" data-side="in" data-i="${i}"
+             value="${esc(l.deal_value)}" style="width:88px"
+             title="What you paid / what it counts for in this deal — this becomes the cost basis">
       <span class="x" data-inx="${i}">✕</span>
       ${l._certMsg ? `<div style="width:100%;font-size:11px;color:var(--${l._certOk ? "pos" : "neg"})">${esc(l._certMsg)}</div>` : ""}
     </div>`).join("") || '<div class="muted" style="margin-bottom:8px">No cards in — pure sale.</div>';
@@ -251,12 +257,25 @@ $("save").addEventListener("click", async () => {
       cards_out: outLines.map(l => ({ table: l.table, id: l.id, deal_value: num(l.deal_value) })),
       cards_in: inLines.map(l => ({ name: l.name, set: l.set, number: l.number,
         year: l.year, company: l.company, grade: l.grade, cert: l.cert,
-        is_graded: l.is_graded, deal_value: num(l.deal_value) })),
+        is_graded: l.is_graded, deal_value: num(l.deal_value),
+        market_value: num(l.market_value) })),
     });
-    (res.warnings || []).forEach(w => msg.innerHTML += `<div class="warn">${esc(w)}</div>`);
-    location.href = "/deals/" + res.deal_id;
+    // The deal IS saved at this point — warnings must be readable, not blown
+    // away by an instant redirect (which is exactly how a 12-card deal got
+    // booked at $0 basis unnoticed).
+    const warns = res.warnings || [];
+    if (warns.length) {
+      msg.innerHTML =
+        `<div class="warn"><strong>Deal #${res.deal_id} saved with warnings:</strong><ul style="margin:6px 0 0 18px">`
+        + warns.map(w => `<li>${esc(w)}</li>`).join("") + `</ul></div>`
+        + `<a class="btn" href="/deals/${res.deal_id}">Open deal #${res.deal_id} →</a>`;
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    } else {
+      location.href = "/deals/" + res.deal_id;
+    }
   } catch (e) {
     msg.innerHTML = `<div class="warn">${esc(e.message)}</div>`;
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
   }
 });
 
@@ -278,7 +297,8 @@ function applyPrefill() {
   (p.cards_in || []).forEach(i => {
     inLines.push({ name: i.name || "", set: "", number: "", year: "", company: "PSA",
                    grade: "", cert: "", is_graded: true,
-                   deal_value: String(i.deal_value ?? "") });
+                   deal_value: String(i.deal_value ?? ""),
+                   market_value: String(i.market_value ?? "") });
   });
   if (p.cash) $("d-cash").value = p.cash;
 
