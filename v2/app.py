@@ -839,7 +839,7 @@ def api_psa_lookup():
     messages = {
         "not_found": "No PSA record found for that cert number.",
         "no_token": "No PSA_API_TOKEN configured — add one in ~/.cardvaultmac/v2.env.",
-        "rate_limited": "PSA API is briefly throttled — try again in a moment.",
+        "rate_limited": res.get("error") or "PSA refused the call (429).",
         "queued": res.get("error") or "Today's PSA lookup budget is used up — resumes tomorrow.",
         "error": res.get("error") or "PSA lookup failed.",
     }
