@@ -54,10 +54,13 @@ def graded_sheet(conn, company: str) -> tuple[str, int]:
     for c in rows:
         market = c["market_value"] or 0
         total = c["acquisition_price"] or 0
-        pl = (market - total) if market else ""
+        unknown = bool(c["basis_unknown"])
+        pl = "" if unknown or not market else (market - total)
         w.writerow([
-            c["card_name"], c["grade"], _usd(_cash_component(c)), _usd(c["grading_fee"]),
-            _usd(market) if market else "", _usd(pl) if pl != "" else "", _usd(total),
+            c["card_name"], c["grade"],
+            "unknown" if unknown else _usd(_cash_component(c)), _usd(c["grading_fee"]),
+            _usd(market) if market else "", _usd(pl) if pl != "" else "",
+            "unknown" if unknown else _usd(total),
             c["serial_number"] or "", c["card_number"] or "", c["set_name"] or "",
             c["year"] or "", c["acquisition_type"] or "Cash", _usd(c["trade_value"]),
             c["trade_details"] or "", c["acquisition_date"] or "",
@@ -84,8 +87,9 @@ def sold_sheet(conn) -> tuple[str, int]:
         proceeds = c["disposal_proceeds"]
         if proceeds is None:
             proceeds = c["sale_price"] or 0
+        unknown = bool(c["basis_unknown"])
         gain = c["realized_gain"]
-        if gain is None:
+        if gain is None and not unknown:
             gain = proceeds - total
         acq_type = c["acquisition_type"] or "Cash"
         trade_val = c["trade_value"] or 0
@@ -96,8 +100,11 @@ def sold_sheet(conn) -> tuple[str, int]:
         else:
             cash_val, trade_val = proceeds, 0.0
         w.writerow([
-            c["card_name"], c["grade"], _usd(_cash_component(c)), _usd(c["grading_fee"]),
-            _usd(total), _usd(trade_val), _usd(cash_val), _usd(gain),
+            c["card_name"], c["grade"],
+            "unknown" if unknown else _usd(_cash_component(c)), _usd(c["grading_fee"]),
+            "unknown" if unknown else _usd(total),
+            _usd(trade_val), _usd(cash_val),
+            "unknown" if unknown else _usd(gain),
             c["grading_company"] or "", c["serial_number"] or "", c["card_number"] or "",
             c["set_name"] or "", c["year"] or "", acq_type, c["trade_details"] or "",
             c["acquisition_date"] or "",

@@ -1,12 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Deal #{{ d.id }}{% endblock %}
 {% block content %}
-<div class="page-title">Deal #{{ d.id }}
+<div class="page-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+  <span>Deal #{{ d.id }}
   <span class="sub">{{ d.occurred_at[:16].replace('T', ' ') }}
     {% if d.counterparty %} · {{ d.counterparty }}{% endif %}
     {% if d.location %} · {{ d.location }}{% endif %}
-    · {{ d.payment_method }}</span>
+    · {{ d.payment_method }}</span></span>
+  <button class="btn ghost small" id="void-deal"
+          style="color:var(--neg);border-color:var(--neg)">Void deal…</button>
 </div>
+<div id="void-msg"></div>
 
 <div class="tiles">
   <div class="tile"><div class="v {{ 'pos' if d.cash_amount > 0 else 'neg' if d.cash_amount < 0 else '' }}">{{ d.cash_amount|gain if d.cash_amount else "—" }}</div><div class="l">Cash ({{ 'received' if d.cash_amount >= 0 else 'paid' }})</div></div>
@@ -73,22 +77,44 @@
 </div>
 
 <script>
+document.getElementById("void-deal").addEventListener("click", async () => {
+  const sure = confirm(
+    "Void deal #{{ d.id }}?\n\nCards that left will return to inventory, " +
+    "cards this deal created will be removed, and the cash flow is reversed. " +
+    "This cannot itself be undone.");
+  if (!sure) return;
+  try {
+    const res = await postJSON("/api/deals/{{ d.id }}/void", {});
+    alert(`Voided. Restored: ${res.restored.length} · removed: ${res.removed.length}`);
+    location.href = "/deals";
+  } catch (e) {
+    document.getElementById("void-msg").innerHTML =
+      `<div class="warn">${esc(e.message)}</div>`;
+  }
+});
+
 document.getElementById("photo-upload").addEventListener("click", async () => {
   const files = document.getElementById("photo-file").files;
   const msg = document.getElementById("photo-msg");
   if (!files.length) { msg.textContent = "choose a file first"; return; }
+  let okCount = 0, failMsg = "";
   for (const f of files) {
-    const fd = new FormData(); fd.append("photo", f);
-    const r = await fetch("/api/deals/{{ d.id }}/photos", { method: "POST", body: fd });
-    const data = await r.json();
-    if (data.ok) {
-      const a = document.createElement("a");
-      a.href = "/deal-photos/" + data.file; a.target = "_blank";
-      a.innerHTML = `<img src="/deal-photos/${data.file}">`;
-      document.getElementById("photo-grid").appendChild(a);
-    } else msg.textContent = data.error || "upload failed";
+    try {
+      const fd = new FormData(); fd.append("photo", f);
+      const r = await fetch("/api/deals/{{ d.id }}/photos", { method: "POST", body: fd });
+      const data = await r.json();
+      if (data.ok) {
+        okCount++;
+        const a = document.createElement("a");
+        a.href = "/deal-photos/" + data.file; a.target = "_blank";
+        a.innerHTML = `<img src="/deal-photos/${data.file}">`;
+        document.getElementById("photo-grid").appendChild(a);
+      } else failMsg = data.error || "upload failed";
+    } catch (e) { failMsg = e.message; }
   }
-  msg.textContent = "uploaded ✓";
+  msg.textContent = failMsg
+    ? `${okCount}/${files.length} uploaded — last error: ${failMsg}`
+    : `uploaded ${okCount} ✓`;
 });
 </script>
 {% endblock %}

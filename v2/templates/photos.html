@@ -78,17 +78,28 @@ $("upload").addEventListener("click", async () => {
 });
 document.querySelectorAll("[data-extract]").forEach(b => b.addEventListener("click", async () => {
   b.textContent = "extracting…"; b.disabled = true;
-  const r = await fetch(`/api/photos/${b.dataset.extract}/extract`, { method: "POST" });
-  const d = await r.json();
-  if (d.ok) location.href = `/photos/${b.dataset.extract}`;
-  else { alert(d.error); location.reload(); }
+  try {
+    const r = await fetch(`/api/photos/${b.dataset.extract}/extract`, { method: "POST" });
+    const d = await r.json();
+    if (d.ok) { location.href = `/photos/${b.dataset.extract}`; return; }
+    alert(d.error || "extraction failed");
+  } catch (e) {
+    alert("Extraction failed: " + e.message);
+  }
+  b.textContent = "Extract"; b.disabled = false;
 }));
 $("extract-all").addEventListener("click", async () => {
-  $("extract-all").textContent = "extracting…"; $("extract-all").disabled = true;
-  const r = await fetch("/api/photos/extract-all", { method: "POST" });
-  const d = await r.json();
-  alert(`Processed ${d.processed} photos ($${d.cost}). ${d.errors.length} errors.`);
-  location.reload();
+  const btn = $("extract-all");
+  btn.textContent = "extracting…"; btn.disabled = true;
+  try {
+    const r = await fetch("/api/photos/extract-all", { method: "POST" });
+    const d = await r.json();
+    alert(`Processed ${d.processed} photos ($${d.cost}). ${(d.errors || []).length} errors.`);
+    location.reload();
+  } catch (e) {
+    alert("Batch extraction failed: " + e.message);
+    btn.textContent = "Extract all pending"; btn.disabled = false;
+  }
 });
 </script>
 {% endblock %}

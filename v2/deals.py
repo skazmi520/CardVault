@@ -41,6 +41,7 @@ from datetime import datetime
 from . import db as v2db
 
 RECONCILE_TOLERANCE = 0.05   # warn when itemized sides differ by more than 5%
+_LAST_CLAMP = None           # set by _resolve_side when a side total under-covers lines
 
 
 # ── line specs ─────────────────────────────────────────────────────────────────
@@ -105,6 +106,10 @@ def _resolve_side(line_values: list[float | None], weights: list[float],
     if side_total is not None:
         fixed = sum(v for v in line_values if v is not None)
         remainder = round(side_total - fixed, 2)
+        # caller checks this via the returned values; negative remainder is
+        # clamped below, so record it in the module-level scratch for warnings
+        global _LAST_CLAMP
+        _LAST_CLAMP = remainder if remainder < 0 else None
         open_idx = [i for i, v in enumerate(line_values) if v is None]
         alloc = _allocate(max(0.0, remainder), [weights[i] for i in open_idx])
         out = list(line_values)
@@ -136,8 +141,9 @@ def _load_out_card(conn, line: CardOut) -> dict:
         basis = row["acquisition_price"] or 0.0
     else:
         basis = row["purchase_price"] or 0.0
-    mv = row["market_value"] if line.table == "graded_cards" else None
+    mv = row["market_value"]
     return {"row": row, "basis": basis,
+            "basis_unknown": bool(row["basis_unknown"]),
             "weight": (mv if mv and mv > 0 else basis if basis > 0 else 1.0),
             "name": row["card_name"]}
 
@@ -158,6 +164,8 @@ def save_deal(conn, *,
     """Save a deal atomically. Returns {deal_id, warnings, out_lines, in_lines,
     v_out, v_in, cash_amount}. Raises ValueError on invalid input; nothing is
     written when an exception is raised."""
+    global _LAST_CLAMP
+    _LAST_CLAMP = None
     cards_out, cards_in = list(cards_out), list(cards_in)
     warnings: list[str] = []
 
@@ -219,6 +227,12 @@ def save_deal(conn, *,
         raise ValueError(
             "cannot resolve deal values: both sides have unvalued lines and no side totals")
 
+    if _LAST_CLAMP is not None:
+        warnings.append(
+            f"Entered line values exceed the side total by ${-_LAST_CLAMP:,.2f}; "
+            "remaining lines were allocated $0.")
+        _LAST_CLAMP = None
+
     v_out, v_in = round(sum(out_vals), 2), round(sum(in_vals), 2)
 
     # ── basis pool for incoming cards ────────────────────────────────────────
@@ -246,6 +260,11 @@ def save_deal(conn, *,
         acq_type = "Trade"
     else:
         acq_type = "Cash"
+    # per-card trade component: basis minus this card's share of cash paid
+    cash_paid_total = max(0.0, -cash_amount)
+    cash_shares = (_allocate(min(cash_paid_total, basis_pool),
+                             [v if v > 0 else 1.0 for v in in_vals])
+                   if cards_in else [])
     gave_parts = [f"{i['name']}: ${val:,.2f}" for i, val in zip(out_info, out_vals)]
     if cash_amount < 0:
         gave_parts.append(f"Cash: ${-cash_amount:,.2f}")
@@ -265,28 +284,36 @@ def save_deal(conn, *,
 
         out_lines = []
         for ln, info, proceeds in zip(cards_out, out_info, out_vals):
-            gain = round(proceeds - info["basis"], 2)
+            # no recorded cost means no knowable gain — never book proceeds-0
+            gain = None if info["basis_unknown"] else round(proceeds - info["basis"], 2)
             if ln.table == "graded_cards":
-                conn.execute(
+                cur = conn.execute(
                     """UPDATE graded_cards SET
                          status='disposed', disposed_at=?, disposed_via_deal_id=?,
                          disposal_proceeds=?, realized_gain=?,
                          is_sold=1, sale_price=?, sale_date=?
-                       WHERE id=?""",
+                       WHERE id=? AND status='active'""",
                     (occurred_at, deal_id, proceeds, gain, proceeds, deal_date, ln.card_id))
             else:
-                conn.execute(
+                cur = conn.execute(
                     """UPDATE ungraded_cards SET
                          status='disposed', disposed_at=?, disposed_via_deal_id=?,
                          disposal_proceeds=?, realized_gain=?
-                       WHERE id=?""",
+                       WHERE id=? AND status='active'""",
                     (occurred_at, deal_id, proceeds, gain, ln.card_id))
+            if cur.rowcount != 1:
+                # raced by another submit of the same form — abort the whole deal
+                raise ValueError(
+                    f"{info['name']} was already disposed (double submit?) — deal aborted")
             out_lines.append({"table": ln.table, "card_id": ln.card_id,
                               "name": info["name"], "basis": info["basis"],
+                              "basis_unknown": info["basis_unknown"],
                               "proceeds": proceeds, "realized_gain": gain})
 
         in_lines = []
-        for ln, agreed, basis in zip(cards_in, in_vals, in_basis):
+        for ln, agreed, basis, cash_share in zip(
+                cards_in, in_vals, in_basis,
+                cash_shares or [0.0] * len(cards_in)):
             # Market value is whatever was stated for the card; if none was given
             # fall back to the deal value (in a straight buy they're the same).
             mv = ln.market_value if ln.market_value not in (None, "") else (
@@ -305,7 +332,8 @@ def save_deal(conn, *,
                     (ln.serial_number, ln.grading_company, ln.grade, ln.card_name,
                      ln.card_number, ln.set_name, ln.year,
                      acq_type, basis,
-                     (v_out if acq_type != "Cash" else 0.0), trade_details,
+                     (max(0.0, round(basis - cash_share, 2))
+                      if acq_type != "Cash" else 0.0), trade_details,
                      deal_date, ln.notes, datetime.now().isoformat(),
                      mv, mv_date, deal_id))
             else:
@@ -319,7 +347,8 @@ def save_deal(conn, *,
                        VALUES (?,?,?,?,NULL,?,?,?,?,?,?, 'Not Slated', '', ?,?,?, 'active', ?)""",
                     (ln.card_name, ln.card_number, ln.set_name, ln.year,
                      basis, deal_date, acq_type,
-                     (v_out if acq_type != "Cash" else 0.0), trade_details,
+                     (max(0.0, round(basis - cash_share, 2))
+                      if acq_type != "Cash" else 0.0), trade_details,
                      ln.notes, datetime.now().isoformat(), mv, mv_date, deal_id))
             if ln.is_graded and mv:
                 # seed price history so movers/repricing have a baseline
@@ -338,6 +367,68 @@ def save_deal(conn, *,
     return {"deal_id": deal_id, "warnings": warnings,
             "v_out": v_out, "v_in": v_in, "cash_amount": cash_amount,
             "out_lines": out_lines, "in_lines": in_lines}
+
+
+def void_deal(conn, deal_id: int) -> dict:
+    """Undo a mistakenly-entered deal.
+
+    The one sanctioned exception to "nothing is ever deleted": a deal entered
+    in error is corrected by putting the world back exactly as it was —
+    cards that left come back (disposal fields cleared), cards the deal
+    created are removed, and the deal row goes away.
+
+    Refused unless it is fully safe: every card the deal created must still be
+    untouched (status 'active', never disposed / promoted / cracked, no
+    photo-import applied to it), so the void cannot orphan later history.
+    """
+    deal = conn.execute("SELECT * FROM deals WHERE id=?", (deal_id,)).fetchone()
+    if deal is None:
+        raise ValueError(f"deal {deal_id} not found")
+
+    ins, outs = [], []
+    for table in ("graded_cards", "ungraded_cards"):
+        ins += [dict(r, _table=table) for r in conn.execute(
+            f"SELECT * FROM {table} WHERE acquired_via_deal_id=?", (deal_id,))]
+        outs += [dict(r, _table=table) for r in conn.execute(
+            f"SELECT * FROM {table} WHERE disposed_via_deal_id=?", (deal_id,))]
+
+    blockers = [f"{c['card_name']} (came in via this deal, now {c['status']})"
+                for c in ins if c["status"] != "active"]
+    if blockers:
+        raise ValueError(
+            "cannot void — cards from this deal have moved on: "
+            + "; ".join(blockers)
+            + ". Correct those first (their history would be orphaned).")
+
+    try:
+        for c in ins:
+            if c["_table"] == "graded_cards":
+                conn.execute("DELETE FROM price_history WHERE card_id=?", (c["id"],))
+            conn.execute(f"DELETE FROM {c['_table']} WHERE id=?", (c["id"],))
+        for c in outs:
+            if c["_table"] == "graded_cards":
+                conn.execute(
+                    """UPDATE graded_cards SET status='active', disposed_at=NULL,
+                         disposed_via_deal_id=NULL, disposal_proceeds=NULL,
+                         realized_gain=NULL, is_sold=0, sale_price=NULL, sale_date=NULL
+                       WHERE id=?""", (c["id"],))
+            else:
+                conn.execute(
+                    """UPDATE ungraded_cards SET status='active', disposed_at=NULL,
+                         disposed_via_deal_id=NULL, disposal_proceeds=NULL,
+                         realized_gain=NULL
+                       WHERE id=?""", (c["id"],))
+        conn.execute("DELETE FROM deal_photos WHERE deal_id=?", (deal_id,))
+        conn.execute("DELETE FROM deals WHERE id=?", (deal_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return {"deal_id": deal_id,
+            "restored": [c["card_name"] for c in outs],
+            "removed": [c["card_name"] for c in ins],
+            "cash_reversed": deal["cash_amount"]}
 
 
 # ── photos ──────────────────────────────────────────────────────────────────────
@@ -372,8 +463,11 @@ def get_deal(conn, deal_id: int) -> dict | None:
     for table in ("graded_cards", "ungraded_cards"):
         out += [dict(r, _table=table) for r in conn.execute(
             f"SELECT * FROM {table} WHERE disposed_via_deal_id=?", (deal_id,))]
+        # promote/crack copies acquired_via_deal_id onto the successor row and
+        # leaves it on the superseded one — count each card once, not twice
         inn += [dict(r, _table=table) for r in conn.execute(
-            f"SELECT * FROM {table} WHERE acquired_via_deal_id=?", (deal_id,))]
+            f"SELECT * FROM {table} WHERE acquired_via_deal_id=? "
+            f"AND status NOT IN ('promoted','cracked')", (deal_id,))]
     photos = conn.execute(
         "SELECT * FROM deal_photos WHERE deal_id=?", (deal_id,)).fetchall()
     return {"deal": deal, "cards_out": out, "cards_in": inn, "photos": photos}

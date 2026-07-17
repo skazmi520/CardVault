@@ -38,6 +38,10 @@ def run_extract(conn, import_id: int) -> dict:
     row = conn.execute("SELECT * FROM photo_imports WHERE id=?", (import_id,)).fetchone()
     if row is None:
         raise ValueError(f"photo import {import_id} not found")
+    if row["status"] in ("applied", "rejected"):
+        return {"ok": False,
+                "error": f"import {import_id} is already {row['status']} — "
+                         "re-extracting it would put it back in the review queue"}
 
     keys = config.get_keys()
     path = v2db.SLAB_PHOTO_DIR / row["file_path"]
@@ -127,12 +131,14 @@ def apply_to_card(conn, import_id: int, card_id: int | None, fields: dict) -> in
     fields = {k: str(v).strip() for k, v in fields.items() if k in _APPLY_FIELDS}
 
     if card_id is None:
+        # no purchase price is known for a card conjured from a photo — flag it
+        # basis_unknown rather than fabricating a $0 cost (=100% fake profit)
         cur = conn.execute(
             """INSERT INTO graded_cards
                  (serial_number, grading_company, grade, card_name, card_number,
                   set_name, year, acquisition_type, acquisition_price,
-                  acquisition_date, notes, date_added, status)
-               VALUES (?,?,?,?,?,?,?, 'Cash', 0, ?, 'Created from slab photo', ?, 'active')""",
+                  acquisition_date, notes, date_added, status, basis_unknown)
+               VALUES (?,?,?,?,?,?,?, 'Cash', 0, ?, 'Created from slab photo', ?, 'active', 1)""",
             (fields.get("serial_number", ""), fields.get("grading_company", ""),
              fields.get("grade", ""), fields.get("card_name", "Unknown card"),
              fields.get("card_number", ""), fields.get("set_name", ""),

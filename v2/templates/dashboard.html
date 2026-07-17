@@ -48,7 +48,7 @@
       <span class="grow"><strong>{{ t.name }}</strong>
         {% if t.set %}<span class="muted"> · {{ t.set }}</span>{% endif %}</span>
       <span class="num" style="font-weight:600">{{ t.market|money }}</span>
-      <span class="num {{ 'pos' if t.gain >= 0 else 'neg' }}" style="width:92px;text-align:right">{{ t.gain|gain }}</span>
+      <span class="num {{ '' if t.gain is none else ('pos' if t.gain >= 0 else 'neg') }}" style="width:92px;text-align:right">{{ t.gain|gain }}</span>
     </div>
     {% endfor %}
   </div>
@@ -91,6 +91,7 @@
       <span class="muted" style="width:82px">{{ e.occurred_at[:10] }}</span>
       <span class="grow">{{ e.memo or '—' }}</span>
       <span class="num {{ 'pos' if e.amount >= 0 else 'neg' }}">{{ e.amount|gain }}</span>
+      <span class="x" data-cash-del="{{ e.id }}" title="Delete this entry">✕</span>
     </div>
     {% endfor %}
   </div>
@@ -164,7 +165,15 @@
 </div>
 
 <script>
-  lineChart(document.getElementById("chart"), {{ snaps_json|safe }});
+  lineChart(document.getElementById("chart"), {{ snaps|tojson }});
+  document.querySelectorAll("[data-cash-del]").forEach(x =>
+    x.addEventListener("click", async () => {
+      if (!confirm("Delete this cash entry? The balance adjusts immediately.")) return;
+      try {
+        await postJSON(`/api/cash/${x.dataset.cashDel}/delete`, {});
+        location.reload();
+      } catch (e) { alert(e.message); }
+    }));
   document.getElementById("cash-add").addEventListener("click", async () => {
     const msg = document.getElementById("cash-msg");
     try {
