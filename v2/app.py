@@ -397,6 +397,83 @@ def realized_csv():
                  f"attachment; filename=realized_gains{('_' + year) if year else ''}.csv"})
 
 
+@app.get("/reports/collection.csv")
+def collection_csv():
+    """Everything currently held — slabs + raw in one file."""
+    import csv
+    import io
+    c = conn()
+    cards = v2cards.list_cards(c)
+    c.close()
+    cards.sort(key=lambda x: ((x["name"] or "").lower()))
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Card", "Type", "Company", "Grade", "Set", "Card #", "Year",
+                "Cert", "Acquired", "Basis", "Market Value", "Gain", "Gain %",
+                "Last Repriced", "Status"])
+    for r in cards:
+        unknown = r.get("basis_unknown")
+        basis = "unknown" if unknown else r["basis"]
+        gain = "unknown" if unknown else (r["gain"] if r["gain"] is not None else "")
+        pct = ""
+        if not unknown and r["gain"] is not None and r["basis"]:
+            pct = f"{r['gain'] / r['basis'] * 100:.1f}"
+        w.writerow([r["name"], r["kind"], r["company"], r["grade"], r["set"],
+                    r["number"], r["year"], r["cert"], r["acq_date"], basis,
+                    r["market_value"] if r["market_value"] is not None else "",
+                    gain, pct, (r["repriced"] or "")[:10],
+                    r.get("grading_status") or r["status"]])
+    return app.response_class(
+        buf.getvalue(), mimetype="text/csv",
+        headers={"Content-Disposition":
+                 f"attachment; filename=collection_{date.today().isoformat()}.csv"})
+
+
+def _sell_rows(c, pct: int):
+    """Active slabs still profitable at pct% of market. Unknown-basis cards are
+    excluded — no cost means no knowable profit."""
+    rows = []
+    for r in c.execute("SELECT * FROM graded_cards WHERE status='active' "
+                       "AND market_value IS NOT NULL AND basis_unknown=0"):
+        sale = r["market_value"] * pct / 100
+        basis = r["acquisition_price"] or 0
+        profit = sale - basis
+        if profit > 0:
+            rows.append({"name": r["card_name"], "company": r["grading_company"],
+                         "grade": r["grade"], "number": r["card_number"] or "",
+                         "set": r["set_name"] or "", "cert": r["serial_number"] or "",
+                         "basis": basis, "market": r["market_value"],
+                         "sale": round(sale, 2), "profit": round(profit, 2),
+                         "margin": round(profit / sale * 100, 1) if sale else 0})
+    rows.sort(key=lambda x: -x["profit"])
+    return rows
+
+
+@app.get("/reports/sell-list.csv")
+def sell_list_csv():
+    import csv
+    import io
+    pct = int(request.args.get("pct", 85))
+    c = conn()
+    rows = _sell_rows(c, pct)
+    c.close()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Card", "Company", "Grade", "Set", "Card #", "Cert", "Basis",
+                "Market Value", f"Sale @ {pct}%", "Profit", "Margin %"])
+    for r in rows:
+        w.writerow([r["name"], r["company"], r["grade"], r["set"], r["number"],
+                    r["cert"], r["basis"], r["market"], r["sale"], r["profit"],
+                    r["margin"]])
+    w.writerow([])
+    w.writerow([f"{len(rows)} cards profitable at {pct}%", "", "", "", "", "", "",
+                "", round(sum(r["sale"] for r in rows), 2),
+                round(sum(r["profit"] for r in rows), 2), ""])
+    return app.response_class(
+        buf.getvalue(), mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=sell_list_{pct}pct.csv"})
+
+
 @app.get("/reports/sheets.zip")
 def sheets_zip():
     """Google Sheets-compatible CSVs (PSA/BGS/CGC/TAG/SOLD/RAW) in one zip —
@@ -506,19 +583,8 @@ def stock_check_print():
 def sell_sheet():
     pct = int(request.args.get("pct", 85))
     c = conn()
-    rows = []
-    for r in c.execute("SELECT * FROM graded_cards WHERE status='active' "
-                       "AND market_value IS NOT NULL"):
-        sale = r["market_value"] * pct / 100
-        profit = sale - (r["acquisition_price"] or 0)
-        if profit > 0:
-            rows.append({"name": r["card_name"], "company": r["grading_company"],
-                         "grade": r["grade"], "number": r["card_number"] or "",
-                         "basis": r["acquisition_price"] or 0,
-                         "market": r["market_value"], "sale": round(sale, 2),
-                         "profit": round(profit, 2)})
+    rows = _sell_rows(c, pct)
     c.close()
-    rows.sort(key=lambda x: -x["profit"])
     return render_template("sell_sheet.html", rows=rows, pct=pct,
                            total_profit=round(sum(r["profit"] for r in rows), 2))
 

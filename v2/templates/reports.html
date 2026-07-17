@@ -11,8 +11,8 @@
       <option value="">All years</option>
       {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}
     </select>
-    <a class="btn ghost small" href="/reports/realized.csv{{ ('?year=' + year) if year }}">Export CSV</a>
-    <a class="btn ghost small" href="/reports/deals.csv">Export deal history CSV</a>
+    <a class="btn ghost small" href="/reports/realized.csv{{ ('?year=' + year) if year }}">Realized gains CSV{{ ' (' ~ year ~ ')' if year }}</a>
+    <a class="btn ghost small" href="/reports/deals.csv">Deal history CSV</a>
     <span class="muted">{{ totals.n_known }} cards moved · basis {{ totals.basis|money }} ·
       proceeds {{ totals.proceeds|money }} ·
       gain <span class="{{ 'pos' if totals.gain >= 0 else 'neg' }}">{{ totals.gain|gain }}</span>
@@ -50,12 +50,41 @@
   </table></div>
 </div>
 
+<div class="grid2">
+  <div class="panel">
+    <h2>Collection</h2>
+    <p class="muted" style="margin-bottom:12px">
+      Everything you currently hold — slabs and raw in one file, with basis,
+      market value and gain per card.
+    </p>
+    <a class="btn" href="/reports/collection.csv">Collection CSV</a>
+  </div>
+
+  <div class="panel">
+    <h2>Sell List <span class="muted">— still profitable at…</span></h2>
+    <p class="muted" style="margin-bottom:12px">
+      Active slabs that still clear a profit at a given % of market. Cards with
+      an unknown basis are excluded (no cost, no knowable profit).
+    </p>
+    <div class="row">
+      <div><label>% of market</label>
+        <select id="sell-pct">
+          {% for p in [80, 85, 88, 90, 95, 100] %}
+          <option value="{{ p }}" {{ 'selected' if p == 85 }}>{{ p }}%</option>
+          {% endfor %}
+        </select></div>
+      <div><a class="btn" id="sell-csv" href="/reports/sell-list.csv?pct=85">Sell list CSV</a></div>
+      <div><a class="btn ghost" id="sell-print" href="/sell-sheet?pct=85" target="_blank">Printable sheet</a></div>
+    </div>
+  </div>
+</div>
+
 <div class="panel">
-  <h2>Google Sheets Export</h2>
+  <h2>Google Sheets Workbook</h2>
   <p class="muted" style="margin-bottom:12px">
     Same sheet layout as the old Google Drive workbook — PSA / BGS / CGC / TAG /
-    SOLD / RAW. Download the zip, drop the CSVs into Drive, and you can look up
-    your collection from your phone with the laptop off.
+    SOLD / RAW as separate files. Download the zip, drop the CSVs into Drive, and
+    you can look up your collection from your phone with the laptop off.
   </p>
   <div class="row">
     <div><a class="btn" href="/reports/sheets.zip">Download all sheets (.zip)</a></div>
@@ -84,6 +113,14 @@ document.addEventListener("keydown", e => {
   if (e.key === "/" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") {
     e.preventDefault(); search.focus();
   }
+});
+
+/* sell-list % drives both the CSV and the printable sheet */
+const sellPct = document.getElementById("sell-pct");
+sellPct.addEventListener("change", () => {
+  const p = sellPct.value;
+  document.getElementById("sell-csv").href = "/reports/sell-list.csv?pct=" + p;
+  document.getElementById("sell-print").href = "/sell-sheet?pct=" + p;
 });
 </script>
 {% endblock %}
