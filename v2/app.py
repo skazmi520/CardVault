@@ -322,8 +322,13 @@ def _realized_rows(c, year: str | None):
             proceeds = r["disposal_proceeds"]
             if proceeds is None and table == "graded_cards":
                 proceeds = r["sale_price"]
+            unknown = bool(r["basis_unknown"])
             gain = r["realized_gain"]
-            if gain is None and proceeds is not None:
+            # a flagged card has no knowable basis, so no knowable gain —
+            # reporting proceeds as pure profit would inflate the totals
+            if unknown:
+                gain = None
+            elif gain is None and proceeds is not None:
                 gain = round(proceeds - basis, 2)
             rows.append({
                 "name": r["card_name"], "kind": "slab" if table == "graded_cards" else "raw",
@@ -333,7 +338,8 @@ def _realized_rows(c, year: str | None):
                 "cert": (r["serial_number"] or "") if table == "graded_cards" else "",
                 "acq_date": (r["acquisition_date"] if table == "graded_cards"
                              else r["purchase_date"]) or "",
-                "basis": basis, "disposed": disposed[:10],
+                "basis": basis, "basis_unknown": unknown,
+                "disposed": disposed[:10],
                 "proceeds": proceeds, "gain": gain,
                 "deal_id": r["disposed_via_deal_id"],
             })
@@ -352,9 +358,15 @@ def reports_page():
         if r[0]}, reverse=True)
     rows = _realized_rows(c, year or None)
     c.close()
-    totals = {"basis": round(sum(r["basis"] or 0 for r in rows), 2),
-              "proceeds": round(sum(r["proceeds"] or 0 for r in rows), 2),
-              "gain": round(sum(r["gain"] or 0 for r in rows), 2)}
+    # totals cover only cards with a known basis; flagged ones are counted
+    # separately so the gain figure never includes invented profit
+    known = [r for r in rows if not r["basis_unknown"]]
+    unknown = [r for r in rows if r["basis_unknown"]]
+    totals = {"basis": round(sum(r["basis"] or 0 for r in known), 2),
+              "proceeds": round(sum(r["proceeds"] or 0 for r in known), 2),
+              "gain": round(sum(r["gain"] or 0 for r in known), 2),
+              "n_known": len(known), "n_unknown": len(unknown),
+              "unknown_proceeds": round(sum(r["proceeds"] or 0 for r in unknown), 2)}
     return render_template("reports.html", active="reports", rows=rows,
                            years=years, year=year, totals=totals)
 
@@ -372,9 +384,13 @@ def realized_csv():
     w.writerow(["Card", "Type", "Company", "Grade", "Set", "Cert", "Acquired",
                 "Basis", "Moved", "Proceeds", "Gain", "Deal ID"])
     for r in rows:
+        # "unknown" rather than 0/0 — a legacy import with no recorded price
+        # must not read as a free card sold at 100% profit
+        basis = "unknown" if r["basis_unknown"] else r["basis"]
+        gain = "unknown" if r["basis_unknown"] else r["gain"]
         w.writerow([r["name"], r["kind"], r["company"], r["grade"], r["set"],
-                    r["cert"], r["acq_date"], r["basis"], r["disposed"],
-                    r["proceeds"], r["gain"], r["deal_id"] or ""])
+                    r["cert"], r["acq_date"], basis, r["disposed"],
+                    r["proceeds"], gain, r["deal_id"] or ""])
     return app.response_class(
         buf.getvalue(), mimetype="text/csv",
         headers={"Content-Disposition":
