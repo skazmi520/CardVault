@@ -27,6 +27,10 @@
     </div>
     <div id="give-lines"></div>
     <button class="btn ghost small" id="add-give-manual">+ Manual line</button>
+    <div class="row" style="margin-top:10px">
+      <div><label>Cash I pay</label>
+        <input type="text" id="cash-paid" placeholder="0.00" style="width:130px"></div>
+    </div>
   </div>
 
   <!-- ── getting ── -->
@@ -44,13 +48,10 @@
 
     <div id="get-lines"></div>
     <button class="btn ghost small" id="add-get">+ Add card</button>
-  </div>
-</div>
-
-<div class="panel">
-  <div class="row">
-    <div><label>Cash — positive = I receive, negative = I pay</label>
-      <input type="text" id="cash" placeholder="0.00" style="width:160px"></div>
+    <div class="row" style="margin-top:10px">
+      <div><label>Cash I receive</label>
+        <input type="text" id="cash-received" placeholder="0.00" style="width:130px"></div>
+    </div>
   </div>
 </div>
 
@@ -79,20 +80,25 @@ let give = [], get = [];
 /* ── persistence so a half-built evaluation survives a refresh ── */
 function save() {
   localStorage.setItem(KEY, JSON.stringify({
-    give, get, cash: $("cash").value,
+    give, get, cashPaid: $("cash-paid").value, cashReceived: $("cash-received").value,
     givePct: $("give-pct").value, getPct: $("get-pct").value }));
 }
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) || "{}");
     give = s.give || []; get = s.get || [];
-    $("cash").value = s.cash || "";
+    $("cash-paid").value = s.cashPaid || "";
+    $("cash-received").value = s.cashReceived || "";
     $("give-pct").value = s.givePct || "100";
     $("get-pct").value = s.getPct || "80";
   } catch {}
 }
 
 /* ── value maths: each side has its own % of market ── */
+const cashPaid     = () => num($("cash-paid").value) ?? 0;
+const cashReceived = () => num($("cash-received").value) ?? 0;
+const netCash      = () => cashReceived() - cashPaid();
+
 const givePct = () => num($("give-pct").value) ?? 100;
 const getPct  = () => num($("get-pct").value) ?? 100;
 
@@ -157,7 +163,7 @@ function bind() {
 function totals() {
   const vGive = give.reduce((s, l) => s + giveValue(l), 0);
   const vGet  = get.reduce((s, l) => s + getValue(l), 0);
-  const c     = num($("cash").value) ?? 0;
+  const c     = netCash();
   const net   = (vGet + c) - vGive;
 
   $("t-give").textContent = fmt(vGive);
@@ -224,12 +230,13 @@ document.querySelectorAll(".pct-btn").forEach(b =>
     save(); render();
   }));
 ["give-pct", "get-pct"].forEach(id => $(id).addEventListener("input", () => { save(); render(); }));
-$("cash").addEventListener("input", () => { save(); totals(); });
+["cash-paid", "cash-received"].forEach(id =>
+  $(id).addEventListener("input", () => { save(); totals(); }));
 
 $("clear").addEventListener("click", () => {
   if (!give.length && !get.length) return;
   if (confirm("Clear this evaluation?")) {
-    give = []; get = []; $("cash").value = "";
+    give = []; get = []; $("cash-paid").value = ""; $("cash-received").value = "";
     $("give-pct").value = "100"; $("get-pct").value = "80";
     save(); render();
   }
@@ -247,7 +254,7 @@ $("convert").addEventListener("click", () => {
     cards_in: get.filter(l => (l.name || "").trim()).map(l => ({
       name: l.name, deal_value: getValue(l).toFixed(2),
       market_value: (num(l.mv) ?? "") === "" ? "" : String(num(l.mv)) })),
-    cash: $("cash").value,
+    cash: String(netCash()),
   };
   const dropped = give.filter(l => l.manual).length;
   sessionStorage.setItem("cardvault_deal_prefill", JSON.stringify(payload));
