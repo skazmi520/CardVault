@@ -11,7 +11,7 @@ import json
 from datetime import date, datetime
 from pathlib import Path
 
-from flask import (Flask, abort, jsonify, redirect, render_template,
+from flask import (Flask, abort, g, jsonify, redirect, render_template,
                    request, send_from_directory, url_for)
 
 from . import cards as v2cards
@@ -42,7 +42,38 @@ def _gain(v):
 
 
 def conn():
-    return v2db.get_connection()
+    """Per-request connection. Closed (with rollback on error) in teardown, so
+    an exception mid-endpoint can never leak a connection holding an open write
+    transaction — which locks the whole database for every other writer."""
+    if "db" not in g:
+        g.db = v2db.get_connection()
+    return g.db
+
+
+@app.teardown_appcontext
+def _close_db(exc):
+    db = g.pop("db", None)
+    if db is not None:
+        try:
+            if exc is not None:
+                db.rollback()
+            db.close()
+        except Exception:
+            pass
+
+
+@app.errorhandler(Exception)
+def _api_errors(e):
+    """API callers get JSON errors, never an HTML 500 page. Non-API routes and
+    deliberate HTTP errors (404s etc.) pass through untouched."""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    if request.path.startswith("/api/"):
+        import traceback
+        app.logger.error(traceback.format_exc())
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+    raise e
 
 
 # ── pages ───────────────────────────────────────────────────────────────────────
@@ -72,7 +103,7 @@ def dashboard():
     return render_template("dashboard.html", active="dashboard",
                            stats=stats, extras=extras, tstats=tstats,
                            cash=cash, movers=movers, grading=grading, sell=sell,
-                           snaps_json=json.dumps(snaps), recent=recent)
+                           snaps=snaps, recent=recent)
 
 
 @app.get("/collection")
@@ -82,7 +113,7 @@ def collection():
     sets = sorted({x["set"] for x in cards if x["set"]}, key=str.lower)
     c.close()
     return render_template("collection.html", active="collection",
-                           cards_json=json.dumps(cards), sets=sets)
+                           cards=cards, sets=sets)
 
 
 @app.get("/deals")
@@ -118,12 +149,12 @@ def deals_page():
 @app.get("/deals/new")
 def deal_new():
     c = conn()
-    cards = [x for x in v2cards.list_cards(c) if x["status"] == "active"
-             or x["status"] == "submitted_for_grading"]
+    # only status='active': the deal engine refuses at-grading cards (they are
+    # physically at the grader and cannot be handed across a table)
+    cards = [x for x in v2cards.list_cards(c) if x["status"] == "active"]
     c.close()
     return render_template("deal_new.html", active="deals",
-                           cards_json=json.dumps(cards),
-                           methods=v2db.PAYMENT_METHODS)
+                           cards=cards, methods=v2db.PAYMENT_METHODS)
 
 
 @app.get("/deals/<int:deal_id>")
@@ -227,6 +258,13 @@ def api_photos_upload():
         return jsonify({"ok": False, "error": "no files"}), 400
     card_id = request.form.get("card_id")
     c = conn()
+    if card_id:
+        try:
+            card_id = int(card_id)
+        except ValueError:
+            return jsonify({"ok": False, "error": "card_id must be an integer"}), 400
+        if c.execute("SELECT 1 FROM graded_cards WHERE id=?", (card_id,)).fetchone() is None:
+            return jsonify({"ok": False, "error": f"card {card_id} not found"}), 404
     ids = []
     for f in files:
         if not f.filename:
@@ -234,7 +272,7 @@ def api_photos_upload():
         pid = v2photos.save_upload(c, f)
         if card_id:                      # backfill mode: pre-match to a card
             c.execute("UPDATE photo_imports SET matched_table='graded_cards', "
-                      "matched_id=? WHERE id=?", (int(card_id), pid))
+                      "matched_id=? WHERE id=?", (card_id, pid))
             c.commit()
         ids.append(pid)
     c.close()
@@ -289,6 +327,48 @@ def api_photo_reject(import_id):
     v2photos.reject(c, import_id)
     c.close()
     return jsonify({"ok": True})
+
+
+@app.post("/api/deals/<int:deal_id>/void")
+def api_void_deal(deal_id):
+    """Undo a mistaken deal: restores cards that left, removes cards it
+    created, deletes the deal. Refused if any created card has moved on."""
+    from .deals import void_deal
+    c = conn()
+    try:
+        res = void_deal(c, deal_id)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, **res})
+
+
+@app.post("/api/crack")
+def api_crack():
+    """Crack a slab back to raw (e.g. to resubmit to a different grader)."""
+    p = request.get_json(force=True)
+    try:
+        graded_id = int(p["graded_id"])
+    except (ValueError, TypeError, KeyError):
+        return jsonify({"ok": False, "error": "graded_id must be an integer"}), 400
+    c = conn()
+    try:
+        raw_id = v2cards.crack_to_raw(
+            c, graded_id,
+            target_company=p.get("target_company", "PSA"),
+            grading_status=p.get("grading_status", "Slated"))
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "raw_id": raw_id})
+
+
+@app.post("/api/cash/<int:entry_id>/delete")
+def api_cash_delete(entry_id):
+    c = conn()
+    cur = c.execute("DELETE FROM cash_ledger WHERE id=?", (entry_id,))
+    c.commit()
+    if cur.rowcount == 0:
+        return jsonify({"ok": False, "error": "entry not found"}), 404
+    return jsonify({"ok": True, "balance": v2cards.cash_summary(c)["balance"]})
 
 
 @app.post("/api/cash")
@@ -550,8 +630,7 @@ def evaluator():
     c = conn()
     cards = [x for x in v2cards.list_cards(c) if x["status"] == "active"]
     c.close()
-    return render_template("evaluator.html", active="evaluator",
-                           cards_json=json.dumps(cards))
+    return render_template("evaluator.html", active="evaluator", cards=cards)
 
 
 @app.get("/stock-check")
@@ -563,8 +642,7 @@ def stock_check():
     cards.sort(key=lambda x: ((x["company"] or ""), (x["name"] or "").lower()))
     companies = sorted({x["company"] for x in cards if x["company"]})
     return render_template("stock_check.html", active="stock-check",
-                           cards_json=json.dumps(cards), companies=companies,
-                           total=len(cards))
+                           cards=cards, companies=companies, total=len(cards))
 
 
 @app.get("/stock-check/print")
@@ -628,21 +706,26 @@ def api_reprice():
     if table not in ("graded_cards", "ungraded_cards"):
         return jsonify({"ok": False, "error": "bad table"}), 400
     basis_col = "acquisition_price" if table == "graded_cards" else "purchase_price"
+    try:
+        card_id = int(p["card_id"])
+        mv = float(val) if val not in (None, "") else None
+    except (ValueError, TypeError, KeyError):
+        return jsonify({"ok": False, "error": "card_id must be an integer and "
+                        "market_value a number"}), 400
     c = conn()
     try:
-        v2cards.reprice(c, int(p["card_id"]),
-                        float(val) if val not in (None, "") else None, table=table)
+        v2cards.reprice(c, card_id, mv, table=table)
     except ValueError as e:
-        c.close()
-        return jsonify({"ok": False, "error": str(e)}), 400
-    row = c.execute(f"SELECT market_value, market_value_updated, {basis_col} AS basis "
-                    f"FROM {table} WHERE id=?", (p["card_id"],)).fetchone()
-    c.close()
+        return jsonify({"ok": False, "error": str(e)}), 404
+    row = c.execute(f"SELECT market_value, market_value_updated, basis_unknown, "
+                    f"{basis_col} AS basis FROM {table} WHERE id=?",
+                    (card_id,)).fetchone()
     mv = row["market_value"]
     return jsonify({"ok": True, "market_value": mv,
                     "repriced": row["market_value_updated"],
+                    "basis_unknown": bool(row["basis_unknown"]),
                     "gain": (round(mv - (row["basis"] or 0), 2)
-                             if mv is not None else None)})
+                             if mv is not None and not row["basis_unknown"] else None)})
 
 
 _EDITABLE = {
@@ -663,30 +746,44 @@ def api_card_update():
     fields = {k: v for k, v in (p.get("fields") or {}).items() if k in _EDITABLE[table]}
     if not fields:
         return jsonify({"ok": False, "error": "no editable fields supplied"}), 400
+    try:
+        card_id = int(p["id"])
+    except (ValueError, TypeError, KeyError):
+        return jsonify({"ok": False, "error": "id must be an integer"}), 400
     for money_col in ("acquisition_price", "purchase_price"):
         if money_col in fields:
             try:
                 fields[money_col] = float(str(fields[money_col]).replace("$", "").replace(",", "") or 0)
             except ValueError:
                 return jsonify({"ok": False, "error": f"{money_col} must be a number"}), 400
+    money_col = "acquisition_price" if table == "graded_cards" else "purchase_price"
     c = conn()
     sets = ", ".join(f"{k}=?" for k in fields)
-    c.execute(f"UPDATE {table} SET {sets} WHERE id=?", [*fields.values(), int(p["id"])])
+    c.execute(f"UPDATE {table} SET {sets} WHERE id=?", [*fields.values(), card_id])
+    # supplying a real cost resolves "basis unknown" — and a disposed card's
+    # stored realized_gain must follow the corrected basis
+    if fields.get(money_col):
+        c.execute(f"UPDATE {table} SET basis_unknown=0 WHERE id=?", (card_id,))
+        c.execute(f"""UPDATE {table} SET realized_gain =
+                        ROUND(COALESCE(disposal_proceeds,{('sale_price' if table=='graded_cards' else 'NULL')})
+                              - {money_col}, 2)
+                      WHERE id=? AND status='disposed'""", (card_id,))
     c.commit()
-    row = c.execute(f"SELECT * FROM {table} WHERE id=?", (int(p["id"]),)).fetchone()
-    c.close()
+    row = c.execute(f"SELECT * FROM {table} WHERE id=?", (card_id,)).fetchone()
     if row is None:
         return jsonify({"ok": False, "error": "card not found"}), 404
-    basis = (row["acquisition_price"] if table == "graded_cards" else row["purchase_price"]) or 0
-    mv = row["market_value"] if table == "graded_cards" else None
+    basis = row[money_col] or 0
+    mv = row["market_value"]          # both tables carry market_value now
+    unknown = bool(row["basis_unknown"])
     return jsonify({"ok": True, "card": {
         "name": row["card_name"], "set": row["set_name"] or "",
         "number": row["card_number"] or "", "year": row["year"] or "",
         "company": row["grading_company"] if table == "graded_cards" else "",
         "grade": row["grade"] if table == "graded_cards" else "",
         "cert": row["serial_number"] if table == "graded_cards" else "",
-        "acq_cost": basis, "basis": basis,
-        "gain": (round(mv - basis, 2) if mv is not None else None),
+        "acq_cost": basis, "basis": basis, "basis_unknown": unknown,
+        "market_value": mv,
+        "gain": (round(mv - basis, 2) if mv is not None and not unknown else None),
         "acq_date": (row["acquisition_date"] if table == "graded_cards"
                      else row["purchase_date"]) or "",
         "notes": row["notes"] or "",
@@ -724,31 +821,37 @@ def api_psa_lookup():
 @app.post("/api/deals")
 def api_save_deal():
     p = request.get_json(force=True)
-    outs = [CardOut(x["table"], int(x["id"]),
-                    float(x["deal_value"]) if x.get("deal_value") not in (None, "") else None)
-            for x in p.get("cards_out", [])]
-    ins = [CardIn(card_name=x.get("name", "").strip(),
-                  is_graded=bool(x.get("is_graded", True)),
-                  set_name=x.get("set", ""), card_number=x.get("number", ""),
-                  year=x.get("year", ""), grading_company=x.get("company", ""),
-                  grade=x.get("grade", ""), serial_number=x.get("cert", ""),
-                  deal_value=(float(x["deal_value"])
-                              if x.get("deal_value") not in (None, "") else None),
-                  market_value=(float(x["market_value"])
-                                if x.get("market_value") not in (None, "") else None))
-           for x in p.get("cards_in", []) if x.get("name", "").strip()]
+    try:
+        outs = [CardOut(x["table"], int(x["id"]),
+                        float(x["deal_value"]) if x.get("deal_value") not in (None, "") else None)
+                for x in p.get("cards_out", [])]
+        ins = [CardIn(card_name=x.get("name", "").strip(),
+                      is_graded=bool(x.get("is_graded", True)),
+                      set_name=x.get("set", ""), card_number=x.get("number", ""),
+                      year=x.get("year", ""), grading_company=x.get("company", ""),
+                      grade=x.get("grade", ""), serial_number=x.get("cert", ""),
+                      deal_value=(float(x["deal_value"])
+                                  if x.get("deal_value") not in (None, "") else None),
+                      market_value=(float(x["market_value"])
+                                    if x.get("market_value") not in (None, "") else None))
+               for x in p.get("cards_in", []) if x.get("name", "").strip()]
+        cash_amount = float(p.get("cash_amount") or 0)
+        out_total = (float(p["out_side_total"])
+                     if p.get("out_side_total") not in (None, "") else None)
+        in_total = (float(p["in_side_total"])
+                    if p.get("in_side_total") not in (None, "") else None)
+    except (ValueError, TypeError, KeyError) as e:
+        return jsonify({"ok": False,
+                        "error": f"invalid deal payload: {e}"}), 400
     c = conn()
     try:
         res = save_deal(
             c, cards_out=outs, cards_in=ins,
-            cash_amount=float(p.get("cash_amount") or 0),
+            cash_amount=cash_amount,
             occurred_at=p.get("occurred_at") or None,
             counterparty=p.get("counterparty", ""), location=p.get("location", ""),
             payment_method=p.get("payment_method", "cash"), notes=p.get("notes", ""),
-            out_side_total=(float(p["out_side_total"])
-                            if p.get("out_side_total") not in (None, "") else None),
-            in_side_total=(float(p["in_side_total"])
-                           if p.get("in_side_total") not in (None, "") else None))
+            out_side_total=out_total, in_side_total=in_total)
     except ValueError as e:
         c.close()
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -761,13 +864,14 @@ def api_deal_photo(deal_id):
     f = request.files.get("photo")
     if not f or not f.filename:
         return jsonify({"ok": False, "error": "no file"}), 400
+    c = conn()
+    if c.execute("SELECT 1 FROM deals WHERE id=?", (deal_id,)).fetchone() is None:
+        return jsonify({"ok": False, "error": f"deal {deal_id} not found"}), 404
     v2db.DEAL_PHOTO_DIR.mkdir(parents=True, exist_ok=True)
     ext = Path(f.filename).suffix.lower() or ".jpg"
     name = f"deal{deal_id}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}{ext}"
     f.save(v2db.DEAL_PHOTO_DIR / name)
-    c = conn()
     add_deal_photo(c, deal_id, name, datetime.now().isoformat(timespec="seconds"))
-    c.close()
     return jsonify({"ok": True, "file": name})
 
 

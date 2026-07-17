@@ -21,8 +21,8 @@
     <option>4</option><option>3</option><option>2</option><option>1</option>
   </select>
   <select id="f-status">
-    <option value="">Active</option>
-    <option value="submitted_for_grading">At grading</option>
+    <option value="">All active (incl. at grading)</option>
+    <option value="submitted_for_grading">At grading only</option>
   </select>
   <span class="muted" style="font-size:12px">↑↓ move · Enter edit price · E edit card · Esc cancel</span>
 </div>
@@ -71,6 +71,8 @@
       <div style="flex:1"><label>Notes</label><input type="text" id="e-notes" style="width:100%"></div>
     </div>
     <div class="actions">
+      <button class="btn ghost small" id="e-crack" style="margin-right:auto;color:var(--neg);border-color:var(--neg)"
+              title="Break the card out of its slab and move it to the raw section">Crack to raw…</button>
       <span id="e-msg" class="neg" style="align-self:center;font-size:12px"></span>
       <button class="btn ghost" id="e-cancel">Cancel</button>
       <button class="btn" id="e-save">Save</button>
@@ -79,7 +81,7 @@
 </div>
 
 <script>
-const CARDS = {{ cards_json|safe }};
+const CARDS = {{ cards|tojson }};
 let sortKey = "name", sortDir = 1, focusIdx = -1, view = [];
 
 const $ = id => document.getElementById(id);
@@ -96,11 +98,11 @@ function applyFilters() {
   const set = $("f-set").value, kind = $("f-kind").value;
   const grade = $("f-grade").value, status = $("f-status").value;
   view = CARDS.filter(r => {
-    if (status ? r.status !== status : r.status !== "active" && r.status !== "submitted_for_grading") return false;
-    if (status && r.status !== status) return false;
+    if (status ? r.status !== status
+               : (r.status !== "active" && r.status !== "submitted_for_grading")) return false;
     if (kind && r.kind !== kind) return false;
     if (set && r.set !== set) return false;
-    if (grade && String(r.grade) !== grade) return false;
+    if (grade && parseFloat(r.grade) !== parseFloat(grade)) return false;
     if (q) {
       const hay = (r.name + " " + r.set + " " + r.cert + " " + r.number).toLowerCase();
       if (!hay.includes(q)) return false;
@@ -109,6 +111,11 @@ function applyFilters() {
   });
   view.sort((a, b) => {
     let x = a[sortKey], y = b[sortKey];
+    if (sortKey === "grade") {          // numeric: PSA 10 > 9.5 > 9, not lexicographic
+      x = parseFloat(x); y = parseFloat(y);
+      if (isNaN(x)) x = -Infinity;
+      if (isNaN(y)) y = -Infinity;
+    }
     if (x === null || x === undefined || x === "") x = sortKey === "name" || sortKey === "set" || sortKey === "repriced" ? "" : -Infinity;
     if (y === null || y === undefined || y === "") y = sortKey === "name" || sortKey === "set" || sortKey === "repriced" ? "" : -Infinity;
     if (typeof x === "string") { x = x.toLowerCase(); y = String(y).toLowerCase(); }
@@ -145,9 +152,12 @@ function beginEdit(i) {
   const inp = cell.querySelector("input");
   inp.focus(); inp.select();
 
+  let committed = false;   // Enter + blur both fire — only the first wins
   const commit = async (moveNext) => {
+    if (committed) return;
     const raw = inp.value.trim().replace(/[$,]/g, "");
     if (raw !== "" && isNaN(parseFloat(raw))) { inp.focus(); return; }
+    committed = true;
     try {
       const res = await postJSON("/api/reprice",
         { card_id: r.id, table: r.table,
@@ -178,6 +188,7 @@ function openCardEdit(i) {
   E("e-name").value = r.name; E("e-number").value = r.number;
   E("e-set").value = r.set;   E("e-year").value = r.year || "";
   E("e-slab-row").style.display = r.kind === "slab" ? "" : "none";
+  E("e-crack").style.display = r.kind === "slab" ? "" : "none";
   if (r.kind === "slab") {
     E("e-company").value = r.company || "PSA";
     E("e-grade").value = r.grade; E("e-cert").value = r.cert;
@@ -192,6 +203,17 @@ function openCardEdit(i) {
 
 function closeCardEdit() { E("edit-backdrop").hidden = true; editIdx = -1; }
 E("e-cancel").addEventListener("click", closeCardEdit);
+E("e-crack").addEventListener("click", async () => {
+  const r = view[editIdx];
+  if (!r || r.kind !== "slab") return;
+  if (!confirm(`Crack "${r.name}" out of its ${r.company} ${r.grade} slab?\n\n` +
+      "It moves to the raw section (Slated for regrading); basis and market value " +
+      "carry over; the slab row is kept as history.")) return;
+  try {
+    await postJSON("/api/crack", { graded_id: r.id });
+    location.reload();
+  } catch (err) { E("e-msg").textContent = err.message; }
+});
 E("edit-backdrop").addEventListener("click", e => {
   if (e.target === E("edit-backdrop")) closeCardEdit();
 });

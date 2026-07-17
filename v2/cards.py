@@ -65,9 +65,14 @@ def reprice(conn, card_id: int, market_value: float | None,
     if table not in ("graded_cards", "ungraded_cards"):
         raise ValueError(f"unknown table {table!r}")
     now = datetime.now().isoformat(timespec="seconds")
-    conn.execute(
+    cur = conn.execute(
         f"UPDATE {table} SET market_value=?, market_value_updated=? WHERE id=?",
         (market_value, now if market_value is not None else None, card_id))
+    if cur.rowcount == 0:
+        # no such card — without this, the price_history insert below would
+        # blow up on its foreign key while holding an open write transaction
+        conn.rollback()
+        raise ValueError(f"card id={card_id} not found in {table}")
     if market_value is not None and table == "graded_cards":
         conn.execute(
             "INSERT INTO price_history (card_id, recorded_at, market_value) VALUES (?,?,?)",
@@ -142,15 +147,17 @@ def crack_to_raw(conn, graded_id: int, *, target_company: str = "PSA",
              (card_name, card_number, set_name, year, photo_filename,
               purchase_price, purchase_date, acquisition_type, trade_value,
               trade_details, notes, grading_status, target_grading_company,
-              date_added, status, acquired_via_deal_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?, ?)""",
+              date_added, status, acquired_via_deal_id,
+              market_value, market_value_updated, basis_unknown)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?, ?, ?, ?, ?)""",
         (g["card_name"], g["card_number"], g["set_name"], g["year"] or "",
          g["photo_filename"], basis, g["acquisition_date"],
          g["acquisition_type"] or "Cash", g["trade_value"] or 0.0,
          g["trade_details"] or "", notes, grading_status, target_company,
          datetime.now().isoformat(),
          "submitted_for_grading" if grading_status == "At Grading" else "active",
-         g["acquired_via_deal_id"]))
+         g["acquired_via_deal_id"],
+         g["market_value"], g["market_value_updated"], g["basis_unknown"]))
     raw_id = cur.lastrowid
 
     conn.execute("UPDATE graded_cards SET status='cracked' WHERE id=?", (graded_id,))
@@ -161,15 +168,19 @@ def crack_to_raw(conn, graded_id: int, *, target_company: str = "PSA",
 def set_grading_status(conn, ungraded_id: int, grading_status: str):
     status = "submitted_for_grading" if grading_status == "At Grading" else "active"
     conn.execute(
-        "UPDATE ungraded_cards SET grading_status=?, status=? WHERE id=? AND status != 'promoted'",
+        "UPDATE ungraded_cards SET grading_status=?, status=? "
+        "WHERE id=? AND status IN ('active','submitted_for_grading')",
         (grading_status, status, ungraded_id))
     if grading_status == "At Grading":
         # stamp submission time once (kept if already set)
         conn.execute(
-            "UPDATE ungraded_cards SET submitted_at=COALESCE(submitted_at, ?) WHERE id=?",
+            "UPDATE ungraded_cards SET submitted_at=COALESCE(submitted_at, ?) "
+            "WHERE id=? AND status='submitted_for_grading'",
             (datetime.now().isoformat(timespec="seconds"), ungraded_id))
     else:
-        conn.execute("UPDATE ungraded_cards SET submitted_at=NULL WHERE id=?", (ungraded_id,))
+        conn.execute(
+            "UPDATE ungraded_cards SET submitted_at=NULL "
+            "WHERE id=? AND status IN ('active','submitted_for_grading')", (ungraded_id,))
     conn.commit()
 
 
@@ -188,6 +199,15 @@ def dashboard_stats(conn) -> dict:
                     else c["purchase_price"] or 0) for c in r)
     basis    = sum(c["acquisition_price"] or 0 for c in g) + r_basis
     market   = g_market + r_market
+    # unrealized gain only over cards whose cost is actually known — a
+    # basis_unknown card's market value is real portfolio worth but its
+    # "gain" is unknowable, not 100%
+    unreal = sum(((c["market_value"] if c["market_value"] is not None
+                   else c["acquisition_price"] or 0) - (c["acquisition_price"] or 0))
+                 for c in g if not c["basis_unknown"]) \
+           + sum(((c["market_value"] if c["market_value"] is not None
+                   else c["purchase_price"] or 0) - (c["purchase_price"] or 0))
+                 for c in r if not c["basis_unknown"])
 
     y0 = f"{date.today().year}-01-01"
     realized_ytd = (conn.execute(
@@ -208,7 +228,7 @@ def dashboard_stats(conn) -> dict:
         "slabs": len(g), "raw": len(r),
         "market": round(market, 2),
         "basis": round(basis, 2),
-        "unrealized": round(market - basis, 2),
+        "unrealized": round(unreal, 2),
         "realized_ytd": round(realized_ytd, 2),
         "realized_all": round(realized_all, 2),
     }
@@ -237,7 +257,8 @@ def dashboard_extras(conn) -> dict:
         top.append({"name": r["card_name"], "company": r["grading_company"],
                     "grade": r["grade"], "set": r["set_name"] or "",
                     "market": r["market_value"],
-                    "gain": round(r["market_value"] - basis, 2)})
+                    "gain": (None if r["basis_unknown"]
+                             else round(r["market_value"] - basis, 2))})
 
     cutoff = (datetime.now().date().toordinal() - 30)
     stale = 0

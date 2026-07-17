@@ -75,6 +75,9 @@ def get_connection() -> sqlite3.Connection:
         )
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # a stuck writer (e.g. a leaked connection mid-transaction) should make
+    # others wait rather than instantly fail with "database is locked"
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 

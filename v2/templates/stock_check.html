@@ -43,7 +43,7 @@
 </div>
 
 <script>
-const CARDS = {{ cards_json|safe }};
+const CARDS = {{ cards|tojson }};
 const KEY = "cardvault_stock_check";
 const $ = id => document.getElementById(id);
 
@@ -104,9 +104,12 @@ function beginPrice(i) {
   const inp = cell.querySelector("input");
   inp.focus(); inp.select();
 
+  let committed = false;   // Enter + blur both fire — only the first wins
   const commit = async (moveNext) => {
+    if (committed) return;
     const raw = inp.value.trim().replace(/[$,]/g, "");
     if (raw !== "" && isNaN(parseFloat(raw))) { inp.focus(); return; }
+    committed = true;
     try {
       const res = await postJSON("/api/reprice",
         { card_id: r.id, market_value: raw === "" ? null : parseFloat(raw) });
@@ -114,10 +117,12 @@ function beginPrice(i) {
       r.repriced = res.repriced || "";
     } catch (e) { alert("Save failed: " + e.message); }
     applyFilters();
-    if (moveNext) {
-      // row may have filtered out from under us — land on the same index
-      const next = Math.min(i + 1, view.length - 1);
-      if (next >= 0 && view.length) beginPrice(next);
+    if (moveNext && view.length) {
+      // if the committed row filtered itself out of view, index i already
+      // points at the next card — advancing again would skip one
+      const stillHere = view.some(v => v.id === r.id);
+      const next = Math.min(stillHere ? i + 1 : i, view.length - 1);
+      if (next >= 0) beginPrice(next);
     }
   };
   inp.addEventListener("keydown", ev => {
