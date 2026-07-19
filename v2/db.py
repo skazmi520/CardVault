@@ -28,7 +28,7 @@ ICLOUD_DIR  = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/CardVa
 LOCAL_KEEP  = 7     # daily local snapshots to retain
 ICLOUD_KEEP = 30    # daily iCloud snapshots to retain
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 GRADING_COMPANIES = ["PSA", "BGS", "CGC", "TAG"]
 PAYMENT_METHODS   = ["cash", "venmo", "zelle", "paypal", "trade", "mixed"]
@@ -212,6 +212,12 @@ _CARD_NEW_COLS = [
     # Stefan's grade prediction: set on the raw card, carried to the graded
     # card at promotion so predicted-vs-actual accuracy can be analyzed.
     ("expected_grade",       "TEXT"),
+    # Personal-collection pieces: tracked like inventory (net worth, stock
+    # checks) but never surfaced as sell candidates or business inventory.
+    ("is_pc",                "INTEGER NOT NULL DEFAULT 0"),
+    # Grade-prediction bucket, declared BEFORE submission and locked once the
+    # card is at grading: 'banker' (measured bets) vs 'casino' (fun gambles).
+    ("sub_type",             "TEXT"),
 ]
 
 
@@ -313,6 +319,9 @@ def migrate_schema(conn: sqlite3.Connection):
             conn.execute("ALTER TABLE ungraded_cards ADD COLUMN market_value REAL")
         if table == "ungraded_cards" and "market_value_updated" not in existing:
             conn.execute("ALTER TABLE ungraded_cards ADD COLUMN market_value_updated TEXT")
+        # when PSA says the submission should land back home
+        if table == "ungraded_cards" and "expected_back" not in existing:
+            conn.execute("ALTER TABLE ungraded_cards ADD COLUMN expected_back TEXT")
 
     conn.execute(
         "INSERT OR REPLACE INTO v2_meta (key, value) VALUES ('is_v2', '1')")

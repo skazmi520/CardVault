@@ -69,6 +69,11 @@
     </div>
     <div class="row">
       <div style="flex:1"><label>Notes</label><input type="text" id="e-notes" style="width:100%"></div>
+      <div style="align-self:end;padding-bottom:8px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;cursor:pointer">
+          <input type="checkbox" id="e-pc" style="min-height:auto">
+          Personal collection</label>
+      </div>
     </div>
     <div class="row" id="e-sell-row" hidden
          style="border-top:1px solid var(--border);padding-top:12px;margin-top:6px">
@@ -148,7 +153,7 @@ function render() {
       <td><strong>${esc(r.name)}</strong>${r.number ? ' <span class="muted">#' + esc(r.number) + '</span>' : ''}
         ${r.cert ? `<div class="sub-line">cert ${esc(r.cert)}</div>` : ''}</td>
       <td class="muted">${esc(r.set) || "—"}</td>
-      <td>${r.kind === "slab" ? `<span class="chip ${esc(r.company)}">${esc(r.company)} ${esc(r.grade)}</span>` : '<span class="chip raw">RAW</span>'}</td>
+      <td>${r.kind === "slab" ? `<span class="chip ${esc(r.company)}">${esc(r.company)} ${esc(r.grade)}</span>` : '<span class="chip raw">RAW</span>'}${r.is_pc ? ' <span class="chip pc" title="Personal collection — not for sale">PC</span>' : ''}</td>
       <td class="muted">${r.kind}</td>
       <td class="num">${r.basis_unknown ? '<span class="unknown">unknown</span>' : fmt(r.acq_cost)}</td>
       <td class="num">${r.basis_unknown ? '<span class="unknown" title="Purchase price never recorded (legacy import)">unknown</span>' : fmt(r.basis)}</td>
@@ -217,6 +222,7 @@ function openCardEdit(i) {
   E("e-basis").value = r.basis ?? "";
   E("e-date").value = (r.acq_date || "").slice(0, 10);
   E("e-notes").value = r.notes || "";
+  E("e-pc").checked = !!r.is_pc;
   E("e-msg").textContent = "";
   E("e-sell-row").hidden = true;
   E("edit-backdrop").hidden = false;
@@ -294,6 +300,10 @@ E("e-save").addEventListener("click", async () => {
   try {
     const res = await postJSON("/api/card/update", { table: r.table, id: r.id, fields });
     Object.assign(r, res.card);   // refresh row data in place
+    if (E("e-pc").checked !== !!r.is_pc) {
+      await postJSON("/api/pc", { table: r.table, id: r.id, is_pc: E("e-pc").checked });
+      r.is_pc = E("e-pc").checked;
+    }
     closeCardEdit(); render();
     toast("Card saved.");
   } catch (err) { E("e-msg").textContent = err.message; }

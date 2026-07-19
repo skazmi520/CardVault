@@ -99,11 +99,12 @@ def dashboard():
     movers = v2cards.top_movers(c)
     grading = v2cards.at_grading(c)
     sell = v2cards.sell_candidates(c)
+    psa = v2cards.psa_capital(c)
     c.close()
     return render_template("dashboard.html", active="dashboard",
                            stats=stats, extras=extras, tstats=tstats,
                            cash=cash, movers=movers, grading=grading, sell=sell,
-                           snaps=snaps, recent=recent)
+                           psa=psa, snaps=snaps, recent=recent)
 
 
 @app.get("/collection")
@@ -937,7 +938,26 @@ def api_grading_status():
 def api_expected_grade():
     p = request.get_json(force=True)
     c = conn()
-    v2cards.set_expected_grade(c, int(p["ungraded_id"]), p.get("expected_grade", ""))
+    v2cards.set_expected_grade(c, int(p["ungraded_id"]), p.get("expected_grade", ""),
+                               sub_type=p.get("sub_type"))
+    c.close()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/expected-back")
+def api_expected_back():
+    p = request.get_json(force=True)
+    c = conn()
+    v2cards.set_expected_back(c, int(p["ungraded_id"]), p.get("expected_back", ""))
+    c.close()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/pc")
+def api_pc():
+    p = request.get_json(force=True)
+    c = conn()
+    v2cards.set_pc(c, p.get("table", "graded_cards"), int(p["id"]), bool(p.get("is_pc")))
     c.close()
     return jsonify({"ok": True})
 

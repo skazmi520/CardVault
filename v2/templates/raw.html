@@ -9,6 +9,8 @@
       <th>Card</th><th>Set</th><th class="num">Basis</th>
       <th>Grading Status</th><th>Target</th>
       <th title="Your grade prediction — scored against the real grade when the card comes back">My Guess</th>
+      <th title="Banker = measured bet, counts toward your real hit rate. Casino = fun gamble. Locks at submission.">Bucket</th>
+      <th title="When PSA says this sub lands back home">Back By</th>
       <th style="width:220px"></th>
     </tr></thead>
     <tbody>
@@ -26,12 +28,27 @@
         </td>
         <td class="muted">{{ c.target_company or '—' }}</td>
         <td>
-          <select data-guess="{{ c.id }}" style="width:76px">
+          <select data-guess="{{ c.id }}" style="width:76px"
+                  {{ 'disabled title="Locked — already at grading"' if c.grading_status == 'At Grading' }}>
             <option value="">—</option>
             {% for g in ["10", "9.5", "9", "8.5", "8", "7.5", "7", "6", "5"] %}
             <option value="{{ g }}" {{ 'selected' if c.expected_grade == g }}>{{ g }}</option>
             {% endfor %}
           </select>
+        </td>
+        <td>
+          <select data-bucket="{{ c.id }}" style="width:96px"
+                  {{ 'disabled title="Locked — already at grading"' if c.grading_status == 'At Grading' }}>
+            <option value="">—</option>
+            <option value="banker" {{ 'selected' if c.sub_type == 'banker' }}>Banker</option>
+            <option value="casino" {{ 'selected' if c.sub_type == 'casino' }}>Casino</option>
+          </select>
+        </td>
+        <td>
+          {% if c.grading_status == 'At Grading' %}
+          <input type="date" data-back="{{ c.id }}" value="{{ c.expected_back }}"
+                 style="width:140px" title="Expected return date from PSA">
+          {% else %}<span class="muted">—</span>{% endif %}
         </td>
         <td><button class="btn ghost small" data-promote="{{ c.id }}"
                     data-name="{{ c.name }}" data-basis="{{ c.basis }}"
@@ -74,9 +91,18 @@
       <div class="l">Avg Bias ({{ 'optimistic' if predictions.bias > 0 else 'conservative' if predictions.bias < 0 else 'dead on' }})</div></div>
     <div class="tile"><div class="v">{{ predictions.pending }}</div><div class="l">Guesses Pending</div></div>
   </div>
+  {% if predictions.banker.n or predictions.casino.n %}
+  <div class="hint" style="margin-bottom:10px">
+    {% if predictions.banker.n %}<strong>Banker:</strong> {{ predictions.banker.exact }}/{{ predictions.banker.n }} exact,
+      bias {{ '%+.2f'|format(predictions.banker.bias) }}.{% endif %}
+    {% if predictions.casino.n %} <strong>Casino:</strong> {{ predictions.casino.exact }}/{{ predictions.casino.n }} exact,
+      bias {{ '%+.2f'|format(predictions.casino.bias) }} — entertainment budget, judged gently.{% endif %}
+  </div>
+  {% endif %}
   {% for p in predictions.resolved[:12] %}
   <div class="list-row">
-    <span class="grow"><strong>{{ p.name }}</strong> <span class="muted">{{ p.company }}</span></span>
+    <span class="grow"><strong>{{ p.name }}</strong> <span class="muted">{{ p.company }}</span>
+      {% if p.bucket != 'unsorted' %}<span class="chip {{ 'raw' if p.bucket == 'casino' }}" style="margin-left:6px">{{ p.bucket }}</span>{% endif %}</span>
     <span class="muted">guessed {{ p.predicted }}</span>
     <span style="width:70px;text-align:right">got <strong>{{ p.actual }}</strong></span>
     <span class="num {{ 'pos' if p.diff == 0 else 'neg' if p.diff > 0 else '' }}" style="width:56px;text-align:right">
@@ -142,7 +168,24 @@ document.querySelectorAll("[data-guess]").forEach(sel =>
   sel.addEventListener("change", () =>
     postJSON("/api/expected-grade",
       { ungraded_id: +sel.dataset.guess, expected_grade: sel.value })
-      .then(() => toast(sel.value ? `Guess locked in: ${sel.value}.` : "Guess cleared."))
+      .then(() => toast(sel.value ? `Guess saved: ${sel.value}.` : "Guess cleared."))
+      .catch(e => toast(e.message, "error"))));
+
+document.querySelectorAll("[data-bucket]").forEach(sel =>
+  sel.addEventListener("change", () => {
+    const guessSel = document.querySelector(`[data-guess="${sel.dataset.bucket}"]`);
+    postJSON("/api/expected-grade",
+      { ungraded_id: +sel.dataset.bucket, expected_grade: guessSel.value,
+        sub_type: sel.value })
+      .then(() => toast(sel.value ? `Bucket set: ${sel.value}. Locks at submission.` : "Bucket cleared."))
+      .catch(e => toast(e.message, "error"));
+  }));
+
+document.querySelectorAll("[data-back]").forEach(inp =>
+  inp.addEventListener("change", () =>
+    postJSON("/api/expected-back",
+      { ungraded_id: +inp.dataset.back, expected_back: inp.value })
+      .then(() => toast(inp.value ? "Return date saved." : "Return date cleared."))
       .catch(e => toast(e.message, "error"))));
 </script>
 {% endblock %}

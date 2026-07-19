@@ -29,6 +29,7 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
             "repriced": r["market_value_updated"] or "",
             "status": r["status"], "acq_date": r["acquisition_date"] or "",
             "notes": r["notes"] or "",
+            "is_pc": bool(r["is_pc"]),
         })
     u_where = ("WHERE status IN ('active','submitted_for_grading')"
                if not include_disposed else "WHERE status != 'promoted'")
@@ -52,6 +53,9 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
             "grading_status": r["grading_status"],
             "target_company": r["target_grading_company"] or "",
             "expected_grade": r["expected_grade"] or "",
+            "sub_type": r["sub_type"] or "",
+            "expected_back": r["expected_back"] or "",
+            "is_pc": bool(r["is_pc"]),
         })
     return out
 
@@ -103,15 +107,15 @@ def promote_raw(conn, ungraded_id: int, *, grading_company: str, grade: str,
               set_name, year, photo_filename, acquisition_type,
               acquisition_price, grading_fee, trade_value, trade_details,
               acquisition_date, notes, date_added, status, acquired_via_deal_id,
-              expected_grade)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?, ?)""",
+              expected_grade, sub_type)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?, ?, ?)""",
         (serial_number, grading_company, grade, raw["card_name"],
          raw["card_number"], raw["set_name"], raw["year"] or "",
          raw["photo_filename"], raw["acquisition_type"] or "Cash",
          basis, grading_cost, raw["trade_value"] or 0.0,
          raw["trade_details"] or "", return_date, raw["notes"] or "",
          datetime.now().isoformat(), raw["acquired_via_deal_id"],
-         raw["expected_grade"]))
+         raw["expected_grade"], raw["sub_type"]))
     graded_id = cur.lastrowid
 
     conn.execute(
@@ -172,18 +176,60 @@ VALID_EXPECTED_GRADES = {"", "10", "9.5", "9", "8.5", "8", "7.5", "7",
                          "6.5", "6", "5", "4", "3", "2", "1"}
 
 
-def set_expected_grade(conn, ungraded_id: int, expected_grade: str):
-    """Record (or clear) Stefan's grade prediction on a raw card."""
+VALID_SUB_TYPES = {"", "banker", "casino"}
+
+
+def set_expected_grade(conn, ungraded_id: int, expected_grade: str,
+                       sub_type: str | None = None):
+    """Record (or clear) the grade prediction and banker/casino bucket.
+    Both LOCK once the card is at grading — the declaration made before
+    submission is the honest one; hindsight doesn't get to relabel."""
     expected_grade = str(expected_grade or "").strip()
     if expected_grade not in VALID_EXPECTED_GRADES:
         raise ValueError(f"expected_grade must be one of {sorted(VALID_EXPECTED_GRADES)}")
+    row = conn.execute("SELECT status FROM ungraded_cards WHERE id=?",
+                       (ungraded_id,)).fetchone()
+    if row is None or row["status"] not in ("active", "submitted_for_grading"):
+        raise ValueError(f"raw card id={ungraded_id} not found or not active")
+    if row["status"] == "submitted_for_grading":
+        raise ValueError("Locked: this card is already at grading — "
+                         "predictions can't change after submission.")
+    if sub_type is not None:
+        sub_type = str(sub_type).strip().lower()
+        if sub_type not in VALID_SUB_TYPES:
+            raise ValueError("sub_type must be banker, casino, or empty")
+        conn.execute("UPDATE ungraded_cards SET expected_grade=?, sub_type=? WHERE id=?",
+                     (expected_grade or None, sub_type or None, ungraded_id))
+    else:
+        conn.execute("UPDATE ungraded_cards SET expected_grade=? WHERE id=?",
+                     (expected_grade or None, ungraded_id))
+    conn.commit()
+
+
+def set_expected_back(conn, ungraded_id: int, expected_back: str):
+    """When PSA says the sub lands. Editable any time (dates slip)."""
+    expected_back = str(expected_back or "").strip()
+    if expected_back:
+        date.fromisoformat(expected_back)   # validates format
     cur = conn.execute(
-        "UPDATE ungraded_cards SET expected_grade=? "
+        "UPDATE ungraded_cards SET expected_back=? "
         "WHERE id=? AND status IN ('active','submitted_for_grading')",
-        (expected_grade or None, ungraded_id))
+        (expected_back or None, ungraded_id))
     if cur.rowcount == 0:
         conn.rollback()
         raise ValueError(f"raw card id={ungraded_id} not found or not active")
+    conn.commit()
+
+
+def set_pc(conn, table: str, card_id: int, is_pc: bool):
+    """Flag a card as personal collection (kept, not inventory)."""
+    if table not in ("graded_cards", "ungraded_cards"):
+        raise ValueError(f"unknown table {table!r}")
+    cur = conn.execute(f"UPDATE {table} SET is_pc=? WHERE id=?",
+                       (1 if is_pc else 0, card_id))
+    if cur.rowcount == 0:
+        conn.rollback()
+        raise ValueError(f"card id={card_id} not found in {table}")
     conn.commit()
 
 
@@ -192,7 +238,8 @@ def prediction_stats(conn):
     Signed error = predicted - actual, so positive bias = optimistic eye."""
     resolved = []
     for r in conn.execute(
-            "SELECT card_name, grading_company, grade, expected_grade, acquisition_date "
+            "SELECT card_name, grading_company, grade, expected_grade, sub_type, "
+            "acquisition_date "
             "FROM graded_cards WHERE expected_grade IS NOT NULL AND expected_grade != '' "
             "ORDER BY acquisition_date DESC, id DESC"):
         try:
@@ -203,6 +250,7 @@ def prediction_stats(conn):
             "name": r["card_name"], "company": r["grading_company"],
             "predicted": predicted, "actual": actual,
             "diff": round(predicted - actual, 1),
+            "bucket": r["sub_type"] or "unsorted",
             "returned": r["acquisition_date"] or "",
         })
     pending = conn.execute(
@@ -210,11 +258,23 @@ def prediction_stats(conn):
         "WHERE expected_grade IS NOT NULL AND expected_grade != '' "
         "AND status IN ('active','submitted_for_grading')").fetchone()[0]
     n = len(resolved)
+
+    def _bucket(rows):
+        m = len(rows)
+        return {
+            "n": m,
+            "exact": sum(1 for x in rows if x["diff"] == 0),
+            "within_one": sum(1 for x in rows if abs(x["diff"]) <= 1),
+            "bias": round(sum(x["diff"] for x in rows) / m, 2) if m else None,
+        }
+
     return {
         "resolved": resolved, "n": n, "pending": pending,
         "exact": sum(1 for x in resolved if x["diff"] == 0),
         "within_one": sum(1 for x in resolved if abs(x["diff"]) <= 1),
         "bias": round(sum(x["diff"] for x in resolved) / n, 2) if n else None,
+        "banker": _bucket([x for x in resolved if x["bucket"] == "banker"]),
+        "casino": _bucket([x for x in resolved if x["bucket"] == "casino"]),
     }
 
 
@@ -426,8 +486,24 @@ def at_grading(conn) -> list[dict]:
             except ValueError:
                 pass
         out.append({"id": r["id"], "name": r["card_name"],
-                    "target": r["target_grading_company"] or "—", "days": days})
+                    "target": r["target_grading_company"] or "—", "days": days,
+                    "basis": r["purchase_price"] or 0.0,
+                    "expected_back": r["expected_back"] or "",
+                    "sub_type": r["sub_type"] or ""})
     return out
+
+
+def psa_capital(conn) -> dict:
+    """Capital riding at grading right now, and when it lands back."""
+    rows = at_grading(conn)
+    backs = sorted(x["expected_back"] for x in rows if x["expected_back"])
+    return {
+        "count": len(rows),
+        "basis": round(sum(x["basis"] for x in rows), 2),
+        "next_back": backs[0] if backs else None,
+        "last_back": backs[-1] if backs else None,
+        "no_date": sum(1 for x in rows if not x["expected_back"]),
+    }
 
 
 def sell_candidates(conn) -> dict:
@@ -442,7 +518,7 @@ def sell_candidates(conn) -> dict:
         for r in conn.execute(
                 "SELECT acquisition_price, market_value FROM graded_cards "
                 "WHERE status='active' AND market_value IS NOT NULL "
-                "AND basis_unknown=0"):
+                "AND basis_unknown=0 AND is_pc=0"):
             p = r["market_value"] * pct / 100 - (r["acquisition_price"] or 0)
             if p > 0:
                 n += 1
