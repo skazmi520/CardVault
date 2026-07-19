@@ -28,7 +28,7 @@ ICLOUD_DIR  = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/CardVa
 LOCAL_KEEP  = 7     # daily local snapshots to retain
 ICLOUD_KEEP = 30    # daily iCloud snapshots to retain
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 GRADING_COMPANIES = ["PSA", "BGS", "CGC", "TAG"]
 PAYMENT_METHODS   = ["cash", "venmo", "zelle", "paypal", "trade", "mixed"]
@@ -209,6 +209,9 @@ _CARD_NEW_COLS = [
     # silently inflates realized gains. Flagged cards are reported as
     # "basis unknown" and left out of gain statistics rather than faked.
     ("basis_unknown",        "INTEGER NOT NULL DEFAULT 0"),
+    # Stefan's grade prediction: set on the raw card, carried to the graded
+    # card at promotion so predicted-vs-actual accuracy can be analyzed.
+    ("expected_grade",       "TEXT"),
 ]
 
 

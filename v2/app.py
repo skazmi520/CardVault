@@ -173,9 +173,11 @@ def deal_detail(deal_id):
 def raw_page():
     c = conn()
     rows = [x for x in v2cards.list_cards(c) if x["kind"] == "raw"]
+    predictions = v2cards.prediction_stats(c)
     c.close()
     return render_template("raw.html", active="raw", cards=rows,
-                           companies=v2db.GRADING_COMPANIES)
+                           companies=v2db.GRADING_COMPANIES,
+                           predictions=predictions)
 
 
 @app.get("/deal-photos/<path:name>")
@@ -927,6 +929,15 @@ def api_grading_status():
     p = request.get_json(force=True)
     c = conn()
     v2cards.set_grading_status(c, int(p["ungraded_id"]), p["grading_status"])
+    c.close()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/expected-grade")
+def api_expected_grade():
+    p = request.get_json(force=True)
+    c = conn()
+    v2cards.set_expected_grade(c, int(p["ungraded_id"]), p.get("expected_grade", ""))
     c.close()
     return jsonify({"ok": True})
 

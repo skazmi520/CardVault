@@ -51,6 +51,7 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
             "notes": r["notes"] or "",
             "grading_status": r["grading_status"],
             "target_company": r["target_grading_company"] or "",
+            "expected_grade": r["expected_grade"] or "",
         })
     return out
 
@@ -101,14 +102,16 @@ def promote_raw(conn, ungraded_id: int, *, grading_company: str, grade: str,
              (serial_number, grading_company, grade, card_name, card_number,
               set_name, year, photo_filename, acquisition_type,
               acquisition_price, grading_fee, trade_value, trade_details,
-              acquisition_date, notes, date_added, status, acquired_via_deal_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?)""",
+              acquisition_date, notes, date_added, status, acquired_via_deal_id,
+              expected_grade)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?, ?)""",
         (serial_number, grading_company, grade, raw["card_name"],
          raw["card_number"], raw["set_name"], raw["year"] or "",
          raw["photo_filename"], raw["acquisition_type"] or "Cash",
          basis, grading_cost, raw["trade_value"] or 0.0,
          raw["trade_details"] or "", return_date, raw["notes"] or "",
-         datetime.now().isoformat(), raw["acquired_via_deal_id"]))
+         datetime.now().isoformat(), raw["acquired_via_deal_id"],
+         raw["expected_grade"]))
     graded_id = cur.lastrowid
 
     conn.execute(
@@ -163,6 +166,56 @@ def crack_to_raw(conn, graded_id: int, *, target_company: str = "PSA",
     conn.execute("UPDATE graded_cards SET status='cracked' WHERE id=?", (graded_id,))
     conn.commit()
     return raw_id
+
+
+VALID_EXPECTED_GRADES = {"", "10", "9.5", "9", "8.5", "8", "7.5", "7",
+                         "6.5", "6", "5", "4", "3", "2", "1"}
+
+
+def set_expected_grade(conn, ungraded_id: int, expected_grade: str):
+    """Record (or clear) Stefan's grade prediction on a raw card."""
+    expected_grade = str(expected_grade or "").strip()
+    if expected_grade not in VALID_EXPECTED_GRADES:
+        raise ValueError(f"expected_grade must be one of {sorted(VALID_EXPECTED_GRADES)}")
+    cur = conn.execute(
+        "UPDATE ungraded_cards SET expected_grade=? "
+        "WHERE id=? AND status IN ('active','submitted_for_grading')",
+        (expected_grade or None, ungraded_id))
+    if cur.rowcount == 0:
+        conn.rollback()
+        raise ValueError(f"raw card id={ungraded_id} not found or not active")
+    conn.commit()
+
+
+def prediction_stats(conn):
+    """Predicted vs actual grades for promoted cards, plus pending guesses.
+    Signed error = predicted - actual, so positive bias = optimistic eye."""
+    resolved = []
+    for r in conn.execute(
+            "SELECT card_name, grading_company, grade, expected_grade, acquisition_date "
+            "FROM graded_cards WHERE expected_grade IS NOT NULL AND expected_grade != '' "
+            "ORDER BY acquisition_date DESC, id DESC"):
+        try:
+            actual, predicted = float(r["grade"]), float(r["expected_grade"])
+        except (TypeError, ValueError):
+            continue
+        resolved.append({
+            "name": r["card_name"], "company": r["grading_company"],
+            "predicted": predicted, "actual": actual,
+            "diff": round(predicted - actual, 1),
+            "returned": r["acquisition_date"] or "",
+        })
+    pending = conn.execute(
+        "SELECT COUNT(*) FROM ungraded_cards "
+        "WHERE expected_grade IS NOT NULL AND expected_grade != '' "
+        "AND status IN ('active','submitted_for_grading')").fetchone()[0]
+    n = len(resolved)
+    return {
+        "resolved": resolved, "n": n, "pending": pending,
+        "exact": sum(1 for x in resolved if x["diff"] == 0),
+        "within_one": sum(1 for x in resolved if abs(x["diff"]) <= 1),
+        "bias": round(sum(x["diff"] for x in resolved) / n, 2) if n else None,
+    }
 
 
 def set_grading_status(conn, ungraded_id: int, grading_status: str):
