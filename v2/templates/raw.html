@@ -7,7 +7,9 @@
   <div class="table-wrap"><table>
     <thead><tr>
       <th>Card</th><th>Set</th><th class="num">Basis</th>
-      <th>Grading Status</th><th>Target</th><th style="width:220px"></th>
+      <th>Grading Status</th><th>Target</th>
+      <th title="Your grade prediction — scored against the real grade when the card comes back">My Guess</th>
+      <th style="width:220px"></th>
     </tr></thead>
     <tbody>
       {% for c in cards %}
@@ -23,8 +25,17 @@
           </select>
         </td>
         <td class="muted">{{ c.target_company or '—' }}</td>
+        <td>
+          <select data-guess="{{ c.id }}" style="width:76px">
+            <option value="">—</option>
+            {% for g in ["10", "9.5", "9", "8.5", "8", "7.5", "7", "6", "5"] %}
+            <option value="{{ g }}" {{ 'selected' if c.expected_grade == g }}>{{ g }}</option>
+            {% endfor %}
+          </select>
+        </td>
         <td><button class="btn ghost small" data-promote="{{ c.id }}"
-                    data-name="{{ c.name }}" data-basis="{{ c.basis }}">Record grading return…</button></td>
+                    data-name="{{ c.name }}" data-basis="{{ c.basis }}"
+                    data-guess="{{ c.expected_grade }}">Record grading return…</button></td>
       </tr>
       {% endfor %}
     </tbody>
@@ -48,8 +59,36 @@
     <div><button class="btn ghost" id="promo-cancel">Cancel</button></div>
   </div>
   <div style="margin-top:10px" class="muted" id="promo-preview"></div>
+  <div style="margin-top:6px" class="muted" id="promo-guess"></div>
   <div id="promo-msg" style="margin-top:8px"></div>
 </div>
+
+{% if predictions.n or predictions.pending %}
+<div class="panel">
+  <h2>Grading Eye <span class="muted">— predicted vs actual</span></h2>
+  {% if predictions.n %}
+  <div class="tiles compact" style="margin-top:0">
+    <div class="tile"><div class="v">{{ predictions.exact }}/{{ predictions.n }}</div><div class="l">Exact Hits</div></div>
+    <div class="tile"><div class="v">{{ (predictions.within_one / predictions.n * 100)|round|int }}%</div><div class="l">Within 1 Grade</div></div>
+    <div class="tile"><div class="v {{ 'neg' if predictions.bias > 0.5 else '' }}">{{ '%+.2f'|format(predictions.bias) }}</div>
+      <div class="l">Avg Bias ({{ 'optimistic' if predictions.bias > 0 else 'conservative' if predictions.bias < 0 else 'dead on' }})</div></div>
+    <div class="tile"><div class="v">{{ predictions.pending }}</div><div class="l">Guesses Pending</div></div>
+  </div>
+  {% for p in predictions.resolved[:12] %}
+  <div class="list-row">
+    <span class="grow"><strong>{{ p.name }}</strong> <span class="muted">{{ p.company }}</span></span>
+    <span class="muted">guessed {{ p.predicted }}</span>
+    <span style="width:70px;text-align:right">got <strong>{{ p.actual }}</strong></span>
+    <span class="num {{ 'pos' if p.diff == 0 else 'neg' if p.diff > 0 else '' }}" style="width:56px;text-align:right">
+      {{ 'hit' if p.diff == 0 else '%+.1f'|format(-p.diff) }}</span>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="muted">{{ predictions.pending }} guess{{ 'es' if predictions.pending != 1 }} riding on cards
+    out at grading — accuracy shows up here as returns come back.</div>
+  {% endif %}
+</div>
+{% endif %}
 
 <script>
 const $ = id => document.getElementById(id);
@@ -58,6 +97,8 @@ let promoteId = null, promoteBasis = 0;
 document.querySelectorAll("[data-promote]").forEach(b => b.addEventListener("click", () => {
   promoteId = +b.dataset.promote;
   promoteBasis = parseFloat(b.dataset.basis) || 0;
+  $("promo-guess").textContent = b.dataset.guess
+    ? `You guessed a ${b.dataset.guess} — enter the real grade and the scoreboard updates.` : "";
   $("promo-name").textContent = b.dataset.name;
   $("promo-date").value = new Date().toISOString().slice(0, 10);
   $("promo-panel").hidden = false;
@@ -95,6 +136,13 @@ document.querySelectorAll("[data-status]").forEach(sel =>
     postJSON("/api/grading-status",
       { ungraded_id: +sel.dataset.status, grading_status: sel.value })
       .then(() => toast("Grading status updated."))
+      .catch(e => toast(e.message, "error"))));
+
+document.querySelectorAll("[data-guess]").forEach(sel =>
+  sel.addEventListener("change", () =>
+    postJSON("/api/expected-grade",
+      { ungraded_id: +sel.dataset.guess, expected_grade: sel.value })
+      .then(() => toast(sel.value ? `Guess locked in: ${sel.value}.` : "Guess cleared."))
       .catch(e => toast(e.message, "error"))));
 </script>
 {% endblock %}
