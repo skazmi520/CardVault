@@ -201,6 +201,14 @@ def save_deal(conn, *,
                     f"Sides don't reconcile: cards-out total ${v_out:,.2f} vs "
                     f"cards-in + cash ${expected_out:,.2f} "
                     f"(diff ${abs(v_out - expected_out):,.2f}, >5%). Saving anyway.")
+        elif cards_out and not cards_in and cash_amount == 0 and v_out > 0:
+            # giveaway / donation trap: the deal screen prefills give-side
+            # values with market, which would book phantom proceeds
+            warnings.append(
+                f"Nothing came back (no cards in, no cash) but cards-out are "
+                f"valued at ${v_out:,.2f} — that books ${v_out:,.2f} of proceeds. "
+                f"For a giveaway, set each card's value to 0 so the loss is "
+                f"recorded correctly.")
         elif cards_out and not cards_in and abs(v_out - cash_amount) > 0.01 and cash_amount != 0:
             warnings.append(
                 f"Pure sale: cards-out total ${v_out:,.2f} differs from cash received "
