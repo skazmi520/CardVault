@@ -23,6 +23,8 @@
   <div class="tile"><div class="v">{{ tstats.win_rate ~ '%' if tstats.win_rate is not none else '—' }}</div><div class="l">Win Rate ({{ tstats.decided }} decided)</div></div>
   <div class="tile"><div class="v {{ 'pos' if tstats.avg_profit and tstats.avg_profit >= 0 else 'neg' if tstats.avg_profit else '' }}">{{ tstats.avg_profit|gain if tstats.avg_profit is not none else '—' }}</div><div class="l">Avg Profit / Card ({{ tstats.moved }})</div></div>
   <div class="tile"><div class="v">{{ tstats.deals }}</div><div class="l">Deals Recorded</div></div>
+  <div class="tile"><div class="v">{{ psa.basis|money }}</div>
+    <div class="l">At PSA ({{ psa.count }} cards{% if psa.next_back %} · back {{ psa.next_back[5:] }}{% endif %})</div></div>
 </div>
 
 <div class="grid2">
@@ -130,8 +132,11 @@
     {% if grading %}
       {% for g in grading %}
       <div class="list-row">
-        <span class="grow"><strong>{{ g.name }}</strong> <span class="muted">→ {{ g.target }}</span></span>
-        <span class="muted">{{ (g.days ~ ' days out') if g.days is not none else 'submitted date unknown' }}</span>
+        <span class="grow"><strong>{{ g.name }}</strong> <span class="muted">→ {{ g.target }}</span>
+          {% if g.sub_type %}<span class="chip {{ 'raw' if g.sub_type == 'casino' }}" style="margin-left:6px">{{ g.sub_type }}</span>{% endif %}</span>
+        <span class="muted num">{{ g.basis|money }}</span>
+        <span class="muted" style="width:150px;text-align:right">
+          {{ ('back ' ~ g.expected_back[5:]) if g.expected_back else ((g.days ~ 'd out') if g.days is not none else '—') }}</span>
       </div>
       {% endfor %}
     {% else %}
