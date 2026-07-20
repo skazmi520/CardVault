@@ -42,3 +42,6 @@ build/
 
 # Alt.xyz pricing credentials (tokens expire ~5 min, never commit)
 pricing/alt_config.json
+
+# sample format guides are meant to ship
+!samples/*.csv
