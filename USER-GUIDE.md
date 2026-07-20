@@ -14,7 +14,7 @@ You need a Mac with python3. Then:
 
 Double click CardVault v2.app (drag it to your dock if you want) and the app opens at http://127.0.0.1:5177 in your browser. You can also run `python3 -m v2.app` from the repo folder if you prefer a terminal.
 
-Fresh installs start with an empty database. Start entering cards through Deals (more on that below) or hit me up if you have a spreadsheet you want help importing.
+Fresh installs start with an empty database. Start entering cards through Deals (more on that below) or hit me up if you have a spreadsheet you want help importing. If you're bringing a spreadsheet, shape it like the files in the `samples/` folder, one CSV for slabs and one for raw cards, and the import goes smooth. Dollar signs and commas in the money columns are fine. The Grading Fee column is only for cards you graded yourself, leave it blank on slabs you bought.
 
 ### Optional keys
 
