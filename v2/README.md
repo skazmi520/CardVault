@@ -1,6 +1,9 @@
 # CardVault v2
 
-A local web app that supersedes the CustomTkinter desktop app (v1). v1 remains
+A local web app that supersedes the CustomTkinter desktop app (v1).
+
+**New here? Read the [User Guide](../USER-GUIDE.md)** — setup plus a walkthrough
+of every tab. This README is the technical reference. v1 remains
 fully intact and runnable; v2 lives alongside it with its own database.
 
 ## Running
