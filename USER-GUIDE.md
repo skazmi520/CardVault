@@ -29,7 +29,7 @@ The Anthropic key powers slab photo reading (a few cents per photo, it reads the
 
 ### Phone access
 
-If you run Tailscale, add `CARDVAULT_HOST=0.0.0.0` to that same v2.env file and you can open the app from your phone at your laptop's Tailscale address, port 5177. I use this constantly at shows.
+If you run Tailscale, add `CARDVAULT_HOST=0.0.0.0` to that same v2.env file and you can open the app from your phone at your laptop's Tailscale address, port 5177. Full disclosure, I haven't set this up myself. I bring the laptop to shows and run everything from there, works great. The phone option is there if you want it.
 
 ## The tabs
 
@@ -97,6 +97,6 @@ A cleanup tool. It lists graded cards missing their cert, set, card number, or y
 
 ## A day at a show
 
-How I actually use it. Morning: stock check on my phone while setting up the case. During the day: every buy, sale, and trade goes in as a deal right when it happens, takes under a minute on the phone. The Deals tab has a Show Day view with running totals for the day. Evaluator for anything being negotiated. Evening: check the dashboard, see what the day actually made, and enter grade guesses on anything raw I picked up.
+How I actually use it. The laptop comes with me and sits behind the case. Morning: stock check while setting up. During the day: every buy, sale, and trade goes in as a deal right when it happens, takes under a minute. The Deals tab has a Show Day view with running totals for the day. Evaluator for anything being negotiated. Evening: check the dashboard, see what the day actually made, and enter grade guesses on anything raw I picked up.
 
 That's it. Questions, find me at the show.
