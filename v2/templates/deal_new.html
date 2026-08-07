@@ -53,6 +53,9 @@
   <div>Giving <span class="big" id="t-out">$0.00</span></div>
   <div>Getting <span class="big" id="t-in">$0.00</span></div>
   <div>Cash <span class="big" id="t-cash">$0.00</span></div>
+  <div title="Deal values on cards out minus their cost basis — the realized gain this deal books when saved">
+    Profit over basis <span class="big" id="t-profit">—</span>
+    <span class="muted" id="t-profit-note" style="font-size:11px"></span></div>
   <div id="t-balance" class="muted"></div>
   <div style="flex:1"></div>
   <button class="btn" id="save">Save Deal</button>
@@ -86,7 +89,8 @@ search.addEventListener("input", () => {
     `<div data-i="${INVENTORY.indexOf(c)}">
        ${c.kind === "slab" ? `<span class="chip ${esc(c.company)}">${esc(c.company)} ${esc(c.grade)}</span>` : '<span class="chip raw">RAW</span>'}
        ${esc(c.name)} <span class="muted">${esc(c.set)}</span>
-       <span class="muted" style="float:right">${fmt(c.market_value ?? c.basis)}</span>
+       <span class="muted" style="float:right">${fmt(c.market_value ?? c.basis)}
+         · <span class="unknown">${c.basis_unknown ? "basis ?" : "basis " + fmt(c.basis)}</span></span>
      </div>`).join("") || '<div class="muted">no matches</div>';
   results.hidden = false;
 });
@@ -108,6 +112,7 @@ function pickOut(i) {
   outLines.push({ table: c.table, id: c.id, name: c.name,
     label: (c.kind === "slab" ? `${c.company} ${c.grade} · ` : "RAW · ") + c.name,
     mv: c.market_value ?? c.basis,
+    basis: c.basis, basis_unknown: c.basis_unknown,
     deal_value: c.market_value != null ? String(c.market_value) : "" });
   search.value = ""; results.hidden = true; results.innerHTML = "";
   renderLines(); search.focus();
@@ -129,7 +134,10 @@ function focusLastIn() {
 function renderLines() {
   $("out-lines").innerHTML = outLines.map((l, i) => `
     <div class="deal-line">
-      <span class="grow">${esc(l.label)} <span class="muted">mv ${fmt(l.mv)}</span></span>
+      <span class="grow">${esc(l.label)}
+        <span class="muted">mv ${fmt(l.mv)}</span>
+        ${l.basis_unknown ? '<span class="unknown">· basis unknown</span>'
+                          : `<span class="muted">· basis ${fmt(l.basis)}</span>`}</span>
       <input class="val" data-side="out" data-i="${i}" type="text"
              placeholder="value" value="${esc(l.deal_value)}">
       <span class="x" data-out="${i}">✕</span>
@@ -239,6 +247,27 @@ function updateTotals() {
   $("out-total").textContent = outLines.length + " cards";
   $("in-total").textContent  = inLines.length + " cards";
 
+  // the number that matters: what these cards fetch vs what they cost
+  const known = outLines.filter(l => !l.basis_unknown);
+  const unknownN = outLines.length - known.length;
+  if (outLines.length && vOut !== null) {
+    const knownVals = known.map(l => num(l.deal_value));
+    if (knownVals.every(v => v !== null)) {
+      const profit = knownVals.reduce((a, b) => a + b, 0)
+                   - known.reduce((a, l) => a + (l.basis || 0), 0);
+      $("t-profit").textContent = fmtGain(profit);
+      $("t-profit").className = "big " + gainClass(profit);
+      $("t-profit-note").textContent = unknownN ? `(${unknownN} basis unknown)` : "";
+    } else {
+      $("t-profit").textContent = "…";
+      $("t-profit-note").textContent = "enter per-card values";
+    }
+  } else {
+    $("t-profit").textContent = "—";
+    $("t-profit").className = "big muted";
+    $("t-profit-note").textContent = "";
+  }
+
   const bal = $("t-balance");
   if (vOut !== null && vIn !== null) {
     // net = what I receive (cards in + cash) minus what I give up (cards out).
@@ -314,7 +343,9 @@ function applyPrefill() {
     if (!c) return;   // sold/changed since evaluating — skip rather than fake it
     outLines.push({ table: c.table, id: c.id, name: c.name,
       label: (c.kind === "slab" ? `${c.company} ${c.grade} · ` : "RAW · ") + c.name,
-      mv: c.market_value ?? c.basis, deal_value: String(o.deal_value ?? "") });
+      mv: c.market_value ?? c.basis,
+      basis: c.basis, basis_unknown: c.basis_unknown,
+      deal_value: String(o.deal_value ?? "") });
   });
   (p.cards_in || []).forEach(i => {
     inLines.push({ name: i.name || "", set: "", number: "", year: "", company: "PSA",

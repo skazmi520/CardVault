@@ -61,6 +61,9 @@
   <div>Getting <span class="big" id="t-get">$0.00</span>
     <span class="muted" id="t-get-note" style="font-size:11px"></span></div>
   <div>Cash <span class="big" id="t-cash">$0.00</span></div>
+  <div title="What your cards fetch at these values minus what they cost you — the realized gain if this becomes a deal">
+    Profit over basis <span class="big" id="t-basis-profit">—</span>
+    <span class="muted" id="t-basis-note" style="font-size:11px"></span></div>
   <div id="t-net" class="big"></div>
   <div style="flex:1"></div>
   <button class="btn" id="convert">Convert to Deal →</button>
@@ -122,7 +125,9 @@ function render() {
   $("give-lines").innerHTML = give.map((l, i) => `
     <div class="deal-line">
       <span class="grow">${esc(l.label)}
-        ${l.manual ? "" : `<span class="muted">mv ${fmt(l.mv)}</span>`}</span>
+        ${l.manual ? "" : `<span class="muted">mv ${fmt(l.mv)}</span>
+          ${l.basis_unknown ? '<span class="unknown">· basis unknown</span>'
+                            : `<span class="muted">· basis ${fmt(l.basis)}</span>`}`}</span>
       <input class="val" type="text" data-side="give" data-i="${i}"
              placeholder="${l.manual ? "value" : fmt((l.mv ?? 0) * givePct() / 100)}"
              value="${esc(l.value ?? "")}" title="Override the %-derived value">
@@ -186,6 +191,24 @@ function totals() {
   $("t-give-note").textContent = givePct() !== 100 ? `@ ${givePct()}%` : "";
   $("t-get-note").textContent  = getPct() !== 100 ? `@ ${getPct()}%` : "";
 
+  // profit over basis: inventory lines only (manual lines carry no basis)
+  const inv = give.filter(l => !l.manual);
+  const known = inv.filter(l => !l.basis_unknown);
+  if (inv.length) {
+    const profit = known.reduce((s, l) => s + giveValue(l), 0)
+                 - known.reduce((s, l) => s + (l.basis || 0), 0);
+    $("t-basis-profit").textContent = fmtGain(profit);
+    $("t-basis-profit").className = "big " + gainClass(profit);
+    const notes = [];
+    if (inv.length - known.length) notes.push(`${inv.length - known.length} basis unknown`);
+    if (give.length - inv.length) notes.push(`${give.length - inv.length} manual excluded`);
+    $("t-basis-note").textContent = notes.length ? `(${notes.join(", ")})` : "";
+  } else {
+    $("t-basis-profit").textContent = "—";
+    $("t-basis-profit").className = "big muted";
+    $("t-basis-note").textContent = "";
+  }
+
   const n = $("t-net");
   if (!give.length && !get.length && !c) { n.textContent = ""; return; }
   n.textContent = Math.abs(net) < 0.01 ? "Even"
@@ -207,7 +230,8 @@ search.addEventListener("input", () => {
        ${c.kind === "slab" ? `<span class="chip ${esc(c.company)}">${esc(c.company)} ${esc(c.grade)}</span>`
                            : '<span class="chip raw">RAW</span>'}
        ${esc(c.name)} <span class="muted">${esc(c.set)}</span>
-       <span class="muted" style="float:right">${fmt(c.market_value ?? c.basis)}</span>
+       <span class="muted" style="float:right">${fmt(c.market_value ?? c.basis)}
+         · <span class="unknown">${c.basis_unknown ? "basis ?" : "basis " + fmt(c.basis)}</span></span>
      </div>`).join("") || '<div class="muted">no matches</div>';
   results.hidden = false;
 });
@@ -227,7 +251,7 @@ function pick(i) {
   }
   give.push({ table: c.table, id: c.id, name: c.name,
     label: (c.kind === "slab" ? `${c.company} ${c.grade} · ` : "RAW · ") + c.name,
-    mv: c.market_value ?? c.basis, basis: c.basis });
+    mv: c.market_value ?? c.basis, basis: c.basis, basis_unknown: c.basis_unknown });
   search.value = ""; results.hidden = true; results.innerHTML = "";
   save(); render(); search.focus();
 }

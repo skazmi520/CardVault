@@ -63,6 +63,8 @@ This is the heart of the app. Every transaction is a deal: cards you gave, cards
 
 On the New Deal screen, search your inventory to add cards you're giving. For cards you're getting, type them in with a market value and what you paid. If you're buying a lot at a percentage, enter the side total and the app splits it across the cards pro rata. Cash has two boxes, cash I pay and cash I receive, so you never have to think about negative numbers.
 
+The totals bar shows Profit over basis while you build the deal, what your cards are fetching versus what they cost you. That's the number to negotiate on. Market value tells you what a card is worth, basis tells you whether you're making money.
+
 If the two sides don't balance within 5% the app warns you before saving. It'll also warn you if you're about to book a giveaway as a sale (been there).
 
 One habit worth building: if you got a card at a discount because of margin on cards you traded away, the recorded basis is the negotiated value. Your true edge shows up in the realized gains on what you gave. The books stay right either way.
@@ -71,7 +73,7 @@ Each deal has its own page where you can attach photos and void the whole thing 
 
 ### Evaluator
 
-A scratchpad for negotiating. Load up both sides of a potential trade, set what percent of market each side is trading at (I take cards in around 80% and give mine at full value, adjust to your style), and it shows you the balance live. When the deal is agreed, one click converts it into a real deal with everything prefilled. Numbers persist on your device until you clear them, so you can walk away mid negotiation and come back.
+A scratchpad for negotiating. Load up both sides of a potential trade, set what percent of market each side is trading at (I take cards in around 80% and give mine at full value, adjust to your style), and it shows you the balance live. Every card you're giving shows its cost basis right on the line, and the totals bar tracks profit over basis live as you adjust percentages. When the deal is agreed, one click converts it into a real deal with everything prefilled. Numbers persist on your device until you clear them, so you can walk away mid negotiation and come back.
 
 ### Raw & Grading
 
