@@ -953,6 +953,39 @@ def api_expected_back():
     return jsonify({"ok": True})
 
 
+@app.post("/api/card/create")
+def api_card_create():
+    p = request.get_json(force=True)
+    table = "graded_cards" if p.get("is_graded", True) else "ungraded_cards"
+    c = conn()
+    new_id = v2cards.create_card(
+        c, table,
+        card_name=p.get("card_name", ""),
+        basis=p.get("basis"),
+        market_value=p.get("market_value"),
+        acquisition_date=p.get("acquisition_date", ""),
+        grading_company=p.get("grading_company", "PSA"),
+        grade=p.get("grade", ""),
+        serial_number=p.get("serial_number", ""),
+        card_number=p.get("card_number", ""),
+        set_name=p.get("set_name", ""),
+        year=p.get("year", ""),
+        notes=p.get("notes", ""),
+        is_pc=bool(p.get("is_pc")))
+    c.close()
+    return jsonify({"ok": True, "id": new_id, "table": table})
+
+
+@app.post("/api/card/remove")
+def api_card_remove():
+    p = request.get_json(force=True)
+    c = conn()
+    res = v2cards.remove_card(c, p.get("table", "graded_cards"),
+                              int(p["id"]), p.get("reason", ""))
+    c.close()
+    return jsonify({"ok": True, **res})
+
+
 @app.post("/api/pc")
 def api_pc():
     p = request.get_json(force=True)

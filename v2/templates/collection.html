@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Collection{% endblock %}
 {% block content %}
-<div class="page-title">Collection <span class="sub" id="count-sub"></span></div>
+<div class="page-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+  <span>Collection <span class="sub" id="count-sub"></span></span>
+  <button class="btn small" id="add-card-btn">+ Add card</button>
+</div>
 
 <div class="filters">
   <input type="text" id="f-search" placeholder="Search name, set, cert…  ( / )">
@@ -88,11 +91,58 @@
     <div class="actions">
       <button class="btn ghost small" id="e-sell" style="margin-right:6px;color:var(--pos);border-color:var(--pos)"
               title="One-card cash sale — books a deal underneath">Sell…</button>
-      <button class="btn ghost small" id="e-crack" style="margin-right:auto;color:var(--neg);border-color:var(--neg)"
+      <button class="btn ghost small" id="e-crack" style="margin-right:6px;color:var(--neg);border-color:var(--neg)"
               title="Break the card out of its slab and move it to the raw section">Crack to raw…</button>
+      <button class="btn ghost small" id="e-remove" style="margin-right:auto"
+              title="Take this card out of inventory without selling it — pulled to a binder, entered by mistake">Remove…</button>
       <span id="e-msg" class="neg" style="align-self:center;font-size:12px"></span>
       <button class="btn ghost" id="e-cancel">Cancel</button>
       <button class="btn" id="e-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- add card manually (no deal behind it) -->
+<div class="modal-backdrop" id="add-backdrop" hidden>
+  <div class="modal">
+    <h2>Add card</h2>
+    <p class="hint" style="margin-bottom:12px">For cards that never came through a deal —
+      a slab you can't place, a legacy find, a grading return that slipped tracking.
+      Leave the cost basis blank if you don't know it and the card stays out of every
+      gain statistic instead of being booked at $0.</p>
+    <div class="row">
+      <div style="flex:2;min-width:200px"><label>Card name *</label><input type="text" id="a-name" style="width:100%"></div>
+      <div><label>Type</label>
+        <select id="a-kind"><option value="slab">Slab</option><option value="raw">Raw</option></select></div>
+    </div>
+    <div class="row">
+      <div style="flex:1"><label>Set</label><input type="text" id="a-set" style="width:100%"></div>
+      <div><label>Card #</label><input type="text" id="a-number" style="width:90px"></div>
+      <div><label>Year</label><input type="text" id="a-year" style="width:80px"></div>
+    </div>
+    <div class="row" id="a-slab-row">
+      <div><label>Company</label>
+        <select id="a-company"><option>PSA</option><option>BGS</option><option>CGC</option><option>TAG</option></select></div>
+      <div><label>Grade</label><input type="text" id="a-grade" style="width:80px"></div>
+      <div style="flex:1"><label>Cert / serial #</label><input type="text" id="a-cert" style="width:100%"></div>
+    </div>
+    <div class="row">
+      <div><label>Cost basis ($)</label>
+        <input type="text" id="a-basis" placeholder="blank = unknown" style="width:140px"></div>
+      <div><label>Market value ($)</label><input type="text" id="a-mv" style="width:130px"></div>
+      <div><label>Acquired</label><input type="date" id="a-date"></div>
+    </div>
+    <div class="row">
+      <div style="flex:1"><label>Notes</label><input type="text" id="a-notes" style="width:100%"></div>
+      <div style="align-self:end;padding-bottom:8px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;cursor:pointer">
+          <input type="checkbox" id="a-pc" style="min-height:auto"> Personal collection</label>
+      </div>
+    </div>
+    <div class="actions">
+      <span id="a-msg" class="neg" style="align-self:center;font-size:12px"></span>
+      <button class="btn ghost" id="a-cancel">Cancel</button>
+      <button class="btn" id="a-save">Add card</button>
     </div>
   </div>
 </div>
@@ -306,6 +356,73 @@ E("e-save").addEventListener("click", async () => {
     }
     closeCardEdit(); render();
     toast("Card saved.");
+  } catch (err) { E("e-msg").textContent = err.message; }
+});
+
+/* ── add card manually ── */
+function openAdd() {
+  ["a-name","a-set","a-number","a-year","a-grade","a-cert","a-basis","a-mv","a-notes"]
+    .forEach(id => E(id).value = "");
+  E("a-pc").checked = false;
+  E("a-msg").textContent = "";
+  E("a-date").value = new Date().toISOString().slice(0, 10);
+  syncAddKind();
+  E("add-backdrop").hidden = false;
+  E("a-name").focus();
+}
+function syncAddKind() {
+  E("a-slab-row").style.display = E("a-kind").value === "slab" ? "" : "none";
+}
+E("add-card-btn").addEventListener("click", openAdd);
+E("a-kind").addEventListener("change", syncAddKind);
+E("a-cancel").addEventListener("click", () => { E("add-backdrop").hidden = true; });
+E("add-backdrop").addEventListener("click", e => {
+  if (e.target === E("add-backdrop")) E("add-backdrop").hidden = true;
+});
+E("a-save").addEventListener("click", async () => {
+  const name = E("a-name").value.trim();
+  if (!name) { E("a-msg").textContent = "Name is required."; return; }
+  const isGraded = E("a-kind").value === "slab";
+  const basisRaw = E("a-basis").value.trim().replace(/[$,]/g, "");
+  const mvRaw = E("a-mv").value.trim().replace(/[$,]/g, "");
+  if (basisRaw && isNaN(parseFloat(basisRaw))) { E("a-msg").textContent = "Basis must be a number or blank."; return; }
+  if (mvRaw && isNaN(parseFloat(mvRaw))) { E("a-msg").textContent = "Market value must be a number or blank."; return; }
+  try {
+    await postJSON("/api/card/create", {
+      is_graded: isGraded, card_name: name,
+      set_name: E("a-set").value.trim(), card_number: E("a-number").value.trim(),
+      year: E("a-year").value.trim(),
+      grading_company: isGraded ? E("a-company").value : "",
+      grade: isGraded ? E("a-grade").value.trim() : "",
+      serial_number: isGraded ? E("a-cert").value.trim() : "",
+      basis: basisRaw === "" ? null : parseFloat(basisRaw),
+      market_value: mvRaw === "" ? null : parseFloat(mvRaw),
+      acquisition_date: E("a-date").value,
+      notes: E("a-notes").value.trim(),
+      is_pc: E("a-pc").checked,
+    });
+    toastAfterReload(`Added ${name}${basisRaw === "" ? " (basis unknown)" : ""}.`);
+    location.reload();
+  } catch (err) { E("a-msg").textContent = err.message; }
+});
+
+/* ── remove from inventory (not a sale) ── */
+E("e-remove").addEventListener("click", async () => {
+  const r = view[editIdx];
+  if (!r) return;
+  const ok = await confirmDialog({
+    title: `Remove "${r.name}" from inventory?`,
+    body: "Use this when a card leaves without being sold — pulled into a binder, "
+        + "cracked for personal use, or entered by mistake. It disappears from every "
+        + "list and total. Nothing is deleted: its history and any deal it belonged to "
+        + "stay intact, so this is recoverable.",
+    confirmText: "Remove", danger: true,
+  });
+  if (!ok) return;
+  try {
+    await postJSON("/api/card/remove", { table: r.table, id: r.id, reason: "pulled from inventory" });
+    toastAfterReload(`Removed ${r.name} from inventory.`, "info");
+    location.reload();
   } catch (err) { E("e-msg").textContent = err.message; }
 });
 

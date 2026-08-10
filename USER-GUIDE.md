@@ -47,6 +47,10 @@ Every card you own, slabs and raw, in one sortable table. The search box finds n
 
 Click any price to change it. Double click a row to edit the whole card. The edit window also has a Sell button for quick one card cash sales (it books a proper deal under the hood so your stats stay right) and a Crack to raw button for when you're breaking a card out of its slab to regrade it.
 
+The Add card button up top is for cards that never came through a deal, a slab you can't place, a legacy find, a grading return that slipped tracking. Leave the cost basis blank when you don't know it. The card still counts in your inventory but stays out of every profit number, which is better than pretending it cost you nothing.
+
+Remove in the card editor takes a card out of inventory without selling it, for when you pull something into a binder or you entered it by mistake. It disappears from every list and total but nothing is deleted, so the history and any deal it was part of stay intact.
+
 There's also a Personal Collection checkbox in the card editor. Check it for cards you're keeping. PC cards stay in your net worth and stock checks but stop showing up in sell lists, because your keepers aren't inventory.
 
 ### Reports

@@ -221,6 +221,83 @@ def set_expected_back(conn, ungraded_id: int, expected_back: str):
     conn.commit()
 
 
+def create_card(conn, table: str, *, card_name: str, basis=None,
+                market_value=None, acquisition_date: str = "",
+                grading_company: str = "PSA", grade: str = "",
+                serial_number: str = "", card_number: str = "",
+                set_name: str = "", year: str = "", notes: str = "",
+                is_pc: bool = False, grading_status: str = "Not Slated") -> int:
+    """Add a card that never came through a deal — a mystery slab, a legacy
+    find, a grading return that slipped tracking. When basis is None the card
+    is flagged basis_unknown rather than booked at $0, so it stays out of every
+    gain statistic instead of faking a 100%-profit sale later."""
+    if table not in ("graded_cards", "ungraded_cards"):
+        raise ValueError(f"unknown table {table!r}")
+    card_name = (card_name or "").strip()
+    if not card_name:
+        raise ValueError("card_name is required")
+
+    basis_unknown = basis is None or str(basis).strip() == ""
+    basis_val = 0.0 if basis_unknown else round(float(basis), 2)
+    mv = None if market_value in (None, "") else round(float(market_value), 2)
+    now = datetime.now().isoformat(timespec="seconds")
+    acq = (acquisition_date or "").strip() or date.today().isoformat()
+
+    if table == "graded_cards":
+        cur = conn.execute(
+            """INSERT INTO graded_cards
+                 (serial_number, grading_company, grade, card_name, card_number,
+                  set_name, year, acquisition_type, acquisition_price,
+                  acquisition_date, notes, date_added, market_value,
+                  market_value_updated, status, basis_unknown, is_pc)
+               VALUES (?,?,?,?,?,?,?,'Cash',?,?,?,?,?,?,'active',?,?)""",
+            (serial_number.strip(), grading_company, grade.strip(), card_name,
+             card_number.strip(), set_name.strip(), year.strip(), basis_val,
+             acq, notes.strip(), now, mv, now if mv is not None else None,
+             1 if basis_unknown else 0, 1 if is_pc else 0))
+    else:
+        cur = conn.execute(
+            """INSERT INTO ungraded_cards
+                 (card_name, card_number, set_name, year, purchase_price,
+                  purchase_date, notes, grading_status, date_added,
+                  acquisition_type, market_value, market_value_updated,
+                  status, basis_unknown, is_pc)
+               VALUES (?,?,?,?,?,?,?,?,?,'Cash',?,?,'active',?,?)""",
+            (card_name, card_number.strip(), set_name.strip(), year.strip(),
+             basis_val, acq, notes.strip(), grading_status, now,
+             mv, now if mv is not None else None,
+             1 if basis_unknown else 0, 1 if is_pc else 0))
+    conn.commit()
+    return cur.lastrowid
+
+
+def remove_card(conn, table: str, card_id: int, reason: str = "") -> dict:
+    """Take a card out of inventory without selling it — pulled into a binder,
+    cracked for personal use, entered by mistake.
+
+    Sets status='removed', which every list, stat and total already filters
+    out, so the card vanishes from the app while its history (and any deal it
+    belonged to) stays intact. Nothing is deleted; a hard DELETE would orphan
+    price_history rows and silently rewrite past deals."""
+    if table not in ("graded_cards", "ungraded_cards"):
+        raise ValueError(f"unknown table {table!r}")
+    row = conn.execute(
+        f"SELECT card_name, status, notes FROM {table} WHERE id=?", (card_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"card id={card_id} not found in {table}")
+    if row["status"] not in ("active", "submitted_for_grading"):
+        raise ValueError(
+            f"{row['card_name']!r} has status={row['status']!r} — only active cards "
+            "can be removed from inventory")
+    stamp = f"[removed {date.today().isoformat()}"
+    stamp += f": {reason.strip()}]" if reason.strip() else "]"
+    notes = (row["notes"] + " " + stamp).strip() if row["notes"] else stamp
+    conn.execute(f"UPDATE {table} SET status='removed', notes=? WHERE id=?",
+                 (notes, card_id))
+    conn.commit()
+    return {"id": card_id, "name": row["card_name"]}
+
+
 def set_pc(conn, table: str, card_id: int, is_pc: bool):
     """Flag a card as personal collection (kept, not inventory)."""
     if table not in ("graded_cards", "ungraded_cards"):
