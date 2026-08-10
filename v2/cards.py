@@ -70,6 +70,9 @@ def reprice(conn, card_id: int, market_value: float | None,
     if table not in ("graded_cards", "ungraded_cards"):
         raise ValueError(f"unknown table {table!r}")
     now = datetime.now().isoformat(timespec="seconds")
+    prevrow = conn.execute(
+        f"SELECT market_value FROM {table} WHERE id=?", (card_id,)).fetchone()
+    prev = prevrow["market_value"] if prevrow else None
     cur = conn.execute(
         f"UPDATE {table} SET market_value=?, market_value_updated=? WHERE id=?",
         (market_value, now if market_value is not None else None, card_id))
@@ -78,11 +81,35 @@ def reprice(conn, card_id: int, market_value: float | None,
         # blow up on its foreign key while holding an open write transaction
         conn.rollback()
         raise ValueError(f"card id={card_id} not found in {table}")
-    if market_value is not None and table == "graded_cards":
+    # Re-entering the same number is a confirmation ("checked it, still right"),
+    # not a price movement. Stamp the date but keep it out of price_history, or
+    # Top Movers fills with zero-delta noise every repricing pass.
+    if (market_value is not None and table == "graded_cards"
+            and market_value != prev):
         conn.execute(
             "INSERT INTO price_history (card_id, recorded_at, market_value) VALUES (?,?,?)",
             (card_id, now, market_value))
     conn.commit()
+
+
+def confirm_price(conn, card_id: int, table: str = "graded_cards"):
+    """Mark a card's existing market value as verified today without changing it.
+
+    A repricing pass checks every card, but most don't move. Without this the
+    only way to record "I looked and it's still right" is to retype the number,
+    so unchanged cards keep aging until the app calls them stale and sends you
+    back to re-check work you already did."""
+    if table not in ("graded_cards", "ungraded_cards"):
+        raise ValueError(f"unknown table {table!r}")
+    now = datetime.now().isoformat(timespec="seconds")
+    cur = conn.execute(
+        f"UPDATE {table} SET market_value_updated=? "
+        "WHERE id=? AND market_value IS NOT NULL", (now, card_id))
+    if cur.rowcount == 0:
+        conn.rollback()
+        raise ValueError(f"card id={card_id} not found in {table}, or has no price to confirm")
+    conn.commit()
+    return {"id": card_id, "confirmed_at": now}
 
 
 # ── raw → graded promotion (grading cost rolls into basis) ─────────────────────
@@ -226,7 +253,8 @@ def create_card(conn, table: str, *, card_name: str, basis=None,
                 grading_company: str = "PSA", grade: str = "",
                 serial_number: str = "", card_number: str = "",
                 set_name: str = "", year: str = "", notes: str = "",
-                is_pc: bool = False, grading_status: str = "Not Slated") -> int:
+                is_pc: bool = False, grading_status: str = "Not Slated",
+                grading_fee=None) -> int:
     """Add a card that never came through a deal — a mystery slab, a legacy
     find, a grading return that slipped tracking. When basis is None the card
     is flagged basis_unknown rather than booked at $0, so it stays out of every
@@ -239,6 +267,9 @@ def create_card(conn, table: str, *, card_name: str, basis=None,
 
     basis_unknown = basis is None or str(basis).strip() == ""
     basis_val = 0.0 if basis_unknown else round(float(basis), 2)
+    # grading_fee > 0 marks a card as self-graded, which every segmented
+    # performance report keys off — it must be storable at creation time
+    fee = 0.0 if grading_fee in (None, "") else round(float(grading_fee), 2)
     mv = None if market_value in (None, "") else round(float(market_value), 2)
     now = datetime.now().isoformat(timespec="seconds")
     acq = (acquisition_date or "").strip() or date.today().isoformat()
@@ -249,12 +280,12 @@ def create_card(conn, table: str, *, card_name: str, basis=None,
                  (serial_number, grading_company, grade, card_name, card_number,
                   set_name, year, acquisition_type, acquisition_price,
                   acquisition_date, notes, date_added, market_value,
-                  market_value_updated, status, basis_unknown, is_pc)
-               VALUES (?,?,?,?,?,?,?,'Cash',?,?,?,?,?,?,'active',?,?)""",
+                  market_value_updated, status, basis_unknown, is_pc, grading_fee)
+               VALUES (?,?,?,?,?,?,?,'Cash',?,?,?,?,?,?,'active',?,?,?)""",
             (serial_number.strip(), grading_company, grade.strip(), card_name,
              card_number.strip(), set_name.strip(), year.strip(), basis_val,
              acq, notes.strip(), now, mv, now if mv is not None else None,
-             1 if basis_unknown else 0, 1 if is_pc else 0))
+             1 if basis_unknown else 0, 1 if is_pc else 0, fee))
     else:
         cur = conn.execute(
             """INSERT INTO ungraded_cards

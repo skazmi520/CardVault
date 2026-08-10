@@ -971,9 +971,19 @@ def api_card_create():
         set_name=p.get("set_name", ""),
         year=p.get("year", ""),
         notes=p.get("notes", ""),
+        grading_fee=p.get("grading_fee"),
         is_pc=bool(p.get("is_pc")))
     c.close()
     return jsonify({"ok": True, "id": new_id, "table": table})
+
+
+@app.post("/api/confirm-price")
+def api_confirm_price():
+    p = request.get_json(force=True)
+    c = conn()
+    res = v2cards.confirm_price(c, int(p["card_id"]), p.get("table", "graded_cards"))
+    c.close()
+    return jsonify({"ok": True, **res})
 
 
 @app.post("/api/card/remove")
