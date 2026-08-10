@@ -61,18 +61,24 @@ function render(r) {
     </div>`;
 
   if (r.matched.length) {
-    h += `<h2 style="margin-top:14px">Will ${isDone ? "promote to graded" : "mark At Grading"}</h2>
+    h += `<h2 style="margin-top:14px">Suggested matches — tick each one you have verified</h2>
+      <div class="warn" style="margin-bottom:10px">Nothing is selected by default and nothing is
+      applied until you tick it. Raw cards are often entered under colloquial names, so a suggestion
+      here is a guess, not a fact — check the set and card number on each row before ticking it.
+      A cert written onto the wrong card is painful to unpick.</div>
       <div class="table-wrap"><table><thead><tr>
-        <th style="width:34px"><input type="checkbox" id="all" checked style="min-height:auto"></th>
+        <th style="width:34px"><input type="checkbox" id="all" style="min-height:auto"></th>
         <th>Cert</th><th>PSA description</th><th>Matched card</th>
         ${isDone ? "<th>Grade</th>" : ""}<th class="num">Score</th></tr></thead><tbody>`;
     for (const m of r.matched) {
-      h += `<tr><td><input type="checkbox" class="pair" checked
+      h += `<tr><td><input type="checkbox" class="pair"
               data-cert="${esc(m.row.cert)}" data-card="${m.card.id}" style="min-height:auto"></td>
         <td class="muted">${esc(m.row.cert)}</td>
         <td class="sub-line">${esc(m.row.description.slice(0, 62))}</td>
         <td><strong>${esc(m.card.card_name)}</strong>
-          <span class="muted">${esc(m.card.set_name || "")}</span></td>
+          <span class="muted">${esc(m.card.set_name || "")}</span>
+          <div class="sub-line">#${esc(m.card.card_number || "—")} · ${esc(m.card.year || "no year")}
+            · $${(m.card.purchase_price || 0).toLocaleString()} · id ${m.card.id}</div></td>
         ${isDone ? `<td><span class="chip PSA">PSA ${esc(m.row.grade)}</span></td>` : ""}
         <td class="num muted">${m.score}</td></tr>`;
     }
@@ -111,7 +117,7 @@ function render(r) {
 async function apply(isDone) {
   const pairs = [...document.querySelectorAll(".pair:checked")]
     .map(c => ({ cert: c.dataset.cert, card_id: +c.dataset.card }));
-  if (!pairs.length) { toast("Nothing selected.", "info"); return; }
+  if (!pairs.length) { toast("Tick the matches you've verified first — nothing is pre-selected.", "info"); return; }
   const ok = await confirmDialog({
     title: `${isDone ? "Promote" : "Mark At Grading"}: ${pairs.length} cards?`,
     body: isDone
