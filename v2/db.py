@@ -28,7 +28,7 @@ ICLOUD_DIR  = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/CardVa
 LOCAL_KEEP  = 7     # daily local snapshots to retain
 ICLOUD_KEEP = 30    # daily iCloud snapshots to retain
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 GRADING_COMPANIES = ["PSA", "BGS", "CGC", "TAG"]
 PAYMENT_METHODS   = ["cash", "venmo", "zelle", "paypal", "trade", "mixed"]
@@ -322,6 +322,12 @@ def migrate_schema(conn: sqlite3.Connection):
         # when PSA says the submission should land back home
         if table == "ungraded_cards" and "expected_back" not in existing:
             conn.execute("ALTER TABLE ungraded_cards ADD COLUMN expected_back TEXT")
+        # cert + order recorded at submission time, from the PSA order CSV, so
+        # a return can be matched by cert instead of guessing from names
+        if table == "ungraded_cards" and "psa_cert" not in existing:
+            conn.execute("ALTER TABLE ungraded_cards ADD COLUMN psa_cert TEXT")
+        if table == "ungraded_cards" and "psa_order" not in existing:
+            conn.execute("ALTER TABLE ungraded_cards ADD COLUMN psa_order TEXT")
 
     conn.execute(
         "INSERT OR REPLACE INTO v2_meta (key, value) VALUES ('is_v2', '1')")

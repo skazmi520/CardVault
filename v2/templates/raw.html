@@ -3,9 +3,32 @@
 {% block content %}
 <div class="page-title">Raw &amp; Grading <span class="sub">{{ cards|length }} cards</span></div>
 
+<div class="panel" id="bulk-bar" hidden style="display:flex;align-items:end;gap:10px;flex-wrap:wrap">
+  <div><strong id="bulk-count">0 selected</strong>
+    <div class="hint">Applies to every selected card at once</div></div>
+  <div><label>Set status</label>
+    <select id="bulk-status">
+      <option value="">— no change —</option>
+      <option>Not Slated</option><option>Slated</option><option>At Grading</option>
+    </select></div>
+  <div><label>Back by</label><input type="date" id="bulk-back" style="width:150px"></div>
+  <div><label>Grader</label>
+    <select id="bulk-company">
+      <option value="">— no change —</option>
+      {% for co in companies %}<option>{{ co }}</option>{% endfor %}
+    </select></div>
+  <div><button class="btn" id="bulk-apply">Apply</button></div>
+  <div><button class="btn ghost" id="bulk-clear">Clear</button></div>
+</div>
+
 <div class="panel">
+  <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn ghost small" id="sel-slated">Select all Slated</button>
+    <button class="btn ghost small" id="sel-atgrading">Select all At Grading</button>
+  </div>
   <div class="table-wrap"><table>
     <thead><tr>
+      <th style="width:34px"><input type="checkbox" id="sel-all" title="Select all shown" style="min-height:auto"></th>
       <th>Card</th><th>Set</th><th class="num">Basis</th>
       <th>Grading Status</th><th>Target</th>
       <th title="Your grade prediction — scored against the real grade when the card comes back">My Guess</th>
@@ -16,6 +39,8 @@
     <tbody>
       {% for c in cards %}
       <tr id="raw-{{ c.id }}">
+        <td><input type="checkbox" class="row-sel" data-sel="{{ c.id }}"
+                   data-status="{{ c.grading_status }}" style="min-height:auto"></td>
         <td><strong>{{ c.name }}</strong>{% if c.number %} <span class="muted">#{{ c.number }}</span>{% endif %}</td>
         <td class="muted">{{ c.set or '—' }}</td>
         <td class="num">{{ c.basis|money }}</td>
@@ -157,7 +182,57 @@ $("promo-save").addEventListener("click", async () => {
   } catch (e) { msg.innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
 });
 
-document.querySelectorAll("[data-status]").forEach(sel =>
+/* ── bulk selection + batch update ── */
+function selected() {
+  return [...document.querySelectorAll(".row-sel:checked")].map(c => +c.dataset.sel);
+}
+function syncBulk() {
+  const n = selected().length;
+  $("bulk-count").textContent = `${n} selected`;
+  $("bulk-bar").hidden = n === 0;
+}
+document.querySelectorAll(".row-sel").forEach(c => c.addEventListener("change", syncBulk));
+$("sel-all").addEventListener("change", e => {
+  document.querySelectorAll(".row-sel").forEach(c => { c.checked = e.target.checked; });
+  syncBulk();
+});
+function selectByStatus(st) {
+  document.querySelectorAll(".row-sel").forEach(c => {
+    c.checked = c.dataset.status === st;
+  });
+  syncBulk();
+}
+$("sel-slated").addEventListener("click", () => selectByStatus("Slated"));
+$("sel-atgrading").addEventListener("click", () => selectByStatus("At Grading"));
+$("bulk-clear").addEventListener("click", () => {
+  document.querySelectorAll(".row-sel, #sel-all").forEach(c => { c.checked = false; });
+  syncBulk();
+});
+$("bulk-apply").addEventListener("click", async () => {
+  const ids = selected();
+  if (!ids.length) return;
+  const status = $("bulk-status").value, back = $("bulk-back").value,
+        company = $("bulk-company").value;
+  if (!status && !back && !company) { toast("Pick something to change first.", "info"); return; }
+  const bits = [status && `status → ${status}`, back && `back by ${back}`,
+                company && `grader → ${company}`].filter(Boolean).join(", ");
+  const ok = await confirmDialog({
+    title: `Update ${ids.length} card${ids.length === 1 ? "" : "s"}?`,
+    body: `${bits}.\n\nMarking cards At Grading removes them from the deal screen, `
+        + `since a card at the grader can't be handed across a table.`,
+    confirmText: "Apply",
+  });
+  if (!ok) return;
+  try {
+    const res = await postJSON("/api/grading-bulk", {
+      ids, grading_status: status || null,
+      expected_back: back || null, target_company: company || null });
+    toastAfterReload(`Updated ${res.changed} card${res.changed === 1 ? "" : "s"}.`);
+    location.reload();
+  } catch (e) { toast(e.message, "error"); }
+});
+
+document.querySelectorAll("select[data-status]").forEach(sel =>
   sel.addEventListener("change", () =>
     postJSON("/api/grading-status",
       { ungraded_id: +sel.dataset.status, grading_status: sel.value })

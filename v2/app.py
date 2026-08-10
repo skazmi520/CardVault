@@ -19,6 +19,7 @@ from . import config
 from . import db as v2db
 from . import photos as v2photos
 from . import psa_api
+from . import psa_orders
 from .deals import CardIn, CardOut, add_deal_photo, get_deal, list_deals, save_deal
 
 app = Flask(__name__)
@@ -179,6 +180,37 @@ def raw_page():
     return render_template("raw.html", active="raw", cards=rows,
                            companies=v2db.GRADING_COMPANIES,
                            predictions=predictions)
+
+
+@app.get("/psa-import")
+def psa_import_page():
+    return render_template("psa_import.html", active="raw")
+
+
+@app.post("/api/psa/order-preview")
+def api_psa_order_preview():
+    text = request.get_json(force=True).get("csv", "")
+    rows = psa_orders.read_order(text)
+    if not rows:
+        return jsonify({"ok": False, "error": "No cert rows found — is this a PSA order CSV?"}), 200
+    c = conn()
+    res = psa_orders.match_order(c, rows)
+    c.close()
+    graded = sum(1 for r in rows if r["grade"])
+    return jsonify({"ok": True, "rows": rows, "kind": "completed" if graded else "open",
+                    "graded_count": graded, **res})
+
+
+@app.post("/api/psa/order-apply")
+def api_psa_order_apply():
+    p = request.get_json(force=True)
+    rows = psa_orders.read_order(p.get("csv", ""))
+    c = conn()
+    res = psa_orders.apply_order(c, rows, p.get("pairs", []),
+                                 order_id=p.get("order_id", ""),
+                                 grading_cost_each=float(p.get("grading_cost_each") or 0))
+    c.close()
+    return jsonify({"ok": True, **res})
 
 
 @app.get("/deal-photos/<path:name>")
@@ -942,6 +974,19 @@ def api_expected_grade():
                                sub_type=p.get("sub_type"))
     c.close()
     return jsonify({"ok": True})
+
+
+@app.post("/api/grading-bulk")
+def api_grading_bulk():
+    p = request.get_json(force=True)
+    c = conn()
+    res = v2cards.bulk_grading_update(
+        c, p.get("ids", []),
+        grading_status=p.get("grading_status"),
+        expected_back=p.get("expected_back"),
+        target_company=p.get("target_company"))
+    c.close()
+    return jsonify({"ok": True, **res})
 
 
 @app.post("/api/expected-back")

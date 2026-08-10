@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}PSA Order Import{% endblock %}
+{% block content %}
+<div class="page-title">PSA Order Import <span class="sub">paste or upload an order CSV</span></div>
+
+<div class="panel">
+  <p class="hint" style="margin-bottom:12px">
+    PSA gives you a CSV per submission. An <strong>open order</strong> (no grades yet) marks those
+    cards At Grading and records the cert up front. A <strong>completed order</strong> (grades filled in)
+    promotes each card into your graded collection with its real grade. Matching is by cert first,
+    then card name, number and year.
+  </p>
+  <div class="row">
+    <div><label>Order CSV file</label><input type="file" id="f" accept=".csv,text/csv"></div>
+    <div><label>Order # (optional)</label><input type="text" id="order-id" placeholder="27028432" style="width:150px"></div>
+    <div><label>Grading cost per card</label><input type="text" id="cost" placeholder="0.00" style="width:130px"
+          title="Added to each promoted card's basis — only used for completed orders"></div>
+    <div><button class="btn" id="preview">Preview</button></div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <div style="flex:1"><label>…or paste the CSV</label>
+      <textarea id="paste" rows="3" style="width:100%" placeholder='"Cert #","Type","Description","Grade","After Service"'></textarea></div>
+  </div>
+  <div id="msg" style="margin-top:10px"></div>
+</div>
+
+<div id="result"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let CSV = "";
+
+$("f").addEventListener("change", async () => {
+  const file = $("f").files[0];
+  if (!file) return;
+  CSV = await file.text();
+  $("paste").value = CSV.split("\n").slice(0, 3).join("\n") + "\n…";
+  const m = file.name.match(/(\d{6,})/);
+  if (m && !$("order-id").value) $("order-id").value = m[1];
+});
+
+$("preview").addEventListener("click", async () => {
+  const text = CSV || $("paste").value;
+  if (!text.trim()) { toast("Choose a file or paste the CSV first.", "info"); return; }
+  CSV = text;
+  try {
+    const r = await postJSON("/api/psa/order-preview", { csv: text });
+    if (!r.ok) { $("msg").innerHTML = `<div class="warn">${esc(r.error)}</div>`; return; }
+    render(r);
+  } catch (e) { $("msg").innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
+});
+
+function render(r) {
+  const isDone = r.kind === "completed";
+  let h = `<div class="panel"><h2>${r.total} cards · ${isDone ? "completed order" : "open order"}
+    ${isDone ? `<span class="muted">(${r.graded_count} graded)</span>` : ""}</h2>
+    <div class="tiles compact" style="margin-top:0">
+      <div class="tile"><div class="v">${r.matched.length}</div><div class="l">Matched</div></div>
+      <div class="tile"><div class="v">${r.already.length}</div><div class="l">Already Recorded</div></div>
+      <div class="tile"><div class="v ${r.unmatched.length ? 'neg' : ''}">${r.unmatched.length}</div><div class="l">No Match</div></div>
+    </div>`;
+
+  if (r.matched.length) {
+    h += `<h2 style="margin-top:14px">Will ${isDone ? "promote to graded" : "mark At Grading"}</h2>
+      <div class="table-wrap"><table><thead><tr>
+        <th style="width:34px"><input type="checkbox" id="all" checked style="min-height:auto"></th>
+        <th>Cert</th><th>PSA description</th><th>Matched card</th>
+        ${isDone ? "<th>Grade</th>" : ""}<th class="num">Score</th></tr></thead><tbody>`;
+    for (const m of r.matched) {
+      h += `<tr><td><input type="checkbox" class="pair" checked
+              data-cert="${esc(m.row.cert)}" data-card="${m.card.id}" style="min-height:auto"></td>
+        <td class="muted">${esc(m.row.cert)}</td>
+        <td class="sub-line">${esc(m.row.description.slice(0, 62))}</td>
+        <td><strong>${esc(m.card.card_name)}</strong>
+          <span class="muted">${esc(m.card.set_name || "")}</span></td>
+        ${isDone ? `<td><span class="chip PSA">PSA ${esc(m.row.grade)}</span></td>` : ""}
+        <td class="num muted">${m.score}</td></tr>`;
+    }
+    h += `</tbody></table></div>`;
+  }
+
+  if (r.already.length) {
+    h += `<h2 style="margin-top:14px">Already in your collection <span class="muted">(skipped)</span></h2>`;
+    for (const a of r.already)
+      h += `<div class="list-row"><span class="muted" style="width:100px">${esc(a.row.cert)}</span>
+        <span class="grow">${esc(a.card.card_name)}</span>
+        <span class="muted">PSA ${esc(a.card.grade)}</span></div>`;
+  }
+
+  if (r.unmatched.length) {
+    h += `<h2 style="margin-top:14px">No match in your raw inventory</h2>
+      <p class="hint">These are at PSA but not tracked. Add them from Collection → Add card,
+        then re-run this import.</p>`;
+    for (const u of r.unmatched)
+      h += `<div class="list-row"><span class="muted" style="width:100px">${esc(u.row.cert)}</span>
+        <span class="grow sub-line">${esc(u.row.description)}</span>
+        ${u.row.grade ? `<span class="chip PSA">PSA ${esc(u.row.grade)}</span>` : ""}</div>`;
+  }
+
+  h += `<div class="row" style="margin-top:14px"><div>
+      <button class="btn" id="apply">Apply to ${r.matched.length} card${r.matched.length === 1 ? "" : "s"}</button>
+    </div></div></div>`;
+  $("result").innerHTML = h;
+
+  const all = $("all");
+  if (all) all.addEventListener("change", () =>
+    document.querySelectorAll(".pair").forEach(c => { c.checked = all.checked; }));
+  $("apply").addEventListener("click", () => apply(isDone));
+}
+
+async function apply(isDone) {
+  const pairs = [...document.querySelectorAll(".pair:checked")]
+    .map(c => ({ cert: c.dataset.cert, card_id: +c.dataset.card }));
+  if (!pairs.length) { toast("Nothing selected.", "info"); return; }
+  const ok = await confirmDialog({
+    title: `${isDone ? "Promote" : "Mark At Grading"}: ${pairs.length} cards?`,
+    body: isDone
+      ? "Each card moves into your graded collection with its real grade and cert, and the grading cost is added to its basis."
+      : "These cards are marked At Grading with their cert recorded. They drop out of the deal screen, since a card at PSA can't be traded.",
+    confirmText: isDone ? "Promote" : "Mark At Grading",
+  });
+  if (!ok) return;
+  try {
+    const r = await postJSON("/api/psa/order-apply", {
+      csv: CSV, pairs, order_id: $("order-id").value,
+      grading_cost_each: $("cost").value.replace(/[$,]/g, "") || 0 });
+    toastAfterReload(`${r.promoted.length} promoted, ${r.submitted.length} marked at grading.`);
+    location.href = "/raw";
+  } catch (e) { toast(e.message, "error"); }
+}
+</script>
+{% endblock %}

@@ -233,6 +233,54 @@ def set_expected_grade(conn, ungraded_id: int, expected_grade: str,
     conn.commit()
 
 
+def bulk_grading_update(conn, ids: list[int], *, grading_status: str | None = None,
+                        expected_back: str | None = None,
+                        target_company: str | None = None) -> dict:
+    """Apply a grading update to a whole submission at once.
+
+    Submissions ship in batches of dozens; flipping each card by hand is the
+    step that silently gets skipped, which is how 40 cards sat marked 'Slated'
+    while physically at PSA and the capital-at-grading figure understated by
+    more than half."""
+    ids = [int(i) for i in ids]
+    if not ids:
+        raise ValueError("no cards selected")
+    if grading_status is not None and grading_status not in (
+            "Not Slated", "Slated", "At Grading"):
+        raise ValueError(f"bad grading_status {grading_status!r}")
+    if expected_back:
+        date.fromisoformat(expected_back)
+
+    now = datetime.now().isoformat(timespec="seconds")
+    changed = 0
+    for cid in ids:
+        row = conn.execute(
+            "SELECT status FROM ungraded_cards WHERE id=?", (cid,)).fetchone()
+        if row is None or row["status"] not in ("active", "submitted_for_grading"):
+            continue
+        if grading_status is not None:
+            status = ("submitted_for_grading" if grading_status == "At Grading"
+                      else "active")
+            if grading_status == "At Grading":
+                conn.execute(
+                    "UPDATE ungraded_cards SET grading_status=?, status=?, "
+                    "submitted_at=COALESCE(submitted_at, ?) WHERE id=?",
+                    (grading_status, status, now, cid))
+            else:
+                conn.execute(
+                    "UPDATE ungraded_cards SET grading_status=?, status=?, "
+                    "submitted_at=NULL WHERE id=?", (grading_status, status, cid))
+        if expected_back is not None:
+            conn.execute("UPDATE ungraded_cards SET expected_back=? WHERE id=?",
+                         (expected_back or None, cid))
+        if target_company is not None:
+            conn.execute("UPDATE ungraded_cards SET target_grading_company=? WHERE id=?",
+                         (target_company, cid))
+        changed += 1
+    conn.commit()
+    return {"changed": changed, "requested": len(ids)}
+
+
 def set_expected_back(conn, ungraded_id: int, expected_back: str):
     """When PSA says the sub lands. Editable any time (dates slip)."""
     expected_back = str(expected_back or "").strip()
