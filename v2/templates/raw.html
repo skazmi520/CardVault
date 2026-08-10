@@ -29,6 +29,7 @@
   <div class="table-wrap"><table>
     <thead><tr>
       <th style="width:34px"><input type="checkbox" id="sel-all" title="Select all shown" style="min-height:auto"></th>
+      <th class="num" title="CardVault's own number for this card. Two cards can share a name; this never repeats.">ID</th>
       <th>Card</th><th>Set</th><th class="num">Basis</th>
       <th>Grading Status</th><th>Target</th>
       <th title="Your grade prediction — scored against the real grade when the card comes back">My Guess</th>
@@ -41,6 +42,7 @@
       <tr id="raw-{{ c.id }}">
         <td><input type="checkbox" class="row-sel" data-sel="{{ c.id }}"
                    data-status="{{ c.grading_status }}" style="min-height:auto"></td>
+        <td class="num muted rowid">{{ c.id }}</td>
         <td><strong>{{ c.name }}</strong>{% if c.number %} <span class="muted">#{{ c.number }}</span>{% endif %}</td>
         <td class="muted">{{ c.set or '—' }}</td>
         <td class="num">{{ c.basis|money }}</td>

@@ -33,6 +33,7 @@
 <div class="table-wrap">
   <table id="tbl">
     <thead><tr>
+      <th data-k="id" class="num" title="CardVault's own number for this card. Two cards can share a name; this never repeats.">ID</th>
       <th data-k="name">Name</th>
       <th data-k="set">Set</th>
       <th data-k="grade">Grade</th>
@@ -171,7 +172,7 @@ function applyFilters() {
     if (set && r.set !== set) return false;
     if (grade && parseFloat(r.grade) !== parseFloat(grade)) return false;
     if (q) {
-      const hay = (r.name + " " + r.set + " " + r.cert + " " + r.number).toLowerCase();
+      const hay = (r.name + " " + r.set + " " + r.cert + " " + r.number + " " + r.id).toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -193,13 +194,14 @@ function applyFilters() {
 
 function render() {
   if (!view.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:28px">
+    tbody.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:28px">
       No cards match these filters.</td></tr>`;
     $("count-sub").textContent = "0 cards";
     return;
   }
   tbody.innerHTML = view.map((r, i) => `
     <tr data-i="${i}" class="${i === focusIdx ? 'focused' : ''}">
+      <td class="num muted rowid">${r.id}</td>
       <td><strong>${esc(r.name)}</strong>${r.number ? ' <span class="muted">#' + esc(r.number) + '</span>' : ''}
         ${r.cert ? `<div class="sub-line">cert ${esc(r.cert)}</div>` : ''}</td>
       <td class="muted">${esc(r.set) || "—"}</td>
