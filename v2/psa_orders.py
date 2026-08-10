@@ -137,12 +137,26 @@ def match_order(conn, rows: list[dict]) -> dict:
             "WHERE TRIM(COALESCE(serial_number,'')) <> ''")}
 
     cards = _candidates(conn)
-    used: set[int] = set()
+    # a cert already recorded against a raw card is spoken for — without this
+    # the same cert can be written onto two different cards across imports
+    taken = {(r["psa_cert"] or "").strip()
+             for r in conn.execute("SELECT psa_cert FROM ungraded_cards "
+                                   "WHERE TRIM(COALESCE(psa_cert,'')) <> ''")}
+    assigned = {r["id"] for r in conn.execute(
+        "SELECT id FROM ungraded_cards WHERE TRIM(COALESCE(psa_cert,'')) <> ''")}
+    used: set[int] = set(assigned)
     matched, unmatched, already = [], [], []
 
     for row in rows:
         if row["cert"] in known_certs:
             already.append({"row": row, "card": dict(known_certs[row["cert"]])})
+            continue
+        if row["cert"] in taken:
+            hit = conn.execute("SELECT id, card_name, set_name FROM ungraded_cards "
+                               "WHERE psa_cert=?", (row["cert"],)).fetchone()
+            already.append({"row": row, "card": {
+                "id": hit["id"], "card_name": hit["card_name"],
+                "grade": "at grading", "status": "cert already recorded"}})
             continue
 
         best, best_score = None, 0.0
