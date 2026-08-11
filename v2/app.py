@@ -111,11 +111,12 @@ def dashboard():
 @app.get("/collection")
 def collection():
     c = conn()
-    cards = v2cards.list_cards(c)
+    cards = v2cards.list_cards(c, include_gone=True)
     sets = sorted({x["set"] for x in cards if x["set"]}, key=str.lower)
     c.close()
     return render_template("collection.html", active="collection",
-                           cards=cards, sets=sets)
+                           cards=cards, sets=sets,
+                           lost_reasons=v2db.LOST_REASONS)
 
 
 @app.get("/deals")
@@ -456,9 +457,12 @@ def api_cash():
 def _realized_rows(c, year: str | None):
     rows = []
     for table in ("graded_cards", "ungraded_cards"):
-        for r in c.execute(f"SELECT * FROM {table} WHERE status='disposed' OR is_sold=1"
-                           if table == "graded_cards" else
-                           f"SELECT * FROM {table} WHERE status='disposed'"):
+        # 'lost' belongs here alongside 'disposed': the card left inventory and
+        # booked a realized loss, and a P&L that hides losses is not a P&L
+        for r in c.execute(
+                f"SELECT * FROM {table} WHERE status IN ('disposed','lost') OR is_sold=1"
+                if table == "graded_cards" else
+                f"SELECT * FROM {table} WHERE status IN ('disposed','lost')"):
             disposed = (r["disposed_at"] or (r["sale_date"] if table == "graded_cards" else "") or "")
             if year and not disposed.startswith(year):
                 continue
@@ -486,6 +490,7 @@ def _realized_rows(c, year: str | None):
                 "disposed": disposed[:10],
                 "proceeds": proceeds, "gain": gain,
                 "deal_id": r["disposed_via_deal_id"],
+                "lost": r["status"] == "lost",
             })
     rows.sort(key=lambda x: x["disposed"], reverse=True)
     return rows
@@ -1037,6 +1042,20 @@ def api_card_remove():
     c = conn()
     res = v2cards.remove_card(c, p.get("table", "graded_cards"),
                               int(p["id"]), p.get("reason", ""))
+    c.close()
+    return jsonify({"ok": True, **res})
+
+
+@app.post("/api/card/lost")
+def api_card_lost():
+    p = request.get_json(force=True)
+    c = conn()
+    try:
+        res = v2cards.mark_lost(c, p.get("table", "graded_cards"), int(p["id"]),
+                                p.get("reason", "misplaced"), p.get("note", ""))
+    except ValueError as e:
+        c.close()
+        return jsonify({"ok": False, "error": str(e)}), 400
     c.close()
     return jsonify({"ok": True, **res})
 

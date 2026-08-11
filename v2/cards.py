@@ -7,10 +7,16 @@ from . import db as v2db
 
 # ── listing ─────────────────────────────────────────────────────────────────────
 
-def list_cards(conn, include_disposed: bool = False) -> list[dict]:
-    """Unified graded + raw card list for the collection table."""
+def list_cards(conn, include_disposed: bool = False,
+               include_gone: bool = False) -> list[dict]:
+    """Unified graded + raw card list for the collection table.
+
+    include_gone adds cards marked lost or removed. They are excluded by default
+    so no total counts them, but the collection screen needs them in the payload
+    to offer a "lost / stolen" filter — the front end hides them unless asked."""
     out = []
-    g_where = "" if include_disposed else "WHERE status='active'"
+    gone = ",'lost','removed'" if include_gone else ""
+    g_where = "" if include_disposed else f"WHERE status IN ('active'{gone})"
     for r in conn.execute(f"SELECT * FROM graded_cards {g_where}"):
         basis = r["acquisition_price"] or 0.0
         mv = r["market_value"]
@@ -31,7 +37,7 @@ def list_cards(conn, include_disposed: bool = False) -> list[dict]:
             "notes": r["notes"] or "",
             "is_pc": bool(r["is_pc"]),
         })
-    u_where = ("WHERE status IN ('active','submitted_for_grading')"
+    u_where = (f"WHERE status IN ('active','submitted_for_grading'{gone})"
                if not include_disposed else "WHERE status != 'promoted'")
     for r in conn.execute(f"SELECT * FROM ungraded_cards {u_where}"):
         basis = r["purchase_price"] or 0.0
@@ -375,6 +381,49 @@ def remove_card(conn, table: str, card_id: int, reason: str = "") -> dict:
                  (notes, card_id))
     conn.commit()
     return {"id": card_id, "name": row["card_name"]}
+
+
+def mark_lost(conn, table: str, card_id: int, reason: str = "misplaced",
+              note: str = "") -> dict:
+    """The card is gone and no money came back for it.
+
+    Unlike remove_card, this is an economic event. A misplaced, stolen or
+    quietly-traded card cost real money that will not be recovered, so the full
+    basis books as a realized loss — proceeds $0, realized_gain = -basis. That
+    keeps the loss in the P&L instead of letting inventory quietly shrink while
+    lifetime profit stays flattering.
+
+    A card whose basis was never recorded leaves realized_gain NULL: the loss is
+    real but unquantified, and inventing a number would be worse than omitting
+    one."""
+    if table not in ("graded_cards", "ungraded_cards"):
+        raise ValueError(f"unknown table {table!r}")
+    # the two tables spell the cost column differently; use whichever this one has
+    basis_col = "acquisition_price" if table == "graded_cards" else "purchase_price"
+    row = conn.execute(
+        f"SELECT card_name, status, notes, {basis_col} AS basis, basis_unknown "
+        f"FROM {table} WHERE id=?", (card_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"card id={card_id} not found in {table}")
+    if row["status"] not in ("active", "submitted_for_grading"):
+        raise ValueError(
+            f"{row['card_name']!r} has status={row['status']!r} — only a card you "
+            "still hold can be marked lost")
+
+    basis = round(row["basis"] or 0.0, 2)
+    loss = None if row["basis_unknown"] else -basis
+
+    stamp = f"[lost {date.today().isoformat()}: {reason}"
+    stamp += f" — {note.strip()}]" if note.strip() else "]"
+    notes = (row["notes"] + " " + stamp).strip() if row["notes"] else stamp
+
+    conn.execute(
+        f"UPDATE {table} SET status='lost', disposal_proceeds=0, realized_gain=?, "
+        f"disposed_at=?, notes=? WHERE id=?",
+        (loss, date.today().isoformat(), notes, card_id))
+    conn.commit()
+    return {"id": card_id, "name": row["card_name"], "basis": basis,
+            "realized_loss": loss, "reason": reason}
 
 
 def set_pc(conn, table: str, card_id: int, is_pc: bool):

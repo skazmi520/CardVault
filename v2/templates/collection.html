@@ -26,6 +26,8 @@
   <select id="f-status">
     <option value="">All active (incl. at grading)</option>
     <option value="submitted_for_grading">At grading only</option>
+    <option value="lost">Lost / stolen</option>
+    <option value="removed">Removed from inventory</option>
   </select>
   <span class="hint">↑↓ move · Enter edit price · E edit card · Esc cancel</span>
 </div>
@@ -94,8 +96,14 @@
               title="One-card cash sale — books a deal underneath">Sell…</button>
       <button class="btn ghost small" id="e-crack" style="margin-right:6px;color:var(--neg);border-color:var(--neg)"
               title="Break the card out of its slab and move it to the raw section">Crack to raw…</button>
-      <button class="btn ghost small" id="e-remove" style="margin-right:auto"
+      <button class="btn ghost small" id="e-remove" style="margin-right:6px"
               title="Take this card out of inventory without selling it — pulled to a binder, entered by mistake">Remove…</button>
+      <select id="e-lost-reason" style="margin-right:4px;font-size:12px;min-height:auto"
+              title="Why the card is gone">
+        {% for reason in lost_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}
+      </select>
+      <button class="btn ghost small" id="e-lost" style="margin-right:auto;color:var(--neg);border-color:var(--neg)"
+              title="The card is gone and no money came back — books the basis as a realized loss">Lost…</button>
       <span id="e-msg" class="neg" style="align-self:center;font-size:12px"></span>
       <button class="btn ghost" id="e-cancel">Cancel</button>
       <button class="btn" id="e-save">Save</button>
@@ -205,7 +213,7 @@ function render() {
       <td><strong>${esc(r.name)}</strong>${r.number ? ' <span class="muted">#' + esc(r.number) + '</span>' : ''}
         ${r.cert ? `<div class="sub-line">cert ${esc(r.cert)}</div>` : ''}</td>
       <td class="muted">${esc(r.set) || "—"}</td>
-      <td>${r.kind === "slab" ? `<span class="chip ${esc(r.company)}">${esc(r.company)} ${esc(r.grade)}</span>` : '<span class="chip raw">RAW</span>'}${r.is_pc ? ' <span class="chip pc" title="Personal collection — not for sale">PC</span>' : ''}</td>
+      <td>${r.kind === "slab" ? `<span class="chip ${esc(r.company)}">${esc(r.company)} ${esc(r.grade)}</span>` : '<span class="chip raw">RAW</span>'}${r.is_pc ? ' <span class="chip pc" title="Personal collection — not for sale">PC</span>' : ''}${r.status === "lost" ? ' <span class="chip lost" title="Gone with no proceeds — basis booked as a realized loss">LOST</span>' : ''}${r.status === "removed" ? ' <span class="chip gone" title="Pulled from inventory without a sale">REMOVED</span>' : ''}</td>
       <td class="muted">${r.kind}</td>
       <td class="num">${r.basis_unknown ? '<span class="unknown">unknown</span>' : fmt(r.acq_cost)}</td>
       <td class="num">${r.basis_unknown ? '<span class="unknown" title="Purchase price never recorded (legacy import)">unknown</span>' : fmt(r.basis)}</td>
@@ -266,7 +274,12 @@ function openCardEdit(i) {
   E("e-name").value = r.name; E("e-number").value = r.number;
   E("e-set").value = r.set;   E("e-year").value = r.year || "";
   E("e-slab-row").style.display = r.kind === "slab" ? "" : "none";
-  E("e-crack").style.display = r.kind === "slab" ? "" : "none";
+  // a card already gone can't be sold, cracked, removed or lost again
+  const held = r.status === "active" || r.status === "submitted_for_grading";
+  E("e-crack").style.display = r.kind === "slab" && held ? "" : "none";
+  for (const el of ["e-sell", "e-remove", "e-lost", "e-lost-reason"]) {
+    E(el).style.display = held ? "" : "none";
+  }
   if (r.kind === "slab") {
     E("e-company").value = r.company || "PSA";
     E("e-grade").value = r.grade; E("e-cert").value = r.cert;
@@ -424,6 +437,28 @@ E("e-remove").addEventListener("click", async () => {
   try {
     await postJSON("/api/card/remove", { table: r.table, id: r.id, reason: "pulled from inventory" });
     toastAfterReload(`Removed ${r.name} from inventory.`, "info");
+    location.reload();
+  } catch (err) { E("e-msg").textContent = err.message; }
+});
+
+/* ── mark lost / stolen (a real loss, unlike Remove) ── */
+E("e-lost").addEventListener("click", async () => {
+  const r = view[editIdx];
+  if (!r) return;
+  const money = r.basis_unknown ? "its basis was never recorded, so no loss amount can be booked"
+                                : `your $${Number(r.basis).toLocaleString()} basis books as a realized loss`;
+  const ok = await confirmDialog({
+    title: `Mark "${r.name}" as lost?`,
+    body: "Use this when the card is gone and no money came back — misplaced, stolen, or "
+        + `moved in a deal you never wrote down. Unlike Remove, this hits your P&L: ${money}. `
+        + "The row is kept and the card can be restored if it turns up.",
+    confirmText: "Mark lost", danger: true,
+  });
+  if (!ok) return;
+  const reason = E("e-lost-reason").value;
+  try {
+    await postJSON("/api/card/lost", { table: r.table, id: r.id, reason });
+    toastAfterReload(`Marked ${r.name} lost (${reason}).`, "info");
     location.reload();
   } catch (err) { E("e-msg").textContent = err.message; }
 });

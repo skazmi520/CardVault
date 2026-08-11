@@ -34,12 +34,25 @@ GRADING_COMPANIES = ["PSA", "BGS", "CGC", "TAG"]
 PAYMENT_METHODS   = ["cash", "venmo", "zelle", "paypal", "trade", "mixed"]
 
 # Card lifecycle status values (v2)
-#   graded_cards:   active | disposed | cracked
-#   ungraded_cards: active | submitted_for_grading | promoted
+#   graded_cards:   active | disposed | cracked | removed | lost
+#   ungraded_cards: active | submitted_for_grading | promoted | disposed | removed | lost
 # 'cracked' = the slab was broken out and the card returned to raw. The row is
 # kept as history (what it graded, its cert) but is NOT a disposal — nothing was
 # sold and no proceeds were realized; the basis moves to the new raw row.
-CARD_STATUSES = ["active", "disposed", "cracked", "submitted_for_grading", "promoted"]
+#
+# 'removed' vs 'lost' both take a card out of inventory without a sale, but they
+# are opposite economically and must not be merged:
+#   removed = a deliberate reclassification. Pulled into the binder, cracked for
+#             personal use, or entered by mistake. You still have the value, so
+#             there is no gain and no loss — realized_gain stays NULL.
+#   lost    = the card is gone. Misplaced, stolen, or moved in a deal that was
+#             never written down. The basis is money that will not come back, so
+#             it books as a realized loss of the full basis.
+CARD_STATUSES = ["active", "disposed", "cracked", "submitted_for_grading",
+                 "promoted", "removed", "lost"]
+
+# reasons a card can be marked lost — kept small so the data stays groupable
+LOST_REASONS = ["misplaced", "stolen", "moved without a record", "damaged beyond value"]
 
 
 class V2GuardError(RuntimeError):
