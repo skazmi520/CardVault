@@ -102,8 +102,10 @@
               title="Why the card is gone">
         {% for reason in lost_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}
       </select>
-      <button class="btn ghost small" id="e-lost" style="margin-right:auto;color:var(--neg);border-color:var(--neg)"
+      <button class="btn ghost small" id="e-lost" style="margin-right:6px;color:var(--neg);border-color:var(--neg)"
               title="The card is gone and no money came back — books the basis as a realized loss">Lost…</button>
+      <button class="btn ghost small" id="e-restore" style="margin-right:auto;color:var(--pos);border-color:var(--pos)"
+              title="Put this card back into inventory">Restore</button>
       <span id="e-msg" class="neg" style="align-self:center;font-size:12px"></span>
       <button class="btn ghost" id="e-cancel">Cancel</button>
       <button class="btn" id="e-save">Save</button>
@@ -280,6 +282,9 @@ function openCardEdit(i) {
   for (const el of ["e-sell", "e-remove", "e-lost", "e-lost-reason"]) {
     E(el).style.display = held ? "" : "none";
   }
+  // the mirror image: Restore only shows on a card that is already gone
+  E("e-restore").style.display =
+    (r.status === "removed" || r.status === "lost") ? "" : "none";
   if (r.kind === "slab") {
     E("e-company").value = r.company || "PSA";
     E("e-grade").value = r.grade; E("e-cert").value = r.cert;
@@ -437,6 +442,26 @@ E("e-remove").addEventListener("click", async () => {
   try {
     await postJSON("/api/card/remove", { table: r.table, id: r.id, reason: "pulled from inventory" });
     toastAfterReload(`Removed ${r.name} from inventory.`, "info");
+    location.reload();
+  } catch (err) { E("e-msg").textContent = err.message; }
+});
+
+/* ── restore a removed or lost card ── */
+E("e-restore").addEventListener("click", async () => {
+  const r = view[editIdx];
+  if (!r) return;
+  const ok = await confirmDialog({
+    title: `Put "${r.name}" back into inventory?`,
+    body: r.status === "lost"
+      ? "The card turned up. It returns to your holdings and the realized loss "
+        + "booked against it is reversed, so your P&L stops counting money you did not lose."
+      : "The card returns to your holdings and starts counting toward your totals again.",
+    confirmText: "Restore",
+  });
+  if (!ok) return;
+  try {
+    await postJSON("/api/card/restore", { table: r.table, id: r.id });
+    toastAfterReload(`Restored ${r.name} to inventory.`, "success");
     location.reload();
   } catch (err) { E("e-msg").textContent = err.message; }
 });

@@ -1060,6 +1060,19 @@ def api_card_lost():
     return jsonify({"ok": True, **res})
 
 
+@app.post("/api/card/restore")
+def api_card_restore():
+    p = request.get_json(force=True)
+    c = conn()
+    try:
+        res = v2cards.restore_card(c, p.get("table", "graded_cards"), int(p["id"]))
+    except ValueError as e:
+        c.close()
+        return jsonify({"ok": False, "error": str(e)}), 400
+    c.close()
+    return jsonify({"ok": True, **res})
+
+
 @app.post("/api/pc")
 def api_pc():
     p = request.get_json(force=True)

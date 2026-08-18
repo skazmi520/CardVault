@@ -1,5 +1,6 @@
 """CardVault v2 — card operations: listing, repricing, promotion, dashboard stats."""
 
+import re
 from datetime import date, datetime
 
 from . import db as v2db
@@ -381,6 +382,44 @@ def remove_card(conn, table: str, card_id: int, reason: str = "") -> dict:
                  (notes, card_id))
     conn.commit()
     return {"id": card_id, "name": row["card_name"]}
+
+
+_GONE_STAMP = re.compile(r"\s*\[(removed|lost) \d{4}-\d{2}-\d{2}[^\]]*\]")
+
+
+def restore_card(conn, table: str, card_id: int) -> dict:
+    """Put a removed or lost card back into inventory.
+
+    remove_card and mark_lost both promise the card can come back, so this is
+    the other half of that promise. Clears the disposal fields a lost card
+    picked up — leaving realized_gain at -basis would keep a loss on the books
+    for a card you hold again — and strips the stamp those two left in notes."""
+    if table not in ("graded_cards", "ungraded_cards"):
+        raise ValueError(f"unknown table {table!r}")
+    row = conn.execute(
+        f"SELECT card_name, status, notes FROM {table} WHERE id=?", (card_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"card id={card_id} not found in {table}")
+    if row["status"] not in ("removed", "lost"):
+        raise ValueError(
+            f"{row['card_name']!r} has status={row['status']!r} — only a removed "
+            "or lost card can be restored")
+
+    # a raw card that was at PSA when it vanished goes back to being at PSA
+    back_to = "active"
+    if table == "ungraded_cards":
+        gs = conn.execute("SELECT grading_status FROM ungraded_cards WHERE id=?",
+                          (card_id,)).fetchone()["grading_status"]
+        if gs == "At Grading":
+            back_to = "submitted_for_grading"
+
+    notes = _GONE_STAMP.sub("", row["notes"] or "").strip()
+    conn.execute(
+        f"UPDATE {table} SET status=?, disposal_proceeds=NULL, realized_gain=NULL, "
+        f"disposed_at=NULL, notes=? WHERE id=?", (back_to, notes, card_id))
+    conn.commit()
+    return {"id": card_id, "name": row["card_name"],
+            "was": row["status"], "now": back_to}
 
 
 def mark_lost(conn, table: str, card_id: int, reason: str = "misplaced",
