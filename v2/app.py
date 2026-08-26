@@ -63,14 +63,33 @@ def _close_db(exc):
             pass
 
 
+# Bad input is the caller's fault, not a crash. The model layer raises
+# ValueError deliberately for validation ("card_name is required", "only active
+# cards can leave in a deal"), and a missing or mistyped field surfaces as
+# KeyError or TypeError from p["id"] / int(...).
+_CLIENT_ERRORS = (ValueError, KeyError, TypeError)
+
+
 @app.errorhandler(Exception)
 def _api_errors(e):
     """API callers get JSON errors, never an HTML 500 page. Non-API routes and
-    deliberate HTTP errors (404s etc.) pass through untouched."""
+    deliberate HTTP errors (404s etc.) pass through untouched.
+
+    Malformed input returns 400 rather than 500. Twelve endpoints were throwing
+    500s on a missing field — /api/card/create, /api/card/remove, /api/pc and
+    the rest — because only a handful wrapped their own validation. A route
+    fuzz run found every one of them. A 500 tells the user "something broke";
+    a 400 tells them what was wrong, and keeps genuine faults visible instead
+    of hiding them in a crowd of validation noise."""
     from werkzeug.exceptions import HTTPException
     if isinstance(e, HTTPException):
         return e
     if request.path.startswith("/api/"):
+        if isinstance(e, _CLIENT_ERRORS):
+            msg = str(e) or type(e).__name__
+            if isinstance(e, KeyError):
+                msg = f"missing required field {msg}"
+            return jsonify({"ok": False, "error": msg}), 400
         import traceback
         app.logger.error(traceback.format_exc())
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500

@@ -20,11 +20,18 @@ else python3 -m compileall -q v2; echo "  FAIL   compile error"; fail=1; fi
 line "2. deal engine regressions"
 python3 -m v2.test_engine || fail=1
 
-line "3. fuzz (random deals vs. the invariants)"
+line "3. fuzz — deal engine"
 python3 -m v2.fuzz --runs "${FUZZ_RUNS:-8}" -n "${FUZZ_N:-150}" || fail=1
 
+line "4. fuzz — card lifecycle"
+python3 -m v2.fuzz_lifecycle --runs "${FUZZ_RUNS:-8}" -n "${FUZZ_N:-150}" || fail=1
+
+line "5. fuzz — every route"
+python3 -m v2.fuzz_http 2>/dev/null | tail -n 20 || fail=1
+python3 -m v2.fuzz_http >/dev/null 2>&1 || fail=1
+
 if [ "${1:-}" != "--code" ]; then
-  line "4. live data integrity"
+  line "6. live data integrity"
   if [ -f "$HOME/.cardvaultmac/cardvault_v2.db" ]; then
     python3 -m v2.checks || fail=1
   else
