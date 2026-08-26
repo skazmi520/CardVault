@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# CardVault — run every check. Exits non-zero if anything fails.
+#
+#   ./check          engine regressions + integrity of the live database
+#   ./check --code   engine regressions only (no live data; safe on any machine)
+#
+# Wired into .git/hooks/pre-commit, so a change that breaks an invariant cannot
+# be committed without --no-verify.
+
+set -uo pipefail
+cd "$(dirname "$0")"
+export PYTHONPATH="$PWD"
+fail=0
+line() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+
+line "1. syntax"
+if python3 -m compileall -q v2 >/dev/null 2>&1; then echo "  ok     all modules compile"
+else python3 -m compileall -q v2; echo "  FAIL   compile error"; fail=1; fi
+
+line "2. deal engine regressions"
+python3 -m v2.test_engine || fail=1
+
+if [ "${1:-}" != "--code" ]; then
+  line "3. live data integrity"
+  if [ -f "$HOME/.cardvaultmac/cardvault_v2.db" ]; then
+    python3 -m v2.checks || fail=1
+  else
+    echo "  skip   no live database on this machine"
+  fi
+fi
+
+line "result"
+if [ "$fail" -eq 0 ]; then echo "  ALL CHECKS PASSED"; else echo "  CHECKS FAILED"; fi
+exit "$fail"
