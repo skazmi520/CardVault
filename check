@@ -20,8 +20,11 @@ else python3 -m compileall -q v2; echo "  FAIL   compile error"; fail=1; fi
 line "2. deal engine regressions"
 python3 -m v2.test_engine || fail=1
 
+line "3. fuzz (random deals vs. the invariants)"
+python3 -m v2.fuzz --runs "${FUZZ_RUNS:-8}" -n "${FUZZ_N:-150}" || fail=1
+
 if [ "${1:-}" != "--code" ]; then
-  line "3. live data integrity"
+  line "4. live data integrity"
   if [ -f "$HOME/.cardvaultmac/cardvault_v2.db" ]; then
     python3 -m v2.checks || fail=1
   else

@@ -201,40 +201,6 @@ def save_deal(conn, *,
                     f"Sides don't reconcile: cards-out total ${v_out:,.2f} vs "
                     f"cards-in + cash ${expected_out:,.2f} "
                     f"(diff ${abs(v_out - expected_out):,.2f}, >5%). Saving anyway.")
-        elif cards_out and not cards_in and cash_amount == 0 and v_out > 0:
-            # Zero cash is ambiguous and must NOT be auto-scaled. It is either a
-            # giveaway (proceeds really are 0) or a sale whose cash trail was
-            # never recorded — deals 1, 2, 3 and 8 are the latter, annotated
-            # [unreconciled], with correct proceeds sitting on the cards. Zeroing
-            # those would destroy real realized gains, so warn and let the user
-            # decide which case this is.
-            warnings.append(
-                f"Nothing came back (no cards in, no cash) but cards-out are "
-                f"valued at ${v_out:,.2f} — that books ${v_out:,.2f} of proceeds. "
-                f"For a giveaway, set each card's value to 0 so the loss is "
-                f"recorded correctly. For a sale whose cash you are not logging, "
-                f"leave the values as the sale prices and note it.")
-        elif cards_out and not cards_in and abs(v_out - cash_amount) > 0.01:
-            # Nothing came back but cash, so the cash IS the proceeds. The deal
-            # screen prefills give-side lines with market value, and accepting
-            # those books money that never arrived: sell 19 cards at a 13%
-            # discount and the app records full market as revenue, turning a
-            # loss into a phantom profit.
-            #
-            # There is no reading of "sold these for $X" under which the
-            # proceeds are $X, so scale the lines to the cash rather than
-            # warning and saving the wrong number anyway. Allocation is pro rata
-            # by the entered values, which keeps the relative pricing intact —
-            # a $X card still takes its share ahead of a $150 one.
-            stated = v_out
-            out_vals = _allocate(max(0.0, cash_amount), out_vals)
-            v_out = sum(out_vals)
-            pct = 100.0 * cash_amount / stated if stated else 0.0
-            warnings.append(
-                f"Pure sale: cards-out were valued at ${stated:,.2f} but cash "
-                f"received was ${cash_amount:,.2f} ({pct:.1f}%). Proceeds scaled "
-                f"to the cash, pro rata, so realized gain reflects what you were "
-                f"actually paid.")
         elif cards_in and not cards_out and abs(v_in + cash_amount) > 0.01 and cash_amount != 0:
             warnings.append(
                 f"Pure buy: cards-in total ${v_in:,.2f} differs from cash paid "
@@ -262,6 +228,34 @@ def save_deal(conn, *,
             f"Entered line values exceed the side total by ${-_LAST_CLAMP:,.2f}; "
             "remaining lines were allocated $0.")
         _LAST_CLAMP = None
+
+    # ── pure sale: the cash IS the proceeds ──────────────────────────────────
+    # Deliberately outside the branch chain above. It used to live inside the
+    # "both sides fully valued" branch, which meant a single unvalued give-line
+    # sent the deal down another path where entered values above the cash were
+    # kept as-is — booking $6,467 of proceeds against $5,405 received. A fuzz
+    # run found that in eighteen deals. Normalising here covers every path.
+    #
+    # Zero cash is left alone on purpose: it is either a giveaway (proceeds
+    # really are $0) or a sale whose cash was never logged, and the engine
+    # cannot tell which. Scaling those to zero would destroy real gains.
+    if cards_out and not cards_in and cash_amount > 0:
+        stated = round(sum(out_vals), 2)
+        if abs(stated - cash_amount) > 0.01:
+            out_vals = _allocate(cash_amount, out_vals)
+            pct = 100.0 * cash_amount / stated if stated else 0.0
+            warnings.append(
+                f"Pure sale: cards-out were valued at ${stated:,.2f} but cash "
+                f"received was ${cash_amount:,.2f} ({pct:.1f}%). Proceeds scaled "
+                f"to the cash, pro rata, so realized gain reflects what you were "
+                f"actually paid.")
+    elif cards_out and not cards_in and cash_amount == 0 and sum(out_vals) > 0:
+        warnings.append(
+            f"Nothing came back (no cards in, no cash) but cards-out are valued "
+            f"at ${sum(out_vals):,.2f} — that books ${sum(out_vals):,.2f} of "
+            f"proceeds. For a giveaway, set each card's value to 0 so the loss is "
+            f"recorded correctly. For a sale whose cash you are not logging, "
+            f"leave the values as the sale prices and note it.")
 
     v_out, v_in = round(sum(out_vals), 2), round(sum(in_vals), 2)
 

@@ -76,6 +76,19 @@ def test_pure_sale_scales_to_cash(c):
           f"gain {gain_of(c, a)} should be 0 (800 proceeds - 800 basis)")
 
 
+def test_pure_sale_scales_with_an_unvalued_line(c):
+    """Found by the fuzzer, not by us. A single blank give-line sent the deal
+    down a different resolution branch where entered values above the cash were
+    kept as-is — booking $6,467 of proceeds against $5,405 received."""
+    a, b = slab(c, "A1", 800, 1000), slab(c, "B1", 800, 1000)
+    save_deal(c, cards_out=[CardOut("graded_cards", a, 4000.0),
+                            CardOut("graded_cards", b, None)],      # <- blank
+              cash_amount=1500.0, occurred_at="2026-02-01T00:00:00")
+    tot = proceeds_of(c, a) + proceeds_of(c, b)
+    check("pure sale scales even when a line has no value entered",
+          abs(tot - 1500.0) < 0.01, f"proceeds {tot} should be 1500")
+
+
 def test_zero_cash_is_not_scaled(c):
     """Zero cash is ambiguous — giveaway, or a sale whose cash was not logged.
     Auto-zeroing would have destroyed $X of real gains on the [unreconciled]
@@ -143,7 +156,8 @@ def test_empty_deal_refused(c):
         check("a deal with no cards on either side is refused", True)
 
 
-TESTS = [test_pure_sale_scales_to_cash, test_zero_cash_is_not_scaled,
+TESTS = [test_pure_sale_scales_to_cash, test_pure_sale_scales_with_an_unvalued_line,
+         test_zero_cash_is_not_scaled,
          test_unknown_basis_books_no_gain, test_cash_received_reduces_basis_flowing_in,
          test_double_disposal_refused, test_allocation_is_penny_exact, test_empty_deal_refused]
 
