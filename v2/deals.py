@@ -201,18 +201,33 @@ def save_deal(conn, *,
                     f"Sides don't reconcile: cards-out total ${v_out:,.2f} vs "
                     f"cards-in + cash ${expected_out:,.2f} "
                     f"(diff ${abs(v_out - expected_out):,.2f}, >5%). Saving anyway.")
-        elif cards_out and not cards_in and cash_amount == 0 and v_out > 0:
-            # giveaway / donation trap: the deal screen prefills give-side
-            # values with market, which would book phantom proceeds
-            warnings.append(
-                f"Nothing came back (no cards in, no cash) but cards-out are "
-                f"valued at ${v_out:,.2f} — that books ${v_out:,.2f} of proceeds. "
-                f"For a giveaway, set each card's value to 0 so the loss is "
-                f"recorded correctly.")
-        elif cards_out and not cards_in and abs(v_out - cash_amount) > 0.01 and cash_amount != 0:
-            warnings.append(
-                f"Pure sale: cards-out total ${v_out:,.2f} differs from cash received "
-                f"${cash_amount:,.2f}.")
+        elif cards_out and not cards_in and abs(v_out - cash_amount) > 0.01:
+            # Nothing came back but cash, so the cash IS the proceeds. The deal
+            # screen prefills give-side lines with market value, and accepting
+            # those books money that never arrived: sell 19 cards at a 13%
+            # discount and the app records full market as revenue, turning a
+            # loss into a phantom profit.
+            #
+            # There is no reading of "sold these for $X" under which the
+            # proceeds are $X, so scale the lines to the cash rather than
+            # warning and saving the wrong number anyway. Allocation is pro rata
+            # by the entered values, which keeps the relative pricing intact —
+            # a $X card still takes its share ahead of a $150 one.
+            stated = v_out
+            out_vals = _allocate(max(0.0, cash_amount), out_vals)
+            v_out = sum(out_vals)
+            if cash_amount == 0:
+                warnings.append(
+                    f"Nothing came back — no cards, no cash. Cards-out were valued "
+                    f"at ${stated:,.2f}; proceeds recorded as $0 and the full basis "
+                    f"booked as a loss.")
+            else:
+                pct = 100.0 * cash_amount / stated if stated else 0.0
+                warnings.append(
+                    f"Pure sale: cards-out were valued at ${stated:,.2f} but cash "
+                    f"received was ${cash_amount:,.2f} ({pct:.1f}%). Proceeds scaled "
+                    f"to the cash, pro rata, so realized gain reflects what you were "
+                    f"actually paid.")
         elif cards_in and not cards_out and abs(v_in + cash_amount) > 0.01 and cash_amount != 0:
             warnings.append(
                 f"Pure buy: cards-in total ${v_in:,.2f} differs from cash paid "
