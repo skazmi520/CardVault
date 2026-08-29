@@ -171,13 +171,57 @@ def props_after_deal(c, spec, result):
     if in_total < -PENNY:
         bad.append(f"P5 incoming basis total is negative: {in_total:.2f}")
 
+    # P6 — in a trade, an entered agreed price books exactly; the engine may
+    # fill blanks but must never rewrite a number the user typed. (Pure sales
+    # are exempt: there the cash deliberately rescales the lines.)
+    if spec["cards_in"]:
+        by_id = {(t, r["id"]): r for t, r in out_rows}
+        for ln in spec["cards_out"]:
+            if ln.deal_value is None:
+                continue
+            r = by_id.get((ln.table, ln.card_id))
+            if r is not None and r["p"] is not None and abs(float(r["p"]) - ln.deal_value) > PENNY:
+                bad.append(f"P6 {ln.table}#{ln.card_id}: entered {ln.deal_value} "
+                           f"but booked {r['p']}")
+        # same rule on the receive side: an entered price IS the basis
+        for ln in spec["cards_in"]:
+            if ln.deal_value is None:
+                continue
+            got = c.execute(
+                "SELECT acquisition_price FROM graded_cards WHERE card_name=? AND acquired_via_deal_id=? "
+                "UNION ALL SELECT purchase_price FROM ungraded_cards WHERE card_name=? AND acquired_via_deal_id=?",
+                (ln.card_name, did, ln.card_name, did)).fetchone()
+            if got is not None and abs(float(got[0]) - ln.deal_value) > PENNY:
+                bad.append(f"P6 in-card {ln.card_name}: entered {ln.deal_value} "
+                           f"but basis {got[0]}")
+
+    # P7 — when the engine did NOT warn about unreconciled sides, the balance
+    # identity must hold: cards out = cards in + cash (within a cent per line)
+    # the engine flags a broken identity three ways: the reconcile warning
+    # (both sides typed, don't match), the clamp warning (typed lines exceed a
+    # derived total, blanks get $0), and the negative-derivation clamp
+    flagged = any(("reconcile" in w or "exceed the side total" in w or "clamped" in w)
+                  for w in result["warnings"])
+    if spec["cards_in"] and out_rows and not flagged:
+        slack = PENNY * (len(out_rows) + len(spec["cards_in"]) + 1)
+        if abs(out_total - (in_total + cash)) > max(slack, 0.05 * max(abs(out_total), 1)):
+            bad.append(f"P7 no reconcile warning but out {out_total:.2f} != "
+                       f"in {in_total:.2f} + cash {cash:.2f}")
+
     return bad
 
 
 def props_global(c):
-    """The same integrity invariants the live database is held to."""
+    """The integrity invariants the live database is held to — minus the trade
+    balance check. The engine's contract for a trade whose typed sides do not
+    reconcile is warn-and-save (the user's numbers are the user's numbers), so
+    generated deals legally violate strict balance. On the live database the
+    check stays: there an imbalance means a typo a human should look at.
+    P7 below covers the balanced case the engine does guarantee."""
     bad = []
     for fn in v2checks.CHECKS:
+        if fn is v2checks.trade_deals_balance:
+            continue
         try:
             bad += [f"{fn.__name__}: {v}" for v in fn(c)]
         except Exception as e:

@@ -21,6 +21,15 @@
       <input type="text" id="out-search" placeholder="Search inventory to add…" style="width:100%">
       <div class="picker-results" id="out-results" hidden></div>
     </div>
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <span class="muted" style="font-size:12px">Value my side at</span>
+      <button type="button" class="btn ghost small rate-btn" data-rate="85">85%</button>
+      <button type="button" class="btn ghost small rate-btn" data-rate="88">88%</button>
+      <button type="button" class="btn ghost small rate-btn" data-rate="90">90%</button>
+      <button type="button" class="btn ghost small rate-btn" data-rate="100">100%</button>
+      <input type="text" id="out-rate" style="width:52px;text-align:right;min-height:auto">
+      <span class="muted" style="font-size:12px">% of market — fills every line; edit any line after</span>
+    </div>
     <div id="out-lines"></div>
     <div class="row" style="margin-top:8px">
       <div><label>Cash I pay</label>
@@ -39,6 +48,10 @@
         <input type="text" id="cash-received" placeholder="0.00" style="width:130px"></div>
       <div><label>Side total (optional)</label>
         <input type="text" id="in-side-total" placeholder="$"></div>
+      <div style="align-self:end;padding-bottom:2px">
+        <button type="button" class="btn ghost small" id="fill-from-cash"
+                title="Pure sale: split the cash received across the cards out, pro rata by market">← fill cards out from cash</button>
+      </div>
     </div>
   </div>
 </div>
@@ -50,7 +63,8 @@
 </div>
 
 <div class="totals-bar">
-  <div>Giving <span class="big" id="t-out">$0.00</span></div>
+  <div>Giving <span class="big" id="t-out">$0.00</span>
+    <div class="muted" id="t-out-mkt" style="font-size:11px"></div></div>
   <div>Getting <span class="big" id="t-in">$0.00</span></div>
   <div>Cash <span class="big" id="t-cash">$0.00</span></div>
   <div title="Deal values on cards out minus their cost basis — the realized gain this deal books when saved">
@@ -109,13 +123,53 @@ function pickOut(i) {
     search.value = ""; results.hidden = true; results.innerHTML = "";
     return;   // already added — a double-Enter must not dispose a card twice
   }
+  // The agreed price starts EMPTY — market is context, never a default.
+  // Prefilling market here is what booked $X of proceeds on a $X
+  // sale and recorded a deliberate below-market trade as +$1,900 of profit.
+  // If a rate has been chosen this session, new lines fill at that rate,
+  // visibly, because that rate was the user's own decision.
+  const r = rateTouched ? num($("out-rate").value) : null;
   outLines.push({ table: c.table, id: c.id, name: c.name,
     label: (c.kind === "slab" ? `${c.company} ${c.grade} · ` : "RAW · ") + c.name,
     mv: c.market_value ?? c.basis,
     basis: c.basis, basis_unknown: c.basis_unknown,
-    deal_value: c.market_value != null ? String(c.market_value) : "" });
+    deal_value: (r !== null && c.market_value != null)
+      ? String(Math.round(c.market_value * r) / 100) : "" });
   search.value = ""; results.hidden = true; results.innerHTML = "";
   renderLines(); search.focus();
+}
+
+/* ── the rate control: one decision instead of one per card ── */
+let rateTouched = false;   // remembered rate is shown but never applies silently
+try { $("out-rate").value = localStorage.getItem("cv_deal_rate") || ""; } catch (e) {}
+function applyRate() {
+  const r = num($("out-rate").value);
+  if (r === null || r <= 0) return;
+  rateTouched = true;
+  try { localStorage.setItem("cv_deal_rate", String(r)); } catch (e) {}
+  outLines.forEach(l => {
+    if (l.mv != null) l.deal_value = String(Math.round(l.mv * r) / 100);
+  });
+  renderLines();
+}
+document.querySelectorAll(".rate-btn").forEach(b =>
+  b.addEventListener("click", () => { $("out-rate").value = b.dataset.rate; applyRate(); }));
+$("out-rate").addEventListener("input", applyRate);
+
+/* pure sale helper: the cash IS the proceeds, so let it fill the lines */
+function fillFromCash() {
+  const cash = cashReceived();
+  if (!cash || !outLines.length) return;
+  const w = outLines.map(l => (l.mv && l.mv > 0) ? l.mv : (l.basis || 1));
+  const tw = w.reduce((a, b) => a + b, 0);
+  let run = 0;
+  outLines.forEach((l, i) => {
+    let v = i === outLines.length - 1 ? Math.round((cash - run) * 100) / 100
+                                      : Math.round(cash * w[i] / tw * 100) / 100;
+    run += v;
+    l.deal_value = String(v);
+  });
+  renderLines();
 }
 
 /* ── cards-in quick entry ── */
@@ -138,8 +192,10 @@ function renderLines() {
         <span class="muted">mv ${fmt(l.mv)}</span>
         ${l.basis_unknown ? '<span class="unknown">· basis unknown</span>'
                           : `<span class="muted">· basis ${fmt(l.basis)}</span>`}</span>
+      <button type="button" class="btn ghost small" data-mkt="${i}" tabindex="-1"
+              title="Use full market value for this card">=mkt</button>
       <input class="val" data-side="out" data-i="${i}" type="text"
-             placeholder="value" value="${esc(l.deal_value)}">
+             placeholder="agreed $" value="${esc(l.deal_value)}">
       <span class="x" data-out="${i}">✕</span>
     </div>`).join("") || '<div class="muted" style="margin-bottom:8px">No cards out — pure buy.</div>';
 
@@ -162,9 +218,9 @@ function renderLines() {
         <input type="text" placeholder="Year" style="width:64px" data-in="${i}" data-f="year" value="${esc(l.year)}">
         ${l.company === "PSA" ? `<button type="button" class="btn ghost small" data-cert-lookup="${i}"
             title="Fetch name/set/# from PSA">${l._certBusy ? "…" : "PSA ↻"}</button>` : ""}` : ""}
-      <input type="text" placeholder="market $" style="width:88px;text-align:right"
+      <input type="text" placeholder="mkt (ref)" style="width:78px;text-align:right;opacity:.7"
              data-in="${i}" data-f="market_value" value="${esc(l.market_value)}"
-             title="What the card is worth (optional — leave blank to skip)">
+             title="Reference only — what the card is worth. Never affects basis; basis comes from the paid $ field.">
       <input class="val" type="text" placeholder="paid $" data-side="in" data-i="${i}"
              value="${esc(l.deal_value)}" style="width:88px"
              title="What you paid / what it counts for in this deal — this becomes the cost basis">
@@ -179,6 +235,11 @@ function renderLines() {
 function bindLineEvents() {
   document.querySelectorAll("#out-lines .x").forEach(x =>
     x.addEventListener("click", () => { outLines.splice(+x.dataset.out, 1); renderLines(); }));
+  document.querySelectorAll("#out-lines [data-mkt]").forEach(b =>
+    b.addEventListener("click", () => {
+      const l = outLines[+b.dataset.mkt];
+      if (l.mv != null) { l.deal_value = String(l.mv); renderLines(); }
+    }));
   document.querySelectorAll("#in-lines .x").forEach(x =>
     x.addEventListener("click", () => { inLines.splice(+x.dataset.inx, 1); renderLines(); }));
   document.querySelectorAll("input.val").forEach(inp =>
@@ -268,7 +329,30 @@ function updateTotals() {
     $("t-profit-note").textContent = "";
   }
 
+  // context, not a warning: what the agreed give-side is as a % of market.
+  // Selling at 85% is the business model — the app's job is to say it out
+  // loud, not to argue, and never to quietly book market instead.
+  const mktOut = outLines.reduce((a, l) => a + (l.mv || 0), 0);
+  const mk = $("t-out-mkt");
+  if (outLines.length && vOut !== null && vOut > 0 && mktOut > 0 && Math.abs(vOut - mktOut) > 0.5) {
+    const pct = 100 * vOut / mktOut;
+    mk.textContent = `market ${fmt(mktOut)} · this deal ${pct.toFixed(1)}%`
+      + (vOut < mktOut ? ` · giving up ${fmt(mktOut - vOut)}` : "");
+  } else mk.textContent = "";
+
   const bal = $("t-balance");
+  // a pure sale books at the cash no matter what the lines say — show that
+  // here instead of letting the engine silently rescale after Save. Blank
+  // in-rows don't count: the server drops them at save, so a seeded empty
+  // row must not hide the pure-sale behaviour from the user.
+  const namedIn = inLines.filter(l => (l.name || "").trim()).length;
+  if (outLines.length && !namedIn && cashReceived() > 0
+      && vOut !== null && Math.abs(vOut - cashReceived()) > 0.01) {
+    bal.textContent = `Pure sale: proceeds will book at cash ${fmt(cashReceived())}, `
+      + `scaled pro rata (lines total ${fmt(vOut)})`;
+    bal.className = "muted";
+    return;
+  }
   if (vOut !== null && vIn !== null) {
     // net = what I receive (cards in + cash) minus what I give up (cards out).
     // Positive means I come out ahead on this deal — that's the goal, so it's green.
@@ -285,6 +369,7 @@ function updateTotals() {
 }
 ["cash-paid", "cash-received", "out-side-total", "in-side-total"].forEach(id =>
   $(id).addEventListener("input", updateTotals));
+$("fill-from-cash").addEventListener("click", fillFromCash);
 
 /* ── save ── */
 $("save").addEventListener("click", async () => {

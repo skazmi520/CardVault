@@ -126,6 +126,28 @@ def test_cash_received_reduces_basis_flowing_in(c):
           f"incoming basis {got} should be 3100")
 
 
+def test_agreed_price_beats_market_everywhere(c):
+    """the owner's rule: 'I take a card in at 4k, trade it away for 5k, it should
+    just book as +1000' — market value never substitutes for an agreed price.
+
+    Deal 47 broke this: a $6,300-market Gyarados traded for a $5,000 Mario
+    booked +$1,900 of gain and $6,300 of basis on the Mario. The agreed price
+    was $5,000 on both sides."""
+    a = slab(c, "GyaradosLike", 4400, 6300)          # market well above the agreed price
+    save_deal(c, cards_out=[CardOut("graded_cards", a, 5000.0)],
+              cards_in=[CardIn(card_name="MarioLike", deal_value=5000.0,
+                               market_value=8000.0)],   # reference only
+              cash_amount=0.0, occurred_at="2026-02-01T00:00:00")
+    check("out card books the agreed price, not its market",
+          abs(proceeds_of(c, a) - 5000.0) < 0.01,
+          f"proceeds {proceeds_of(c, a)} should be 5000, not 6300")
+    check("gain is agreed price minus basis", abs(gain_of(c, a) - 600.0) < 0.01,
+          f"gain {gain_of(c, a)} should be +600, not +1900")
+    got = c.execute("SELECT acquisition_price FROM graded_cards WHERE card_name='MarioLike'").fetchone()[0]
+    check("incoming basis is the agreed price, not its market value",
+          abs(got - 5000.0) < 0.01, f"basis {got} should be 5000, not 8000")
+
+
 def test_double_disposal_refused(c):
     """A card already sold cannot leave again — that would double-count proceeds."""
     a = slab(c, "G", 100, 200)
@@ -159,7 +181,7 @@ def test_empty_deal_refused(c):
 TESTS = [test_pure_sale_scales_to_cash, test_pure_sale_scales_with_an_unvalued_line,
          test_zero_cash_is_not_scaled,
          test_unknown_basis_books_no_gain, test_cash_received_reduces_basis_flowing_in,
-         test_double_disposal_refused, test_allocation_is_penny_exact, test_empty_deal_refused]
+         test_agreed_price_beats_market_everywhere, test_double_disposal_refused, test_allocation_is_penny_exact, test_empty_deal_refused]
 
 
 def main():

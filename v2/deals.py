@@ -274,8 +274,16 @@ def save_deal(conn, *,
             f"{len(cards_in)} card(s) coming in, but nothing given up and no cash paid — "
             "they would all be recorded at $0 cost basis. Enter the cash you paid as a "
             "negative amount (e.g. -3000), or a per-card paid value.")
-    in_basis = _allocate(basis_pool, [v if v > 0 else 1.0 for v in in_vals]) \
-        if cards_in else []
+    # the owner's rule (2026-08-28): "the basis should be the value I take it in
+    # at." An entered agreed price IS the basis — full stop. The pool
+    # reallocation below used entered prices only as weights and rescaled them
+    # to v_out - cash, which is how a $5,000 Mario acquired $6,300 of basis
+    # (deal 47): the give side was valued at market, and the pool forced that
+    # inflation onto the incoming card. in_vals already holds the entered
+    # prices verbatim, with blanks filled from the balance identity, so it is
+    # the basis. basis_pool survives only for the $0-basis guard above and the
+    # legacy cash-share split below.
+    in_basis = [round(v, 2) for v in in_vals] if cards_in else []
 
     # ── legacy-compat acquisition_type for incoming cards ────────────────────
     if cards_out and cash_amount < 0:
