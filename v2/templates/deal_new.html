@@ -128,8 +128,10 @@ function pickOut(i) {
   // sale and recorded a deliberate below-market trade as +$1,900 of profit.
   // If a rate has been chosen this session, new lines fill at that rate,
   // visibly, because that rate was the user's own decision.
+  // newest first — during a big deal the card just picked is the one being
+  // negotiated, and pushing it below 15 others meant scrolling every time
   const r = rateTouched ? num($("out-rate").value) : null;
-  outLines.push({ table: c.table, id: c.id, name: c.name,
+  outLines.unshift({ table: c.table, id: c.id, name: c.name,
     label: (c.kind === "slab" ? `${c.company} ${c.grade} · ` : "RAW · ") + c.name,
     mv: c.market_value ?? c.basis,
     basis: c.basis, basis_unknown: c.basis_unknown,
