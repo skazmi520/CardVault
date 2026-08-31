@@ -160,10 +160,17 @@ def save_deal(conn, *,
               payment_method: str = "cash",
               notes: str = "",
               out_side_total: float | None = None,
-              in_side_total: float | None = None) -> dict:
+              in_side_total: float | None = None,
+              dry_run: bool = False) -> dict:
     """Save a deal atomically. Returns {deal_id, warnings, out_lines, in_lines,
     v_out, v_in, cash_amount}. Raises ValueError on invalid input; nothing is
-    written when an exception is raised."""
+    written when an exception is raised.
+
+    dry_run=True runs the ENTIRE resolution — allocation, scaling, basis
+    split, warnings, validation — and returns the plan without writing a row.
+    The deal screen previews through this, so what the user sees before Save
+    is the engine's own arithmetic, not a JavaScript re-implementation that
+    can drift."""
     global _LAST_CLAMP
     _LAST_CLAMP = None
     cards_out, cards_in = list(cards_out), list(cards_in)
@@ -314,6 +321,22 @@ def save_deal(conn, *,
     trade_details = " | ".join(gave_parts)
     if cash_amount > 0:
         trade_details += f"  (+ ${cash_amount:,.2f} cash received)" if trade_details else ""
+
+    if dry_run:
+        plan_out = []
+        for ln, info, proceeds in zip(cards_out, out_info, out_vals):
+            gain = None if info["basis_unknown"] else round(proceeds - info["basis"], 2)
+            plan_out.append({"table": ln.table, "card_id": ln.card_id,
+                             "name": info["name"], "basis": info["basis"],
+                             "basis_unknown": info["basis_unknown"],
+                             "market_value": info["weight"],
+                             "proceeds": proceeds, "realized_gain": gain})
+        plan_in = [{"name": ln.card_name, "agreed_value": v, "basis": b,
+                    "market_value": ln.market_value}
+                   for ln, v, b in zip(cards_in, in_vals, in_basis)]
+        return {"preview": True, "warnings": warnings, "v_out": v_out,
+                "v_in": v_in, "cash_amount": cash_amount,
+                "out_lines": plan_out, "in_lines": plan_in}
 
     # ── write everything in one transaction ──────────────────────────────────
     try:

@@ -906,28 +906,54 @@ def api_psa_lookup():
                     "error": messages.get(res["status"], res["status"])}), 200
 
 
+def _parse_deal_payload(p):
+    outs = [CardOut(x["table"], int(x["id"]),
+                    float(x["deal_value"]) if x.get("deal_value") not in (None, "") else None)
+            for x in p.get("cards_out", [])]
+    ins = [CardIn(card_name=x.get("name", "").strip(),
+                  is_graded=bool(x.get("is_graded", True)),
+                  set_name=x.get("set", ""), card_number=x.get("number", ""),
+                  year=x.get("year", ""), grading_company=x.get("company", ""),
+                  grade=x.get("grade", ""), serial_number=x.get("cert", ""),
+                  deal_value=(float(x["deal_value"])
+                              if x.get("deal_value") not in (None, "") else None),
+                  market_value=(float(x["market_value"])
+                                if x.get("market_value") not in (None, "") else None))
+           for x in p.get("cards_in", []) if x.get("name", "").strip()]
+    cash_amount = float(p.get("cash_amount") or 0)
+    out_total = (float(p["out_side_total"])
+                 if p.get("out_side_total") not in (None, "") else None)
+    in_total = (float(p["in_side_total"])
+                if p.get("in_side_total") not in (None, "") else None)
+    return outs, ins, cash_amount, out_total, in_total
+
+
+@app.post("/api/deals/preview")
+def api_deal_preview():
+    """The full resolver, no write. The deal screen shows this on every edit,
+    so the numbers on screen before Save are the engine's own."""
+    p = request.get_json(force=True)
+    try:
+        outs, ins, cash_amount, out_total, in_total = _parse_deal_payload(p)
+    except (ValueError, TypeError, KeyError) as e:
+        return jsonify({"ok": False, "error": f"invalid deal payload: {e}"}), 400
+    c = conn()
+    try:
+        res = save_deal(c, cards_out=outs, cards_in=ins, cash_amount=cash_amount,
+                        out_side_total=out_total, in_side_total=in_total,
+                        dry_run=True)
+    except ValueError as e:
+        c.close()
+        return jsonify({"ok": False, "error": str(e)}), 400
+    c.close()
+    return jsonify({"ok": True, **res})
+
+
 @app.post("/api/deals")
 def api_save_deal():
     p = request.get_json(force=True)
     try:
-        outs = [CardOut(x["table"], int(x["id"]),
-                        float(x["deal_value"]) if x.get("deal_value") not in (None, "") else None)
-                for x in p.get("cards_out", [])]
-        ins = [CardIn(card_name=x.get("name", "").strip(),
-                      is_graded=bool(x.get("is_graded", True)),
-                      set_name=x.get("set", ""), card_number=x.get("number", ""),
-                      year=x.get("year", ""), grading_company=x.get("company", ""),
-                      grade=x.get("grade", ""), serial_number=x.get("cert", ""),
-                      deal_value=(float(x["deal_value"])
-                                  if x.get("deal_value") not in (None, "") else None),
-                      market_value=(float(x["market_value"])
-                                    if x.get("market_value") not in (None, "") else None))
-               for x in p.get("cards_in", []) if x.get("name", "").strip()]
-        cash_amount = float(p.get("cash_amount") or 0)
-        out_total = (float(p["out_side_total"])
-                     if p.get("out_side_total") not in (None, "") else None)
-        in_total = (float(p["in_side_total"])
-                    if p.get("in_side_total") not in (None, "") else None)
+        outs, ins, cash_amount, out_total, in_total = _parse_deal_payload(p)
     except (ValueError, TypeError, KeyError) as e:
         return jsonify({"ok": False,
                         "error": f"invalid deal payload: {e}"}), 400
