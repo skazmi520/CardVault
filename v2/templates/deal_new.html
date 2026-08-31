@@ -1,9 +1,73 @@
 {% extends "base.html" %}
 {% block title %}New Deal{% endblock %}
 {% block content %}
+<style>
+/* deal screen — layered on the app tokens, scoped here */
+.dn-head .row > div label { font-size: 11px; }
+.dn-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+@media (max-width: 1100px) { .dn-cols { grid-template-columns: 1fr; } }
+.dn-col h2 { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+.dn-col h2 .badge {
+  margin-left: auto; font-size: 11px; font-weight: 600; color: var(--muted);
+  background: var(--surface-2); border: 1px solid var(--border);
+  padding: 2px 8px; border-radius: 999px;
+}
+.dn-col h2 .dir { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  font-weight: 700; padding: 2px 8px; border-radius: 5px; }
+.dir.out { color: #f0b429; background: rgba(237,161,0,.10); border: 1px solid rgba(237,161,0,.3); }
+.dir.in  { color: var(--pos); background: rgba(63,185,124,.10); border: 1px solid rgba(63,185,124,.3); }
+
+.dn-line {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 6px;
+}
+.dn-line .who { flex: 1; min-width: 0; }
+.dn-line .who .nm { font-weight: 600; }
+.dn-line .who .meta { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.dn-pill {
+  font-variant-numeric: tabular-nums; font-size: 12.5px; white-space: nowrap;
+  background: var(--surface-3); border: 1px solid var(--border);
+  padding: 4px 9px; border-radius: 999px; color: var(--text);
+}
+.dn-pill:empty { display: none; }
+.dn-line .x { color: var(--muted); cursor: pointer; padding: 2px 4px; }
+.dn-line .x:hover { color: var(--neg); }
+
+.dn-inrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
+.dn-inrow input, .dn-inrow select { min-height: 32px; }
+
+.dn-dealbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.dn-dealbar .plabel { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700; margin-bottom: 4px; }
+#deal-price { font-size: 22px; font-weight: 700; width: 180px; padding: 8px 12px;
+  font-variant-numeric: tabular-nums; }
+#deal-price:disabled { opacity: .75; color: var(--muted); }
+.dn-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.dn-seg button {
+  background: var(--surface-2); color: var(--text); border: none; cursor: pointer;
+  padding: 9px 14px; font-size: 13px; font-weight: 600; min-height: 40px;
+  border-right: 1px solid var(--border);
+}
+.dn-seg button:last-child { border-right: none; }
+.dn-seg button:hover { background: var(--surface-3); }
+.dn-seg button.on { background: var(--accent); color: #fff; }
+
+.dn-summary { border-left: 3px solid var(--accent); }
+#pv-sentence { font-size: 15px; color: var(--text); }
+#pv-sentence.empty { color: var(--muted); }
+.dn-stats { display: flex; gap: 24px; align-items: center; }
+.dn-stat .lbl { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700; }
+.dn-stat .val { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#pv-market { font-size: 13px; }
+</style>
+
 <div class="page-title">New Deal</div>
 
-<div class="panel">
+<div class="panel dn-head">
   <div class="row">
     <div><label>Counterparty</label><input type="text" id="d-counterparty" placeholder="Name or table #" autofocus></div>
     <div><label>Location</label><input type="text" id="d-location" placeholder="optional"></div>
@@ -11,28 +75,36 @@
       <select id="d-method">{% for m in methods %}<option>{{ m }}</option>{% endfor %}</select>
     </div>
     <div><label>When</label><input type="datetime-local" id="d-when"></div>
+    <div style="flex:1"></div>
+    <div style="align-self:end;padding-bottom:6px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0">
+        <input type="checkbox" id="adjust-mode" style="min-height:auto">
+        <span class="muted" style="font-size:12px">adjust per card</span></label>
+    </div>
   </div>
 </div>
 
-<div class="deal-grid">
-  <div class="panel deal-col">
-    <h2><span>Leaving <span class="muted">(my cards)</span></span><span id="out-total" class="muted"></span></h2>
+<div class="dn-cols">
+  <div class="panel dn-col">
+    <h2><span class="dir out">Leaving</span><span class="muted">my cards + cash</span>
+      <span class="badge" id="out-total">0 cards</span></h2>
     <div style="position:relative;margin-bottom:10px">
       <input type="text" id="out-search" placeholder="Search inventory to add…" style="width:100%">
       <div class="picker-results" id="out-results" hidden></div>
     </div>
     <div id="out-lines"></div>
-    <div class="row" style="margin-top:8px">
+    <div class="row" style="margin-top:10px">
       <div><label>Cash I pay</label>
         <input type="text" id="cash-paid" placeholder="0.00" style="width:130px"></div>
     </div>
   </div>
 
-  <div class="panel deal-col">
-    <h2><span>Arriving <span class="muted">(their cards + cash)</span></span><span id="in-total" class="muted"></span></h2>
+  <div class="panel dn-col">
+    <h2><span class="dir in">Arriving</span><span class="muted">their cards + cash</span>
+      <span class="badge" id="in-total">0 cards</span></h2>
     <div id="in-lines"></div>
     <button class="btn ghost small" id="add-in">+ Add card</button>
-    <div class="row" style="margin-top:12px">
+    <div class="row" style="margin-top:10px">
       <div><label>Cash I receive</label>
         <input type="text" id="cash-received" placeholder="0.00" style="width:130px"></div>
     </div>
@@ -40,39 +112,37 @@
 </div>
 
 <div class="panel">
-  <div class="row" style="align-items:flex-end">
+  <div class="dn-dealbar">
     <div>
-      <label id="price-label">My cards are going out at ($)</label>
-      <input type="text" id="deal-price" placeholder="deal total" style="width:150px;font-size:17px">
+      <div class="plabel" id="price-label">My side goes out at</div>
+      <input type="text" id="deal-price" placeholder="$">
     </div>
-    <div id="price-chips" style="display:flex;gap:6px;align-items:center;padding-bottom:4px;flex-wrap:wrap">
-      <button type="button" class="btn ghost small price-chip" data-pct="85">85%</button>
-      <button type="button" class="btn ghost small price-chip" data-pct="88">88%</button>
-      <button type="button" class="btn ghost small price-chip" data-pct="90">90%</button>
-      <button type="button" class="btn ghost small price-chip" data-pct="100">100%</button>
-      <span class="muted" id="price-hint" style="font-size:12px"></span>
+    <div>
+      <div class="plabel">of my market</div>
+      <div class="dn-seg" id="price-chips">
+        <button type="button" data-pct="85">85%</button>
+        <button type="button" data-pct="88">88%</button>
+        <button type="button" data-pct="90">90%</button>
+        <button type="button" data-pct="100">100%</button>
+      </div>
     </div>
+    <span class="muted" id="price-hint" style="font-size:12px;align-self:end;padding-bottom:10px"></span>
     <div style="flex:1"></div>
-    <div style="padding-bottom:4px">
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0">
-        <input type="checkbox" id="adjust-mode" style="min-height:auto">
-        <span class="muted" style="font-size:12px">adjust per card</span></label>
-    </div>
-  </div>
-  <div class="row" style="margin-top:6px">
-    <div style="flex:1"><label>Notes</label><input type="text" id="d-notes" style="width:100%"></div>
+    <div style="min-width:220px;flex:2"><label>Notes</label><input type="text" id="d-notes" style="width:100%"></div>
   </div>
 </div>
 
-<div class="panel" id="preview-panel">
-  <div id="pv-sentence" class="muted" style="font-size:14px;margin-bottom:6px">Add cards to see what will book.</div>
-  <div id="pv-market" style="font-size:13px;margin-bottom:6px"></div>
+<div class="panel dn-summary" id="preview-panel">
+  <div id="pv-sentence" class="empty" style="margin-bottom:6px">Add cards to see what will book.</div>
+  <div id="pv-market" style="margin-bottom:4px"></div>
   <div id="pv-warnings"></div>
-  <div style="display:flex;align-items:center;gap:14px;margin-top:8px">
-    <div>Realized <span class="big" id="t-realized">—</span></div>
-    <div>Paper on arriving <span class="big" id="t-paper">—</span></div>
+  <div style="display:flex;align-items:center;gap:14px;margin-top:10px;flex-wrap:wrap">
+    <div class="dn-stats">
+      <div class="dn-stat"><div class="lbl">Realized now</div><div class="val" id="t-realized">—</div></div>
+      <div class="dn-stat"><div class="lbl">Paper on arriving</div><div class="val" id="t-paper">—</div></div>
+    </div>
     <div style="flex:1"></div>
-    <button class="btn" id="save">Save Deal</button>
+    <button class="btn" id="save" style="min-width:140px">Save Deal</button>
   </div>
 </div>
 <div id="save-msg" style="margin-top:10px"></div>
@@ -102,6 +172,7 @@ search.addEventListener("input", () => {
   results.innerHTML = hits.map(c =>
     `<div data-i="${INVENTORY.indexOf(c)}">
        ${c.kind === "slab" ? `<span class="chip ${esc(c.company)}">${esc(c.company)} ${esc(c.grade)}</span>` : '<span class="chip raw">RAW</span>'}
+       ${c.is_pc ? '<span class="chip pc">PC</span>' : ''}
        ${esc(c.name)} <span class="muted">${esc(c.set)}</span>
        <span class="muted" style="float:right">${fmt(c.market_value ?? c.basis)}
          · <span class="unknown">${c.basis_unknown ? "basis ?" : "basis " + fmt(c.basis)}</span></span>
@@ -124,9 +195,8 @@ function pickOut(i) {
     return;   // a double-Enter must not dispose a card twice
   }
   // Newest first, and NO price: a deal has one price, entered once below.
-  // Per-card overrides live behind "adjust per card" for the rare tiered deal.
-  outLines.unshift({ table: c.table, id: c.id, name: c.name,
-    label: (c.kind === "slab" ? `${c.company} ${c.grade} · ` : "RAW · ") + c.name,
+  outLines.unshift({ table: c.table, id: c.id, name: c.name, is_pc: c.is_pc,
+    label: (c.kind === "slab" ? `${c.company} ${c.grade}` : "RAW"),
     mv: c.market_value ?? c.basis,
     basis: c.basis, basis_unknown: c.basis_unknown, deal_value: "" });
   search.value = ""; results.hidden = true; results.innerHTML = "";
@@ -141,7 +211,7 @@ function addIn() {
                  deal_value: "", market_value: "" });
 }
 function focusLastIn() {
-  const rows = document.querySelectorAll("#in-lines .deal-line");
+  const rows = document.querySelectorAll("#in-lines .dn-inrow");
   const last = rows[rows.length - 1];
   if (last) last.querySelector("input").focus();
 }
@@ -150,47 +220,49 @@ const adjusting = () => $("adjust-mode").checked;
 
 function renderLines() {
   $("out-lines").innerHTML = outLines.map((l, i) => `
-    <div class="deal-line">
-      <span class="grow">${esc(l.label)}
-        <span class="muted">mv ${fmt(l.mv)}</span>
-        ${l.basis_unknown ? '<span class="unknown">· basis unknown</span>'
-                          : `<span class="muted">· basis ${fmt(l.basis)}</span>`}
-        <span class="pv-out muted" data-pv-out="${i}"></span></span>
+    <div class="dn-line">
+      <div class="who">
+        <div class="nm">${esc(l.name)}
+          ${l.is_pc ? '<span class="chip pc" title="Personal collection">PC</span>' : ''}</div>
+        <div class="meta">${esc(l.label)} · mv ${fmt(l.mv)} · ${l.basis_unknown
+          ? '<span class="unknown">basis unknown</span>' : "basis " + fmt(l.basis)}</div>
+      </div>
       ${adjusting() ? `
         <button type="button" class="btn ghost small" data-mkt="${i}" tabindex="-1"
                 title="Use full market value for this card">=mkt</button>
         <input class="val" data-side="out" data-i="${i}" type="text"
-               placeholder="agreed $" value="${esc(l.deal_value)}">` : ""}
+               placeholder="agreed $" value="${esc(l.deal_value)}" style="width:96px">` : ""}
+      <span class="dn-pill" data-pv-out="${i}"></span>
       <span class="x" data-out="${i}">✕</span>
     </div>`).join("") || '<div class="muted" style="margin-bottom:8px">No cards leaving — a pure buy.</div>';
 
   $("in-lines").innerHTML = inLines.map((l, i) => `
-    <div class="deal-line" style="flex-wrap:wrap">
-      <input type="text" placeholder="Card name" style="flex:2;min-width:140px"
+    <div class="dn-inrow">
+      <input type="text" placeholder="Card name" style="flex:2;min-width:130px"
              data-in="${i}" data-f="name" value="${esc(l.name)}">
-      <input type="text" placeholder="Set" style="flex:1;min-width:90px"
+      <input type="text" placeholder="Set" style="flex:1;min-width:80px"
              data-in="${i}" data-f="set" value="${esc(l.set)}">
-      <select data-in="${i}" data-f="is_graded" style="width:86px">
+      <select data-in="${i}" data-f="is_graded" style="width:78px">
         <option value="1" ${l.is_graded ? "selected" : ""}>Slab</option>
         <option value="" ${!l.is_graded ? "selected" : ""}>Raw</option>
       </select>
       ${l.is_graded ? `
-        <select data-in="${i}" data-f="company" style="width:80px">
+        <select data-in="${i}" data-f="company" style="width:76px">
           ${["PSA","BGS","CGC","TAG"].map(co => `<option ${l.company===co?"selected":""}>${co}</option>`).join("")}
         </select>
-        <input type="text" placeholder="Grade" style="width:70px" data-in="${i}" data-f="grade" value="${esc(l.grade)}">
-        <input type="text" placeholder="Cert #" style="width:110px" data-in="${i}" data-f="cert" value="${esc(l.cert)}">
-        <input type="text" placeholder="Year" style="width:64px" data-in="${i}" data-f="year" value="${esc(l.year)}">
+        <input type="text" placeholder="Grade" style="width:64px" data-in="${i}" data-f="grade" value="${esc(l.grade)}">
+        <input type="text" placeholder="Cert #" style="width:104px" data-in="${i}" data-f="cert" value="${esc(l.cert)}">
+        <input type="text" placeholder="Year" style="width:60px" data-in="${i}" data-f="year" value="${esc(l.year)}">
         ${l.company === "PSA" ? `<button type="button" class="btn ghost small" data-cert-lookup="${i}"
             title="Fetch name/set/# from PSA">${l._certBusy ? "…" : "PSA ↻"}</button>` : ""}` : ""}
-      <input type="text" placeholder="market $" style="width:88px;text-align:right"
+      <input type="text" placeholder="market $" style="width:86px;text-align:right"
              data-in="${i}" data-f="market_value" value="${esc(l.market_value)}"
              title="What the card is worth — drives the basis split and the paper-gain math">
       ${adjusting() ? `
         <input class="val" type="text" placeholder="paid $ (pin)" data-side="in" data-i="${i}"
-               value="${esc(l.deal_value)}" style="width:96px"
+               value="${esc(l.deal_value)}" style="width:92px"
                title="Pin this card's cost; the rest of the deal total splits across the others">` : ""}
-      <span class="pv-in muted" data-pv-in="${i}" style="min-width:92px;text-align:right"></span>
+      <span class="dn-pill" data-pv-in="${i}"></span>
       <span class="x" data-inx="${i}">✕</span>
       ${l._certMsg ? `<div style="width:100%;font-size:11px;color:var(--${l._certOk ? "pos" : "neg"})">${esc(l._certMsg)}</div>` : ""}
     </div>`).join("") || '<div class="muted" style="margin-bottom:8px">Nothing arriving but cash — a pure sale.</div>';
@@ -258,12 +330,18 @@ const theirMarket  = () => namedIn().reduce((a, l) => a + (num(l.market_value) |
 const pureSale     = () => outLines.length && !namedIn().length && cashReceived() > 0;
 const pureBuy      = () => !outLines.length && namedIn().length;
 
-document.querySelectorAll(".price-chip").forEach(b =>
+document.querySelectorAll("#price-chips button").forEach(b =>
   b.addEventListener("click", () => {
     const m = myMarket();
-    if (m > 0) { $("deal-price").value = String(Math.round(m * +b.dataset.pct) / 100); refresh(); }
+    if (m > 0) { $("deal-price").value = String(Math.round(m * +b.dataset.pct) / 100); }
+    markChip(+b.dataset.pct);
+    refresh();
   }));
-$("deal-price").addEventListener("input", refresh);
+function markChip(pct) {
+  document.querySelectorAll("#price-chips button").forEach(b =>
+    b.classList.toggle("on", pct !== null && +b.dataset.pct === pct));
+}
+$("deal-price").addEventListener("input", () => { markChip(null); refresh(); });
 $("adjust-mode").addEventListener("change", renderLines);
 ["cash-paid", "cash-received"].forEach(id => $(id).addEventListener("input", refresh));
 
@@ -299,76 +377,91 @@ function refresh() {
   $("in-total").textContent  = namedIn().length + " cards";
   const ps = pureSale();
   $("deal-price").disabled = ps;
-  $("price-label").textContent = ps ? "Pure sale — deal total = cash received"
-    : pureBuy() ? "Pure buy — their basis = cash paid" : "My cards are going out at ($)";
-  if (ps) $("deal-price").value = String(cashReceived());
+  $("price-label").textContent = ps ? "Pure sale — price = cash"
+    : pureBuy() ? "Pure buy — basis = cash paid" : "My side goes out at";
+  if (ps) { $("deal-price").value = String(cashReceived()); markChip(null); }
   const m = myMarket();
-  $("price-hint").textContent = m > 0 ? `of my market ${fmt(m)}` : "";
+  $("price-hint").textContent = m > 0 ? `my market: ${fmt(m)}` : "";
   clearTimeout(pvTimer);
   pvTimer = setTimeout(preview, 220);
 }
 
 async function preview() {
   const hasWork = outLines.length || namedIn().length;
-  if (!hasWork) { $("pv-sentence").textContent = "Add cards to see what will book."; return; }
+  if (!hasWork) {
+    $("pv-sentence").textContent = "Add cards to see what will book.";
+    $("pv-sentence").className = "empty";
+    return;
+  }
   const seq = ++pvSeq;
   let res;
   try { res = await postJSON("/api/deals/preview", payload()); }
   catch (err) {
     if (seq !== pvSeq) return;
     $("pv-sentence").textContent = "Not enough to book yet: " + err.message;
+    $("pv-sentence").className = "empty";
     $("pv-market").textContent = ""; $("pv-warnings").innerHTML = "";
     $("t-realized").textContent = "—"; $("t-paper").textContent = "—";
-    document.querySelectorAll(".pv-out,.pv-in").forEach(el => el.textContent = "");
+    document.querySelectorAll(".dn-pill").forEach(el => el.textContent = "");
     return;
   }
   if (seq !== pvSeq) return;
 
-  // derived per-card numbers, greyed into each line
+  // derived per-card numbers, pilled into each line
   (res.out_lines || []).forEach(o => {
     const i = outLines.findIndex(l => l.table === o.table && l.id === o.card_id);
     const el = document.querySelector(`[data-pv-out="${i}"]`);
-    if (el) el.innerHTML = `→ books ${fmt(o.proceeds)}` +
-      (o.realized_gain == null ? ' <span class="unknown">(gain ?)</span>'
-        : ` <span class="${gainClass(o.realized_gain)}">(${fmtGain(o.realized_gain)})</span>`);
+    if (el) el.innerHTML = `books ${fmt(o.proceeds)}` +
+      (o.realized_gain == null ? ' <span class="unknown">· gain ?</span>'
+        : ` · <span class="${gainClass(o.realized_gain)}">${fmtGain(o.realized_gain)}</span>`);
   });
   const named = namedIn();
   (res.in_lines || []).forEach((p, k) => {
     const i = inLines.indexOf(named[k]);
     const el = document.querySelector(`[data-pv-in="${i}"]`);
-    if (el) el.textContent = `→ basis ${fmt(p.basis)}`;
+    if (el) el.textContent = `basis ${fmt(p.basis)}`;
   });
 
   const realized = (res.out_lines || []).reduce((a, o) => a + (o.realized_gain || 0), 0);
   const unknownN = (res.out_lines || []).filter(o => o.realized_gain == null).length;
-  const paperKnown = (res.in_lines || []).every(p => p.market_value != null);
   const paper = (res.in_lines || []).reduce((a, p) =>
     a + ((p.market_value != null) ? p.market_value - p.basis : 0), 0);
   $("t-realized").textContent = fmtGain(realized) + (unknownN ? ` (+${unknownN} ?)` : "");
-  $("t-realized").className = "big " + gainClass(realized);
-  $("t-paper").textContent = (res.in_lines || []).length ? (paperKnown ? fmtGain(paper) : fmtGain(paper) + " (partial)") : "—";
-  $("t-paper").className = "big " + gainClass(paper);
+  $("t-realized").className = "val " + gainClass(realized);
+  $("t-paper").textContent = (res.in_lines || []).length ? fmtGain(paper) : "—";
+  $("t-paper").className = "val " + gainClass(paper);
 
   const bits = [];
   if (res.out_lines.length) bits.push(`${res.out_lines.length} card${res.out_lines.length > 1 ? "s" : ""} out at ${fmt(res.v_out)}`);
   if (res.in_lines.length)  bits.push(`${res.in_lines.length} card${res.in_lines.length > 1 ? "s" : ""} in, basis ${fmt(res.v_in)}`);
   if (res.cash_amount)      bits.push(`cash ${fmtGain(res.cash_amount)}`);
   $("pv-sentence").textContent = "Books: " + bits.join(" · ");
+  $("pv-sentence").className = "";
 
-  // The ONLY value judgment on this screen, and it is one-directional:
-  // taking in more market than you give is the business working — green.
-  // Giving more market than you take in is the thing worth a look — amber.
+  // Judgments, calibrated to how this business runs:
+  //  · red is reserved for a REALIZED LOSS — selling below basis. Objective.
+  //  · taking in more market than you give is the model working — green.
+  //  · giving a discount vs market is every normal sale, so it reads as a
+  //    neutral fact ("deal at 85% of my market"), never a warning.
   const mineM = myMarket() + cashPaid();
   const theirsM = theirMarket() + cashReceived();
   const mk = $("pv-market");
-  if (mineM > 0 && (namedIn().length === 0 || theirMarket() > 0)) {
+  const parts = [];
+  if (realized < -0.5) {
+    parts.push(`<span class="neg">Books a realized loss of ${fmt(-realized)}.</span>`);
+  }
+  // stay quiet until the arriving side actually has substance — comparing my
+  // market against a half-entered deal reads "0% of market" and means nothing
+  if (mineM > 0.5 && theirsM > 0.5) {
     const diff = theirsM - mineM;
+    const pct = 100 * theirsM / mineM;
     if (diff > 0.5) {
-      mk.innerHTML = `<span class="pos">Taking in ${fmt(diff)} more market value than you're giving.</span>`;
+      parts.push(`<span class="pos">Taking in ${fmt(diff)} above the market of what you're giving.</span>`);
     } else if (diff < -0.5) {
-      mk.innerHTML = `<span class="neg">Giving up ${fmt(-diff)} of market value in this deal.</span>`;
-    } else mk.textContent = "";
-  } else mk.textContent = "";
+      parts.push(`<span class="muted">Deal at ${pct.toFixed(1)}% of your market (${fmt(-diff)} below).</span>`);
+    }
+  }
+  mk.innerHTML = parts.join(" ");
 
   $("pv-warnings").innerHTML = (res.warnings || [])
     .map(w => `<div class="warn" style="margin-top:4px">${esc(w)}</div>`).join("");
@@ -416,8 +509,8 @@ function applyPrefill() {
     const c = INVENTORY.find(x => x.table === o.table && x.id === o.id);
     if (!c) return;   // sold/changed since evaluating — skip rather than fake it
     outSum += num(o.deal_value) ?? 0;
-    outLines.push({ table: c.table, id: c.id, name: c.name,
-      label: (c.kind === "slab" ? `${c.company} ${c.grade} · ` : "RAW · ") + c.name,
+    outLines.push({ table: c.table, id: c.id, name: c.name, is_pc: c.is_pc,
+      label: (c.kind === "slab" ? `${c.company} ${c.grade}` : "RAW"),
       mv: c.market_value ?? c.basis,
       basis: c.basis, basis_unknown: c.basis_unknown,
       deal_value: String(o.deal_value ?? "") });
