@@ -101,8 +101,10 @@ def gen_deal(rng, pool):
     if shape in ("pure_buy", "trade", "trade_cash", "odd"):
         for k in range(rng.randint(1, 3)):
             v = None if rng.random() < 0.2 else round(rng.uniform(0, 5000), 2)
+            mv = None if rng.random() < 0.4 else round(rng.uniform(1, 6000), 2)
             cards_in.append(CardIn(card_name=f"in{rng.randrange(10**6)}",
-                                   is_graded=rng.random() < 0.7, deal_value=v))
+                                   is_graded=rng.random() < 0.7, deal_value=v,
+                                   market_value=mv))
 
     if shape == "pure_sale":
         cash = round(rng.uniform(1, 12000), 2)
@@ -203,8 +205,12 @@ def props_after_deal(c, spec, result):
     flagged = any(("reconcile" in w or "exceed the side total" in w or "clamped" in w)
                   for w in result["warnings"])
     if spec["cards_in"] and out_rows and not flagged:
+        # mirror the engine's own reconcile formula exactly — its denominator is
+        # the larger side, so a 4.94% gap on the smaller side is legal silence
         slack = PENNY * (len(out_rows) + len(spec["cards_in"]) + 1)
-        if abs(out_total - (in_total + cash)) > max(slack, 0.05 * max(abs(out_total), 1)):
+        expect = in_total + cash
+        denom = max(abs(out_total), abs(expect), 0.01)
+        if abs(out_total - expect) > max(slack, 0.05 * denom):
             bad.append(f"P7 no reconcile warning but out {out_total:.2f} != "
                        f"in {in_total:.2f} + cash {cash:.2f}")
 

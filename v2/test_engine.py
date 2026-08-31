@@ -148,6 +148,30 @@ def test_agreed_price_beats_market_everywhere(c):
           abs(got - 5000.0) < 0.01, f"basis {got} should be 5000, not 8000")
 
 
+def test_blank_in_lines_split_pro_rata_by_market(c):
+    """the owner's big-deal workflow: give $9,000, take in six cards worth
+    $10,490, type only their markets and leave every paid $ blank. The $9,000
+    must split across them by market — the old equal split would have put the
+    same basis on a $590 Latios as a $3,500 Articuno."""
+    a = slab(c, "PGSlike", 9000, 10000)
+    mvs = {"L1": 590.0, "L2": 750.0, "R1": 350.0, "S1": 3100.0, "U1": 2200.0, "A1x": 3500.0}
+    save_deal(c, cards_out=[CardOut("graded_cards", a, 9000.0)],
+              cards_in=[CardIn(card_name=n, deal_value=None, market_value=mv)
+                        for n, mv in mvs.items()],
+              cash_amount=0.0, occurred_at="2026-02-01T00:00:00")
+    tot_mv = sum(mvs.values())
+    got, want_ok = {}, True
+    for n, mv in mvs.items():
+        b = c.execute("SELECT acquisition_price FROM graded_cards WHERE card_name=?", (n,)).fetchone()[0]
+        got[n] = b
+        if abs(b - 9000.0 * mv / tot_mv) > 0.02:
+            want_ok = False
+    total = round(sum(got.values()), 2)
+    check("blank in-lines split the deal total pro rata by market",
+          want_ok and abs(total - 9000.0) < 0.01,
+          f"got {got}, total {total}")
+
+
 def test_double_disposal_refused(c):
     """A card already sold cannot leave again — that would double-count proceeds."""
     a = slab(c, "G", 100, 200)
@@ -181,7 +205,8 @@ def test_empty_deal_refused(c):
 TESTS = [test_pure_sale_scales_to_cash, test_pure_sale_scales_with_an_unvalued_line,
          test_zero_cash_is_not_scaled,
          test_unknown_basis_books_no_gain, test_cash_received_reduces_basis_flowing_in,
-         test_agreed_price_beats_market_everywhere, test_double_disposal_refused, test_allocation_is_penny_exact, test_empty_deal_refused]
+         test_agreed_price_beats_market_everywhere,
+         test_blank_in_lines_split_pro_rata_by_market, test_double_disposal_refused, test_allocation_is_penny_exact, test_empty_deal_refused]
 
 
 def main():

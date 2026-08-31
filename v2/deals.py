@@ -184,7 +184,18 @@ def save_deal(conn, *,
     out_weights = [i["weight"] for i in out_info]
 
     in_vals_entered = [ln.deal_value for ln in cards_in]
-    in_weights = [1.0] * len(cards_in)   # incoming cards have no stored market value
+    # An unvalued incoming line takes its share of the deal total pro rata by
+    # its market value — the owner's actual workflow: "I take in $10.5k of cards
+    # on a $9k cost basis; the $9k splits across them by their $10.5k market."
+    # The old equal split ([1.0] each) would have put the same basis on a $590
+    # Latios as a $3,500 Articuno. A line with no market entered weighs in at
+    # the average of the ones that have one (weight 1.0 next to real markets
+    # would allocate it pennies), and with no markets at all the split stays
+    # equal, as before.
+    in_mvs = [ln.market_value for ln in cards_in if (ln.market_value or 0) > 0]
+    in_avg = (sum(in_mvs) / len(in_mvs)) if in_mvs else 1.0
+    in_weights = [(ln.market_value if (ln.market_value or 0) > 0 else in_avg)
+                  for ln in cards_in]
 
     # ── resolve side values ──────────────────────────────────────────────────
     out_vals, out_ok = _resolve_side(out_vals_entered, out_weights, out_side_total)
