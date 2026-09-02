@@ -454,11 +454,20 @@ async function preview() {
   // market against a half-entered deal reads "0% of market" and means nothing
   if (mineM > 0.5 && theirsM > 0.5) {
     const diff = theirsM - mineM;
-    const pct = 100 * theirsM / mineM;
-    if (diff > 0.5) {
-      parts.push(`<span class="pos">Taking in ${fmt(diff)} above the market of what you're giving.</span>`);
-    } else if (diff < -0.5) {
-      parts.push(`<span class="muted">Deal at ${pct.toFixed(1)}% of your market (${fmt(-diff)} below).</span>`);
+    // worded for the shape of the deal — "what you're giving" is cash on a
+    // buy, so say it the way the owner would: paid X for Y of market
+    if (pureBuy()) {
+      const pct = 100 * cashPaid() / theirMarket();
+      const cls = diff > 0.5 ? "pos" : diff < -0.5 ? "muted" : "muted";
+      parts.push(`<span class="${cls}">Paying ${fmt(cashPaid())} for ${fmt(theirMarket())} of market (${pct.toFixed(1)}%).</span>`);
+    } else if (pureSale()) {
+      const pct = 100 * cashReceived() / myMarket();
+      if (diff > 0.5) parts.push(`<span class="pos">Sold ${fmt(diff)} above market (${pct.toFixed(1)}%).</span>`);
+      else if (diff < -0.5) parts.push(`<span class="muted">Deal at ${pct.toFixed(1)}% of your market (${fmt(-diff)} below).</span>`);
+    } else {
+      const pct = 100 * theirsM / mineM;
+      if (diff > 0.5) parts.push(`<span class="pos">Taking in ${fmt(diff)} more market value than you're giving.</span>`);
+      else if (diff < -0.5) parts.push(`<span class="muted">Deal at ${pct.toFixed(1)}% of your market (${fmt(-diff)} below).</span>`);
     }
   }
   mk.innerHTML = parts.join(" ");
