@@ -98,60 +98,90 @@ function fmtShort(n) {
   return "$" + n.toFixed(0);
 }
 
-function lineChart(el, points, { color = "#4f8cff" } = {}) {
+function lineChart(el, points) {
+  // Portfolio value over time. Axes and gridlines are always drawn — a line with
+  // no scale is decoration, not data. Colours come from the theme tokens.
   if (!points || points.length < 2) {
-    el.innerHTML = '<div class="muted" style="padding:30px 0;text-align:center">Not enough repricing history yet — a snapshot is recorded each day the dashboard is opened.</div>';
+    el.innerHTML = '<div class="muted" style="padding:30px 0;text-align:center;font-size:12.5px">Not enough history yet — a snapshot is recorded each day the dashboard is opened.</div>';
     return;
   }
-  const W = 900, H = 270, PL = 62, PR = 18, PT = 16, PB = 30;
+  const draw = () => lineChartDraw(el, points);
+  if (!el._cvResize) { el._cvResize = true; window.addEventListener("resize", () => { clearTimeout(el._cvT); el._cvT = setTimeout(draw, 120); }); }
+  draw();
+}
+
+function lineChartDraw(el, points) {
+  const W = Math.max(320, el.clientWidth || 1000), H = Math.max(120, el.clientHeight || 200);
+  const PL = 46, PR = 12, PT = 10, PB = 22;
   const vals = points.map(p => p.value);
   let min = Math.min(...vals), max = Math.max(...vals);
   if (min === max) { min -= 1; max += 1; }
-  const pad = (max - min) * 0.08;
+  const pad = (max - min) * 0.06;
   min -= pad; max += pad;
-
   const x = i => PL + i * (W - PL - PR) / (points.length - 1);
   const y = v => PT + (max - v) * (H - PT - PB) / (max - min);
 
-  /* Y gridlines + labels */
   let grid = "", labels = "";
-  const TICKS = 4;
+  const TICKS = 3;
   for (let t = 0; t <= TICKS; t++) {
-    const v = min + (max - min) * t / TICKS;
-    const yy = y(v);
-    grid += `<line x1="${PL}" y1="${yy.toFixed(1)}" x2="${W - PR}" y2="${yy.toFixed(1)}"
-                   stroke="#262b34" stroke-width="1"/>`;
-    labels += `<text x="${PL - 8}" y="${(yy + 4).toFixed(1)}" fill="#8b93a3"
-                     font-size="11" text-anchor="end">${fmtShort(v)}</text>`;
+    const v = min + (max - min) * t / TICKS, yy = y(v).toFixed(1);
+    grid += `<line x1="${PL}" y1="${yy}" x2="${W - PR}" y2="${yy}" style="stroke:var(--border)" stroke-width="1"/>`;
+    labels += `<text x="${PL - 8}" y="${(+yy + 4).toFixed(1)}" style="fill:var(--muted);font-family:var(--font-mono)" font-size="11" text-anchor="end">${fmtShort(v)}</text>`;
   }
-
-  /* X tick labels (up to 6, evenly spaced) */
-  const n = points.length, steps = Math.min(6, n);
-  for (let s = 0; s < steps; s++) {
-    const i = Math.round(s * (n - 1) / (steps - 1));
-    const anchor = s === 0 ? "start" : s === steps - 1 ? "end" : "middle";
-    labels += `<text x="${x(i).toFixed(1)}" y="${H - 8}" fill="#8b93a3"
-                     font-size="11" text-anchor="${anchor}">${esc(points[i].date.slice(5))}</text>`;
-  }
+  // one label per month change, so the axis reads as dates rather than samples
+  const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  let lastM = -1, lastX = -1e9;
+  points.forEach((p, i) => {
+    const m = +p.date.slice(5, 7) - 1;
+    if (m !== lastM) {
+      lastM = m;
+      // sparse early snapshots would stack three month names on top of each
+      // other; a label only lands if it has 34px of clear room
+      if (x(i) - lastX >= 34) {
+        labels += `<text x="${x(i).toFixed(1)}" y="${H - 6}" style="fill:var(--muted)" font-size="11" text-anchor="${i === 0 ? "start" : "middle"}">${MON[m]}</text>`;
+        lastX = x(i);
+      }
+    }
+  });
 
   const d = points.map((p, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p.value).toFixed(1)).join(" ");
   const last = points[points.length - 1];
-
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">
-    <defs><linearGradient id="cv-chart-fill" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${color}" stop-opacity=".22"/>
-      <stop offset="1" stop-color="${color}" stop-opacity="0"/>
+  const gid = "cv-fill-" + Math.random().toString(36).slice(2, 7);
+  if (getComputedStyle(el).position === "static") el.style.position = "relative";   // never undo an absolute placement
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" style="stop-color:var(--accent)" stop-opacity=".16"/>
+      <stop offset="1" style="stop-color:var(--accent)" stop-opacity="0"/>
     </linearGradient></defs>
     ${grid}
-    <line x1="${PL}" y1="${PT}" x2="${PL}" y2="${H - PB}" stroke="#2a2f39"/>
-    <line x1="${PL}" y1="${H - PB}" x2="${W - PR}" y2="${H - PB}" stroke="#2a2f39"/>
-    <path d="${d} L ${x(points.length - 1).toFixed(1)} ${H - PB} L ${PL} ${H - PB} Z"
-          fill="url(#cv-chart-fill)"/>
-    <path d="${d}" fill="none" stroke="${color}" stroke-width="2"
-          stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="${x(points.length - 1).toFixed(1)}" cy="${y(last.value).toFixed(1)}" r="3.5" fill="${color}"/>
-    <text x="${W - PR}" y="${(y(last.value) - 10).toFixed(1)}" fill="#e8eaf0"
-          font-size="12" font-weight="600" text-anchor="end">${fmt(last.value)}</text>
+    <line x1="${PL}" y1="${H - PB}" x2="${W - PR}" y2="${H - PB}" style="stroke:var(--border-hi)"/>
+    <path d="${d} L ${x(points.length - 1).toFixed(1)} ${H - PB} L ${PL} ${H - PB} Z" fill="url(#${gid})"/>
+    <path d="${d}" fill="none" style="stroke:var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+    <g class="hover" style="display:none">
+      <line class="hx" x1="0" y1="${PT}" x2="0" y2="${H - PB}" style="stroke:var(--border-hi)" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+      <circle class="hc" cx="0" cy="0" r="4" style="fill:var(--accent);stroke:var(--bg)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+    </g>
+    <circle cx="${x(points.length - 1).toFixed(1)}" cy="${y(last.value).toFixed(1)}" r="4" style="fill:var(--accent);stroke:var(--bg)" stroke-width="2" vector-effect="non-scaling-stroke"/>
     ${labels}
-  </svg>`;
+  </svg><div class="chart-tip"></div>`;
+
+  // hover: nearest point, crosshair and a tooltip with the date and value
+  const svg = el.querySelector("svg"), hov = svg.querySelector(".hover"), tip = el.querySelector(".chart-tip");
+  const hx = svg.querySelector(".hx"), hc = svg.querySelector(".hc");
+  el.addEventListener("mousemove", ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) / r.width * W;
+    let i = Math.round((px - PL) / ((W - PL - PR) / (points.length - 1)));
+    i = Math.max(0, Math.min(points.length - 1, i));
+    const p = points[i], cx = x(i), cy = y(p.value);
+    hx.setAttribute("x1", cx); hx.setAttribute("x2", cx);
+    hc.setAttribute("cx", cx); hc.setAttribute("cy", cy);
+    hov.style.display = "";
+    tip.innerHTML = `<div class="muted">${esc(p.date)}</div><div class="v">${fmt(p.value)}</div>`;
+    tip.style.display = "block";
+    const left = cx / W * r.width, top = cy / H * r.height;
+    tip.style.left = Math.min(left + 12, r.width - tip.offsetWidth - 4) + "px";
+    tip.style.top = Math.max(0, top - tip.offsetHeight - 12) + "px";
+  });
+  el.addEventListener("mouseleave", () => { hov.style.display = "none"; tip.style.display = "none"; });
 }
