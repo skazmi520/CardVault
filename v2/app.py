@@ -60,6 +60,15 @@ def _mdy(v):
         return str(v or "")[:10]
 
 
+@app.template_filter("month")
+def _month(v):
+    """'2026-09' -> 'September 2026'."""
+    try:
+        return date.fromisoformat(str(v)[:7] + "-01").strftime("%B %Y")
+    except (ValueError, TypeError):
+        return str(v or "")
+
+
 @app.template_filter("gain")
 def _gain(v):
     if v is None:
@@ -586,7 +595,21 @@ def reports_page():
               "gain": round(sum(r["gain"] or 0 for r in known), 2),
               "n_known": len(known), "n_unknown": len(unknown),
               "unknown_proceeds": round(sum(r["proceeds"] or 0 for r in unknown), 2)}
-    return render_template("reports.html", active="reports", rows=rows,
+    # rows grouped by the month the card left, newest first — subtotals are
+    # known-basis only, same rule as the totals above
+    months = []
+    for r in rows:
+        key = r["disposed"][:7] or "undated"
+        if not months or months[-1]["key"] != key:
+            months.append({"key": key, "rows": [], "proceeds": 0.0, "gain": 0.0, "n_unknown": 0})
+        m = months[-1]
+        m["rows"].append(r)
+        if r["basis_unknown"]:
+            m["n_unknown"] += 1
+        else:
+            m["proceeds"] = round(m["proceeds"] + (r["proceeds"] or 0), 2)
+            m["gain"] = round(m["gain"] + (r["gain"] or 0), 2)
+    return render_template("reports.html", active="reports", rows=rows, months=months,
                            years=years, year=year, totals=totals)
 
 

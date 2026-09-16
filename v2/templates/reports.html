@@ -1,103 +1,120 @@
 {% extends "base.html" %}
 {% block title %}Reports{% endblock %}
 {% block content %}
-<div class="page-title">Reports</div>
+<style>
+/* reports — docs/design-system.md. Realized gains are the page; the rows sit
+   on the canvas grouped by month. Exports are a quiet band underneath. */
+.rp-head { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 18px; }
+.rp-head .sub { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.rp-strip { display: flex; gap: 48px; padding: 16px 0 20px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.rp-strip .kv .v .u { font-family: var(--font-ui); font-size: 12px; font-weight: 400; color: var(--muted); }
+.mo { display: flex; align-items: baseline; gap: 12px; padding: 22px 4px 8px; }
+.mo .t { font-family: var(--font-display); font-weight: 500; font-size: 18px; }
+.mo .s { font-size: 12.5px; color: var(--muted); }
+.mo .s .mono { color: var(--text); }
+.rr { display: grid; grid-template-columns: 58px minmax(0, 1fr) 150px 110px 110px 110px 64px; gap: 14px; align-items: center; padding: 11px 4px; border-top: 1px solid var(--border); color: var(--text); }
+.rr:hover { background: var(--row-hover); }
+.rr .lead { justify-content: center; }
+.rr .nm { font-size: 14.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rr .meta { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rr .dates { font-size: 12px; color: var(--muted); font-family: var(--font-mono); white-space: nowrap; }
+.rr .n { text-align: right; font-family: var(--font-mono); font-size: 13.5px; }
+.rr .n.b { color: var(--muted); }
+.rr .gain { text-align: right; }
+.rr .deal { text-align: right; font-size: 12.5px; color: var(--muted); }
+.rr .deal a { color: var(--muted); }
+.exports { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--border); }
+.exports .t { font-family: var(--font-display); font-weight: 500; font-size: 18px; margin-bottom: 6px; }
+.exports p { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; min-height: 3.6em; }
+.exports .acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.exports .acts .btn { height: 34px; }
+.exports .acts select { min-height: 34px; padding: 4px 28px 4px 12px; font-size: 12.5px; }
+.exports .also { font-size: 12px; color: var(--muted); margin-top: 10px; }
+@media (max-width: 1000px) { .rr { grid-template-columns: 58px minmax(0,1fr) 110px 110px; } .rr .dates, .rr .n.b, .rr .deal { display: none; } .exports { grid-template-columns: 1fr; gap: 28px; } .rp-strip { gap: 24px; flex-wrap: wrap; } }
+</style>
 
-<div class="panel">
-  <h2>Realized Gains</h2>
-  <div class="filters">
-    <input type="text" id="search" placeholder="Search name, set, cert…">
-    <select id="year" onchange="location.href='/reports?year='+this.value">
-      <option value="">All years</option>
-      {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}
-    </select>
-    <a class="btn ghost small" href="/reports/realized.csv{{ ('?year=' + year) if year }}">Realized gains CSV{{ ' (' ~ year ~ ')' if year }}</a>
-    <a class="btn ghost small" href="/reports/deals.csv">Deal history CSV</a>
-    <span class="muted">{{ totals.n_known }} cards moved · basis {{ totals.basis|money }} ·
-      proceeds {{ totals.proceeds|money }} ·
-      gain <span class="{{ 'pos' if totals.gain >= 0 else 'neg' }}">{{ totals.gain|gain }}</span>
-      {% if totals.n_unknown %}
-      <span class="unknown"> · {{ totals.n_unknown }} excluded (basis unknown,
-        {{ totals.unknown_proceeds|money }} proceeds)</span>
-      {% endif %}</span>
+<div class="rp-head">
+  <div>
+    <span class="page-title" style="margin:0">Realized gains</span>
+    <div class="sub">{{ rows|length }} card{{ 's' if rows|length != 1 }} left inventory{% if year %} in {{ year }}{% endif %}{% if totals.n_unknown %} · {{ totals.n_unknown }} with unknown basis left out of the totals{% endif %}</div>
   </div>
-
-  <div class="table-wrap"><table>
-    <thead><tr>
-      <th>Card</th><th>Type</th><th>Acquired</th><th class="num">Basis</th>
-      <th>Moved</th><th class="num">Proceeds</th><th class="num">Gain</th><th>Deal</th>
-    </tr></thead>
-    <tbody>
-      {% for r in rows %}
-      <tr data-hay="{{ (r.name ~ ' ' ~ r.set ~ ' ' ~ r.cert ~ ' ' ~ r.company)|lower }}">
-        <td><strong>{{ r.name }}</strong>
-          {% if r.set %}<span class="muted"> · {{ r.set }}</span>{% endif %}
-          {% if r.cert %}<div class="sub-line">cert {{ r.cert }}</div>{% endif %}</td>
-        <td>{% if r.kind == 'slab' %}<span class="chip {{ r.company }}">{{ r.company }} {{ r.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
-        <td class="muted">{{ r.acq_date or '—' }}</td>
-        <td class="num">
-          {% if r.basis_unknown %}<span class="unknown" title="Purchase price was never recorded (legacy import) — excluded from gain totals">unknown</span>
-          {% else %}{{ r.basis|money }}{% endif %}</td>
-        <td class="muted">{{ r.disposed or '—' }}</td>
-        <td class="num">{{ r.proceeds|money if r.proceeds is not none else '—' }}</td>
-        <td class="num {{ '' if r.basis_unknown else ('pos' if (r.gain or 0) >= 0 else 'neg') }}">
-          {% if r.basis_unknown %}<span class="unknown">n/a</span>
-          {% else %}{{ r.gain|gain if r.gain is not none else '—' }}{% endif %}</td>
-        <td>{% if r.deal_id %}<a href="/deals/{{ r.deal_id }}">#{{ r.deal_id }}</a>{% else %}<span class="muted">legacy</span>{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table></div>
+  <div style="flex:1"></div>
+  <div class="seg" id="year-seg">
+    <a href="/reports" class="{{ 'on' if not year }}">All</a>
+    {% for y in years %}<a href="/reports?year={{ y }}" class="{{ 'on' if y == year }}">{{ y }}</a>{% endfor %}
+  </div>
+  <input type="text" id="search" placeholder="Filter by card, set or cert" style="width:240px">
+  <a class="btn ghost" href="/reports/realized.csv{{ ('?year=' + year) if year }}" style="height:34px">Export{{ ' ' ~ year if year }}</a>
 </div>
 
-<div class="grid2">
-  <div class="panel">
-    <h2>Collection</h2>
-    <p class="muted" style="margin-bottom:12px">
-      Everything you currently hold — slabs and raw, with basis, market value
-      and gain per card. The printable sheet has a blank Sold Price column and
-      write-in rows for working a show table with a pen.
-    </p>
-    <div class="row">
-      <div><a class="btn" href="/reports/collection.csv">Collection CSV</a></div>
-      <div><a class="btn ghost" href="/inventory-sheet" target="_blank">Printable sheet</a></div>
-      <div style="align-self:center" class="muted">
-        <a href="/inventory-sheet?kind=slab">slabs only</a> ·
-        <a href="/inventory-sheet?kind=raw">raw only</a>
+<div class="rp-strip">
+  <div class="kv"><span class="l">Cards moved</span><span class="v display">{{ totals.n_known }}</span></div>
+  <div class="kv"><span class="l">Basis</span><span class="v display">{{ totals.basis|money0 }}</span></div>
+  <div class="kv"><span class="l">Proceeds</span><span class="v display">{{ totals.proceeds|money0 }}</span></div>
+  <div class="kv"><span class="l">Realized</span><span class="v display {{ 'pos' if totals.gain > 0 else 'neg' if totals.gain < 0 else '' }}">{{ totals.gain|gain0 }}</span></div>
+  {% if totals.n_unknown %}<div class="kv"><span class="l">Unknown basis</span><span class="v display">{{ totals.n_unknown }} <span class="u">{{ totals.unknown_proceeds|money0 }} proceeds</span></span></div>{% endif %}
+</div>
+
+{% if months %}
+<div id="rp-list">
+  {% for m in months %}
+  <div class="mo-group">
+    <div class="mo">
+      <span class="t">{{ m.key|month if m.key != 'undated' else 'Undated' }}</span>
+      <span class="s">{{ m.rows|length }} card{{ 's' if m.rows|length != 1 }} · proceeds <span class="mono">{{ m.proceeds|money0 }}</span> · realized <span class="mono {{ 'pos' if m.gain > 0 else 'neg' if m.gain < 0 else '' }}">{{ m.gain|gain0 }}</span>{% if m.n_unknown %} · {{ m.n_unknown }} unknown basis{% endif %}</span>
+    </div>
+    {% for r in m.rows %}
+    <div class="rr" data-hay="{{ (r.name ~ ' ' ~ r.set ~ ' ' ~ r.cert ~ ' ' ~ r.company)|lower }}">
+      {% if r.kind == 'slab' %}<span class="chip lead {{ r.company }}">{{ r.company }} {{ r.grade }}</span>{% else %}<span class="chip lead raw">RAW</span>{% endif %}
+      <div style="min-width:0;display:flex;flex-direction:column;line-height:1.25">
+        <span class="nm">{{ r.name }}</span>
+        <span class="meta">{{ r.set }}{% if r.cert %}{{ ' · ' if r.set }}cert {{ r.cert }}{% endif %}{% if r.lost %}{{ ' · ' if r.set or r.cert }}<span class="warn">lost</span>{% endif %}{% if not (r.set or r.cert or r.lost) %}&nbsp;{% endif %}</span>
       </div>
+      <span class="dates">{{ r.acq_date|mdy if r.acq_date else '—' }}{% if r.acq_date and r.acq_date[:4] != r.disposed[:4] %} {{ r.acq_date[:4] }}{% endif %} → {{ r.disposed|mdy if r.disposed else '—' }}</span>
+      <span class="n b">{% if r.basis_unknown %}<span class="unknown" title="Purchase price was never recorded (legacy import) — excluded from gain totals">unknown</span>{% else %}{{ r.basis|money }}{% endif %}</span>
+      <span class="n">{{ r.proceeds|money if r.proceeds is not none else '—' }}</span>
+      <span class="gain">{% if r.basis_unknown %}<span class="muted">n/a</span>{% elif r.gain is none %}<span class="muted">—</span>{% elif r.gain > 0 %}<span class="pill pos">{{ r.gain|gain }}</span>{% elif r.gain < 0 %}<span class="pill neg">{{ r.gain|gain }}</span>{% else %}<span class="pill mutedbg">even</span>{% endif %}</span>
+      <span class="deal">{% if r.deal_id %}<a href="/deals/{{ r.deal_id }}">#{{ r.deal_id }} →</a>{% else %}legacy{% endif %}</span>
     </div>
+    {% endfor %}
   </div>
-
-  <div class="panel">
-    <h2>Sell List <span class="muted">— still profitable at…</span></h2>
-    <p class="muted" style="margin-bottom:12px">
-      Active slabs that still clear a profit at a given % of market. Cards with
-      an unknown basis are excluded (no cost, no knowable profit).
-    </p>
-    <div class="row">
-      <div><label>% of market</label>
-        <select id="sell-pct">
-          {% for p in [80, 85, 88, 90, 95, 100] %}
-          <option value="{{ p }}" {{ 'selected' if p == 85 }}>{{ p }}%</option>
-          {% endfor %}
-        </select></div>
-      <div><a class="btn" id="sell-csv" href="/reports/sell-list.csv?pct=85">Sell list CSV</a></div>
-      <div><a class="btn ghost" id="sell-print" href="/sell-sheet?pct=85" target="_blank">Printable sheet</a></div>
-    </div>
-  </div>
+  {% endfor %}
 </div>
+<div class="muted" id="rp-none" style="padding:24px 4px;font-size:13px" hidden>No cards match.</div>
+{% else %}
+<div class="muted" style="padding:24px 4px">Nothing has left inventory{% if year %} in {{ year }}{% endif %}.</div>
+{% endif %}
 
-<div class="panel">
-  <h2>Google Sheets Workbook</h2>
-  <p class="muted" style="margin-bottom:12px">
-    Same sheet layout as the old Google Drive workbook — PSA / BGS / CGC / TAG /
-    SOLD / RAW as separate files. Download the zip, drop the CSVs into Drive, and
-    you can look up your collection from your phone with the laptop off.
-  </p>
-  <div class="row">
-    <div><a class="btn" href="/reports/sheets.zip">Download all sheets (.zip)</a></div>
-    <div style="align-self:center" class="muted">
-      or single sheets:
+<div class="exports">
+  <div>
+    <div class="t">Collection</div>
+    <p>Everything you hold — slabs and raw, with basis, market and gain per card. The printable sheet has a blank Sold Price column and write-in rows for a show table.</p>
+    <div class="acts">
+      <a class="btn" href="/reports/collection.csv">Collection CSV</a>
+      <a class="btn ghost" href="/inventory-sheet" target="_blank">Printable sheet</a>
+    </div>
+    <div class="also"><a href="/inventory-sheet?kind=slab">slabs only</a> · <a href="/inventory-sheet?kind=raw">raw only</a> · <a href="/reports/deals.csv">deal history CSV</a></div>
+  </div>
+  <div>
+    <div class="t">Sell list</div>
+    <p>Active slabs that still clear a profit at a given share of market. Unknown-basis and personal-collection cards are left out.</p>
+    <div class="acts">
+      <select id="sell-pct" title="% of market">
+        {% for p in [80, 85, 88, 90, 95, 100] %}
+        <option value="{{ p }}" {{ 'selected' if p == 85 }}>{{ p }}% of market</option>
+        {% endfor %}
+      </select>
+      <a class="btn" id="sell-csv" href="/reports/sell-list.csv?pct=85">Sell list CSV</a>
+      <a class="btn ghost" id="sell-print" href="/sell-sheet?pct=85" target="_blank">Printable sheet</a>
+    </div>
+  </div>
+  <div>
+    <div class="t">Google Sheets</div>
+    <p>The old Drive workbook layout — PSA, BGS, CGC, TAG, SOLD and RAW as separate files. Drop them into Drive to look things up from your phone.</p>
+    <div class="acts">
+      <a class="btn" href="/reports/sheets.zip">Download all (.zip)</a>
+    </div>
+    <div class="also">single sheets:
       {% for s in ["PSA", "BGS", "CGC", "TAG", "SOLD", "RAW"] %}
       <a href="/reports/sheet/{{ s }}.csv">{{ s }}</a>{{ " · " if not loop.last }}
       {% endfor %}
@@ -107,15 +124,20 @@
 
 <script>
 const search = document.getElementById("search");
-const allRows = [...document.querySelectorAll("tbody tr")];
+const allRows = [...document.querySelectorAll(".rr")];
+const groups = [...document.querySelectorAll(".mo-group")];
 search.addEventListener("input", () => {
   const q = search.value.trim().toLowerCase();
   let shown = 0;
   for (const tr of allRows) {
     const hit = !q || tr.dataset.hay.includes(q);
-    tr.style.display = hit ? "" : "none";
+    tr.hidden = !hit;
     if (hit) shown++;
   }
+  // a month with nothing left in it hides with its rows
+  for (const g of groups) g.hidden = ![...g.querySelectorAll(".rr")].some(r => !r.hidden);
+  const none = document.getElementById("rp-none");
+  if (none) none.hidden = shown > 0;
 });
 document.addEventListener("keydown", e => {
   if (e.key === "/" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") {

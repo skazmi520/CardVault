@@ -211,7 +211,8 @@ select { appearance: none; -webkit-appearance: none; padding-right: 28px;
 .btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; }
 
 .seg { display: inline-flex; background: var(--input); border: 1px solid var(--border); border-radius: 999px; padding: 3px; height: 34px; gap: 2px; }
-.seg span, .seg button { padding: 0 11px; display: inline-flex; align-items: center; border-radius: 999px; font: inherit; font-size: 12px; font-weight: 500; color: var(--muted); background: none; border: none; cursor: pointer; }
+.seg span, .seg button, .seg a { padding: 0 11px; display: inline-flex; align-items: center; border-radius: 999px; font: inherit; font-size: 12px; font-weight: 500; color: var(--muted); background: none; border: none; cursor: pointer; }
+.seg a:hover { text-decoration: none; color: var(--text); }
 .seg .on { background: var(--surface-hi); color: var(--text); box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 1px 2px rgba(0,0,0,.3); }
 
 .row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
