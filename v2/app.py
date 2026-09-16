@@ -124,6 +124,27 @@ def _api_errors(e):
 
 # ── pages ───────────────────────────────────────────────────────────────────────
 
+def _brief(x):
+    slab = x["_table"] == "graded_cards"
+    return {"name": x["card_name"], "company": x.get("grading_company") if slab else "",
+            "grade": x.get("grade") if slab else "", "kind": "slab" if slab else "raw"}
+
+
+def _deal_row(c, d):
+    """A deal as a list row: the cards that moved lead, because the owner
+    remembers the cards, not the counterparty."""
+    det = get_deal(c, d["id"])
+    return {
+        "id": d["id"], "occurred_at": d["occurred_at"],
+        "counterparty": d["counterparty"], "location": d["location"],
+        "method": d["payment_method"], "cash": d["cash_amount"],
+        "n_out": len(det["cards_out"]), "n_in": len(det["cards_in"]),
+        "out": [_brief(x) for x in det["cards_out"]], "in": [_brief(x) for x in det["cards_in"]],
+        "gain": round(sum((x["realized_gain"] or 0) for x in det["cards_out"]), 2),
+        "unreconciled": "[unreconciled]" in (d["notes"] or ""),
+    }
+
+
 @app.get("/")
 def dashboard():
     c = conn()
@@ -131,22 +152,7 @@ def dashboard():
     stats = v2cards.dashboard_stats(c)
     extras = v2cards.dashboard_extras(c)
     snaps = v2cards.snapshots(c)
-    recent = []
-    # the feed leads with the cards that moved, not the counterparty —
-    # the owner remembers the cards
-    def brief(x):
-        slab = x["_table"] == "graded_cards"
-        return {"name": x["card_name"], "company": x.get("grading_company") if slab else "",
-                "grade": x.get("grade") if slab else "", "kind": "slab" if slab else "raw"}
-    for d in list_deals(c)[:6]:
-        det = get_deal(c, d["id"])
-        recent.append({
-            "id": d["id"], "occurred_at": d["occurred_at"],
-            "counterparty": d["counterparty"], "cash": d["cash_amount"],
-            "n_out": len(det["cards_out"]), "n_in": len(det["cards_in"]),
-            "out": [brief(x) for x in det["cards_out"]], "in": [brief(x) for x in det["cards_in"]],
-            "gain": round(sum((x["realized_gain"] or 0) for x in det["cards_out"]), 2),
-        })
+    recent = [_deal_row(c, d) for d in list_deals(c)[:6]]
     tstats = v2cards.trade_stats(c)
     cash = v2cards.cash_summary(c)
     movers = v2cards.top_movers(c)
@@ -187,13 +193,7 @@ def deals_page():
     cash_in = cash_out = day_gain = 0.0
     today_rows = []
     for d in list_deals(c):
-        det = get_deal(c, d["id"])
-        gain = round(sum((x["realized_gain"] or 0) for x in det["cards_out"]), 2)
-        row = {"id": d["id"], "occurred_at": d["occurred_at"],
-               "counterparty": d["counterparty"], "location": d["location"],
-               "method": d["payment_method"], "cash": d["cash_amount"],
-               "n_out": len(det["cards_out"]), "n_in": len(det["cards_in"]),
-               "gain": gain}
+        row = _deal_row(c, d)
         rows.append(row)
         if d["occurred_at"][:10] == today:
             today_rows.append(row)
@@ -201,9 +201,19 @@ def deals_page():
                 cash_in += d["cash_amount"]
             else:
                 cash_out += -d["cash_amount"]
-            day_gain += gain
+            day_gain += row["gain"]
     c.close()
-    return render_template("deals.html", active="deals", deals=rows,
+    # the list groups by day — deals cluster on show days, and a day header
+    # with its count and net cash is how the owner thinks about a show
+    days = []
+    for r in rows:
+        key = r["occurred_at"][:10]
+        if not days or days[-1]["date"] != key:
+            days.append({"date": key, "rows": [], "net": 0.0, "gain": 0.0})
+        days[-1]["rows"].append(r)
+        days[-1]["net"] += r["cash"]
+        days[-1]["gain"] += r["gain"]
+    return render_template("deals.html", active="deals", deals=rows, days=days,
                            today=today, today_rows=today_rows,
                            cash_in=round(cash_in, 2), cash_out=round(cash_out, 2),
                            day_gain=round(day_gain, 2))

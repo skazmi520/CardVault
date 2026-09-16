@@ -1,51 +1,92 @@
 {% extends "base.html" %}
 {% block title %}Deals{% endblock %}
 {% block content %}
-<div class="page-title" style="display:flex;align-items:center;justify-content:space-between">
-  <span>Deals</span>
-  
+<style>
+.dl-head { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 18px; }
+.dl-strip { display: flex; gap: 48px; padding: 16px 0 20px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.day { display: flex; align-items: baseline; gap: 12px; padding: 22px 4px 8px; }
+.day .t { font-family: var(--font-display); font-weight: 500; font-size: 18px; }
+.day .s { font-size: 12.5px; color: var(--muted); }
+.day .s .mono { color: var(--text); }
+.dr { display: grid; grid-template-columns: 62px 58px minmax(0, 1fr) 120px 110px 60px; gap: 14px; align-items: center; padding: 12px 4px; border-top: 1px solid var(--border); color: var(--text); }
+.dr:hover { background: var(--row-hover); text-decoration: none; }
+.dr .when { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.dr .lead { justify-content: center; }
+.dr .nm { font-size: 14.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dr .nm .in { color: var(--muted); font-weight: 400; }
+.dr .who { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dr .cash { text-align: right; font-family: var(--font-mono); font-size: 13.5px; color: var(--muted); }
+.dr .gain { text-align: right; }
+.dr .open { text-align: right; font-size: 12.5px; color: var(--muted); }
+@media (max-width: 900px) { .dr { grid-template-columns: 58px minmax(0,1fr) 100px; } .dr .when, .dr .open, .dr .gain { display: none; } }
+</style>
+
+<div class="dl-head">
+  <div>
+    <span class="page-title" style="margin:0">Deals</span>
+    <div class="muted" style="font-size:13px;margin-top:6px">{{ deals|length }} recorded{% if deals %} · last {{ deals[0].occurred_at|mdy }}{% endif %}</div>
+  </div>
+  <div style="flex:1"></div>
+  <input type="text" id="dl-q" placeholder="Filter by card, person or place" style="width:280px">
+  <a class="btn ghost" href="/reports/deals.csv" style="height:34px">Export</a>
 </div>
 
-<div class="panel">
-  <h2>Show day <span class="muted">{{ today|mdy }}</span></h2>
-  <div class="tiles" style="margin-bottom:0">
-    <div class="tile"><div class="v">{{ today_rows|length }}</div><div class="l">Deals today</div></div>
-    <div class="tile"><div class="v">{{ cash_in|money0 }}</div><div class="l">Cash in</div></div>
-    <div class="tile"><div class="v">{{ cash_out|money0 }}</div><div class="l">Cash out</div></div>
-    <div class="tile"><div class="v">{{ (cash_in - cash_out)|gain0 }}</div><div class="l">Net cash</div></div>
-    <div class="tile"><div class="v {{ 'pos' if day_gain > 0 else 'neg' if day_gain < 0 else '' }}">{{ day_gain|gain0 if day_gain else '—' }}</div><div class="l">Realized today</div></div>
-  </div>
+<div class="dl-strip">
+  <div class="kv"><span class="l">Show day · {{ today|mdy }}</span><span class="v display">{{ today_rows|length }} <span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400">deal{{ 's' if today_rows|length != 1 }}</span></span></div>
+  <div class="kv"><span class="l">Cash in</span><span class="v display">{{ cash_in|money0 }}</span></div>
+  <div class="kv"><span class="l">Cash out</span><span class="v display">{{ cash_out|money0 }}</span></div>
+  <div class="kv"><span class="l">Net cash</span><span class="v display">{{ (cash_in - cash_out)|gain0 }}</span></div>
+  <div class="kv"><span class="l">Realized today</span><span class="v display {{ 'pos' if day_gain > 0 else 'neg' if day_gain < 0 else '' }}">{{ day_gain|gain0 if day_gain else '—' }}</span></div>
 </div>
 
-<div class="panel">
-  <h2>All deals</h2>
-  {% if deals %}
-  <div class="table-wrap">
-    <table>
-      <thead><tr>
-        <th>Date</th><th>Counterparty</th><th>Location</th><th>Method</th>
-        <th class="num">Out</th><th class="num">In</th><th class="num">Cash</th>
-        <th class="num">Realized Gain</th><th></th>
-      </tr></thead>
-      <tbody>
-        {% for d in deals %}
-        <tr>
-          <td class="mono muted">{{ d.occurred_at|mdy }} <span class="faint">{{ d.occurred_at[11:16] }}</span></td>
-          <td>{{ d.counterparty or '—' }}</td>
-          <td class="muted">{{ d.location or '—' }}</td>
-          <td class="muted">{{ d.method }}</td>
-          <td class="num">{{ d.n_out }}</td>
-          <td class="num">{{ d.n_in }}</td>
-          <td class="num muted">{{ d.cash|gain0 if d.cash else "—" }}</td>
-          <td class="num {{ 'pos' if d.gain > 0 else 'neg' if d.gain < 0 else 'muted' }}">{{ d.gain|gain0 if d.gain else "—" }}</td>
-          <td><a href="/deals/{{ d.id }}" class="muted">open →</a></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+{% if days %}
+<div id="dl-list">
+  {% for day in days %}
+  <div class="day-group" data-date="{{ day.date }}">
+    <div class="day">
+      <span class="t">{{ day.date|mdy }}{% if day.date[:4] != today[:4] %} {{ day.date[:4] }}{% endif %}</span>
+      <span class="s">{{ day.rows|length }} deal{{ 's' if day.rows|length != 1 }} · net cash <span class="mono">{{ day.net|gain0 }}</span>{% if day.gain %} · realized <span class="mono {{ 'pos' if day.gain > 0 else 'neg' }}">{{ day.gain|gain0 }}</span>{% endif %}</span>
+    </div>
+    {% for d in day.rows %}
+    {% set lead = d.out[0] if d.out else (d['in'][0] if d['in'] else none) %}
+    <a class="dr" href="/deals/{{ d.id }}" data-hay="{{ (d.counterparty ~ ' ' ~ d.location ~ ' ' ~ d.method ~ ' ' ~ (d.out|map(attribute='name')|join(' ')) ~ ' ' ~ (d['in']|map(attribute='name')|join(' ')))|lower }}">
+      <span class="when">{{ d.occurred_at[11:16] }}</span>
+      {% if lead and lead.company %}<span class="chip lead {{ lead.company }}">{{ lead.company }} {{ lead.grade }}</span>
+      {% elif lead %}<span class="chip lead raw">RAW</span>{% else %}<span class="chip lead raw">—</span>{% endif %}
+      <div style="min-width:0;display:flex;flex-direction:column;line-height:1.25">
+        <span class="nm">
+          {% if d.out %}{{ d.out[0].name }}{% if d.out|length > 1 %} <span class="in">+ {{ d.out|length - 1 }} more</span>{% endif %}
+            {% if d['in'] %}<span class="in">→ {{ d['in'][0].name }}{% if d['in']|length > 1 %} + {{ d['in']|length - 1 }} more{% endif %}</span>{% endif %}
+          {% elif d['in'] %}{{ d['in'][0].name }}{% if d['in']|length > 1 %} <span class="in">+ {{ d['in']|length - 1 }} more</span>{% endif %}
+          {% else %}<span class="in">No cards recorded</span>{% endif %}
+        </span>
+        <span class="who">{% if d.out and d['in'] %}Trade{% elif d.out %}Sold{% elif d['in'] %}Bought{% else %}Deal{% endif %}{% if d.counterparty %} · {{ d.counterparty }}{% endif %}{% if d.location %} · {{ d.location }}{% endif %} · {{ d.method }}{% if d.unreconciled %} · <span class="warn">cash not logged</span>{% endif %}</span>
+      </div>
+      <span class="cash">{{ d.cash|gain0 if d.cash else '—' }}</span>
+      <span class="gain">{% if d.gain > 0 %}<span class="pill pos">{{ d.gain|gain0 }}</span>{% elif d.gain < 0 %}<span class="pill neg">{{ d.gain|gain0 }}</span>{% elif d.out and d['in'] %}<span class="pill mutedbg">even</span>{% else %}<span class="muted">—</span>{% endif %}</span>
+      <span class="open">open →</span>
+    </a>
+    {% endfor %}
   </div>
-  {% else %}
-  <div class="muted">No deals yet.</div>
-  {% endif %}
+  {% endfor %}
 </div>
+<div class="muted" id="dl-none" style="padding:24px 4px;font-size:13px" hidden>No deals match.</div>
+{% else %}
+<div class="muted" style="padding:24px 4px">No deals yet. <a href="/deals/new">Record your first deal →</a></div>
+{% endif %}
+
+<script>
+  // filter by anything on the row: card names, counterparty, place, method
+  const q = document.getElementById("dl-q");
+  if (q) q.addEventListener("input", () => {
+    const term = q.value.trim().toLowerCase();
+    let shown = 0;
+    document.querySelectorAll(".day-group").forEach(g => {
+      let n = 0;
+      g.querySelectorAll(".dr").forEach(r => { const hit = !term || r.dataset.hay.includes(term); r.hidden = !hit; if (hit) n++; });
+      g.hidden = n === 0; shown += n;
+    });
+    document.getElementById("dl-none").hidden = shown > 0;
+  });
+</script>
 {% endblock %}
