@@ -172,6 +172,77 @@ def test_blank_in_lines_split_pro_rata_by_market(c):
           f"got {got}, total {total}")
 
 
+def in_basis_of(c, name):
+    return c.execute(
+        "SELECT acquisition_price FROM graded_cards WHERE card_name=? "
+        "UNION ALL SELECT purchase_price FROM ungraded_cards WHERE card_name=?",
+        (name, name)).fetchone()[0]
+
+
+def test_deal_37_books_under_stefans_model(c):
+    """Deal 37 (2026-08-08), the one that broke trust. Gave a Rayquaza V with a
+    $1,292.25 basis, put out at $1,450; took back $750 cash and a Mega
+    Charizard Y taken in at $400. What the Rayquaza fetched is $750 + $400 =
+    $1,150, a $142.25 loss. The old engine booked $1,450 of proceeds and a
+    $158 gain, and back-solved the Charizard to $700 of cost. No warning is
+    wanted: taking in less than you gave is a choice, not a mistake."""
+    a = slab(c, "RayqLike", 1292.25, 1450)
+    r = save_deal(c, cards_out=[CardOut("graded_cards", a, None)],
+                  cards_in=[CardIn(card_name="MCYtyped", deal_value=400.0, market_value=400.0)],
+                  cash_amount=750.0, out_side_total=1450.0, occurred_at="2026-08-08T14:36:00")
+    check("proceeds are cash + take-in, not the ask", abs(proceeds_of(c, a) - 1150.0) < 0.01,
+          f"proceeds {proceeds_of(c, a)} should be 1150")
+    check("the loss books", abs(gain_of(c, a) - (-142.25)) < 0.01, f"gain {gain_of(c, a)} should be -142.25")
+    check("typed take-in is the basis", abs(in_basis_of(c, "MCYtyped") - 400.0) < 0.01)
+    check("no warning for taking in less than you gave", not r["warnings"], f"warnings: {r['warnings']}")
+    check("the ask is reported, not booked", r["ask"] == 1450.0 and r["closed"] == 1150.0,
+          f"ask {r['ask']} closed {r['closed']}")
+
+    # the same deal with the take-in left blank: the ask fills it, and the
+    # deal balances by construction — that IS what was entered, so no warning
+    b = slab(c, "RayqLike2", 1292.25, 1450)
+    r2 = save_deal(c, cards_out=[CardOut("graded_cards", b, None)],
+                   cards_in=[CardIn(card_name="MCYblank", deal_value=None, market_value=400.0)],
+                   cash_amount=750.0, out_side_total=1450.0, occurred_at="2026-08-08T14:36:00")
+    check("blank take-in is filled from the ask minus cash", abs(in_basis_of(c, "MCYblank") - 700.0) < 0.01)
+    check("blank take-in deal is silent", not r2["warnings"], f"warnings: {r2['warnings']}")
+
+
+def test_worked_example_umbreon(c):
+    """The example the owner signed off on 2026-09-15. Give Umbreon Ex (basis
+    $5,500, market $6,000). Take in Charizard ex at $1,275 (market $1,500) and
+    Tohoku's Pikachu at $1,615 (market $1,900), plus $3,000 cash. The Umbreon
+    fetched $5,890 → realized +$390. The $510 of margin on the new cards is
+    unrealized, carried as market minus basis until they sell."""
+    u = slab(c, "UmbreonLike", 5500, 6000)
+    r = save_deal(c, cards_out=[CardOut("graded_cards", u, None)],
+                  cards_in=[CardIn(card_name="ZardLike", deal_value=1275.0, market_value=1500.0),
+                            CardIn(card_name="TohokuLike", deal_value=1615.0, market_value=1900.0)],
+                  cash_amount=3000.0, out_side_total=6000.0, occurred_at="2026-09-15T12:00:00")
+    check("Umbreon fetched cash + take-in = 5,890", abs(proceeds_of(c, u) - 5890.0) < 0.01, f"{proceeds_of(c, u)}")
+    check("realized +390", abs(gain_of(c, u) - 390.0) < 0.01, f"{gain_of(c, u)}")
+    check("take-ins book verbatim", abs(in_basis_of(c, "ZardLike") - 1275.0) < 0.01
+          and abs(in_basis_of(c, "TohokuLike") - 1615.0) < 0.01)
+    built = sum(l["built_in"] for l in save_deal(
+        c, cards_out=[], cards_in=[CardIn(card_name="x", deal_value=1275.0, market_value=1500.0),
+                                   CardIn(card_name="y", deal_value=1615.0, market_value=1900.0)],
+        cash_amount=-2890.0, dry_run=True)["in_lines"])
+    check("$510 built in is reported as unrealized, not realized", abs(built - 510.0) < 0.01, f"{built}")
+    check("no warnings on a normal trade", not r["warnings"], f"warnings: {r['warnings']}")
+
+
+def test_two_cards_out_split_by_typed_values(c):
+    """Two cards out, proceeds split by the typed per-card values — they set
+    the split, never the total."""
+    a, b = slab(c, "A2", 100, 1000), slab(c, "B2", 100, 3000)
+    save_deal(c, cards_out=[CardOut("graded_cards", a, 1000.0), CardOut("graded_cards", b, 3000.0)],
+              cards_in=[CardIn(card_name="Cin", deal_value=2000.0)],
+              cash_amount=0.0, occurred_at="2026-09-15T12:00:00")
+    check("proceeds total what came back", abs(proceeds_of(c, a) + proceeds_of(c, b) - 2000.0) < 0.01)
+    check("split follows the typed values 1:3", abs(proceeds_of(c, a) - 500.0) < 0.01
+          and abs(proceeds_of(c, b) - 1500.0) < 0.01, f"{proceeds_of(c, a)} / {proceeds_of(c, b)}")
+
+
 def test_double_disposal_refused(c):
     """A card already sold cannot leave again — that would double-count proceeds."""
     a = slab(c, "G", 100, 200)
@@ -206,7 +277,9 @@ TESTS = [test_pure_sale_scales_to_cash, test_pure_sale_scales_with_an_unvalued_l
          test_zero_cash_is_not_scaled,
          test_unknown_basis_books_no_gain, test_cash_received_reduces_basis_flowing_in,
          test_agreed_price_beats_market_everywhere,
-         test_blank_in_lines_split_pro_rata_by_market, test_double_disposal_refused, test_allocation_is_penny_exact, test_empty_deal_refused]
+         test_blank_in_lines_split_pro_rata_by_market, test_deal_37_books_under_stefans_model,
+         test_worked_example_umbreon, test_two_cards_out_split_by_typed_values,
+         test_double_disposal_refused, test_allocation_is_penny_exact, test_empty_deal_refused]
 
 
 def main():

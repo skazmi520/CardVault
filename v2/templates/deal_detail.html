@@ -22,6 +22,33 @@
 
 {% if d.notes %}<div class="panel"><h2>Notes</h2>{{ d.notes }}</div>{% endif %}
 
+<div class="panel">
+  <h2>As entered <span class="muted">what was typed on the deal screen, verbatim</span></h2>
+  {% if entered %}
+  <div class="muted" style="font-size:12px;margin-bottom:6px">saved {{ entered.entered_at[:16].replace('T', ' ') }}</div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Side</th><th>Card</th><th class="num">Typed price</th><th class="num">Typed market</th></tr></thead>
+    <tbody>
+      {% if entered.ask is not none %}
+      <tr><td class="muted">ask</td><td class="muted">my side put out at</td><td class="num">{{ entered.ask|money }}</td><td></td></tr>
+      {% endif %}
+      {% for x in entered.out %}
+      <tr><td>out</td><td>{{ x.name }}</td><td class="num">{{ x.typed|money if x.typed is not none else '— (blank)' }}</td><td></td></tr>
+      {% endfor %}
+      {% for x in entered['in'] %}
+      <tr><td>in</td><td>{{ x.name }}</td><td class="num">{{ x.typed|money if x.typed is not none else '— (blank)' }}</td><td class="num">{{ x.market|money if x.market is not none else '' }}</td></tr>
+      {% endfor %}
+      {% if entered.cash %}
+      <tr><td>cash</td><td class="muted">{{ 'received' if entered.cash > 0 else 'paid' }}</td><td class="num">{{ (entered.cash if entered.cash > 0 else -entered.cash)|money }}</td><td></td></tr>
+      {% endif %}
+    </tbody>
+  </table></div>
+  <div class="muted" style="font-size:12px;margin-top:6px">A blank typed price means the engine derived that number. Everything else above is exactly what was keyed in.</div>
+  {% else %}
+  <div class="muted">Not recorded — this deal predates the entry log (added 2026-09-15). The booked numbers below are all that survives of it.</div>
+  {% endif %}
+</div>
+
 {% if cards_out %}
 <div class="panel">
   <h2>Cards Out</h2>
@@ -31,7 +58,8 @@
     <tbody>
       {% for c in cards_out %}
       <tr>
-        <td><strong>{{ c.card_name }}</strong>{% if c.set_name %} <span class="muted">{{ c.set_name }}</span>{% endif %}</td>
+        <td><strong>{{ c.card_name }}</strong>{% if c.set_name or c.card_number %} <span class="muted">{{ c.set_name }}{% if c.card_number %} #{{ c.card_number }}{% endif %}</span>{% endif %}
+          {% if c._table == 'graded_cards' and c.serial_number %}<div class="muted" style="font-size:.85em">cert {{ c.serial_number }}</div>{% endif %}</td>
         <td>{% if c._table == 'graded_cards' %}<span class="chip {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
         <td class="num">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</td>
         <td class="num">{{ c.disposal_proceeds|money }}</td>
@@ -51,10 +79,11 @@
     <tbody>
       {% for c in cards_in %}
       <tr>
-        <td><strong>{{ c.card_name }}</strong>{% if c.set_name %} <span class="muted">{{ c.set_name }}</span>{% endif %}</td>
+        <td><strong>{{ c.card_name }}</strong>{% if c.set_name or c.card_number %} <span class="muted">{{ c.set_name }}{% if c.card_number %} #{{ c.card_number }}{% endif %}</span>{% endif %}
+          {% if c._table == 'graded_cards' and c.serial_number %}<div class="muted" style="font-size:.85em">cert {{ c.serial_number }}</div>{% endif %}</td>
         <td>{% if c._table == 'graded_cards' %}<span class="chip {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
         <td class="num">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</td>
-        <td class="num">{{ c.market_value|money if c._table == 'graded_cards' else '—' }}</td>
+        <td class="num">{{ c.market_value|money }}</td>
       </tr>
       {% endfor %}
     </tbody>

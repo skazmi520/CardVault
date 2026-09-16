@@ -34,6 +34,32 @@ def _money(v):
     return f"{sign}${abs(v):,.2f}"
 
 
+@app.template_filter("money0")
+def _money0(v):
+    """Whole dollars — for headline figures where cents are noise."""
+    if v is None:
+        return "—"
+    sign = "-" if v < 0 else ""
+    return f"{sign}${abs(v):,.0f}"
+
+
+@app.template_filter("gain0")
+def _gain0(v):
+    if v is None:
+        return "—"
+    sign = "+" if v >= 0 else "-"
+    return f"{sign}${abs(v):,.0f}"
+
+
+@app.template_filter("mdy")
+def _mdy(v):
+    """'2026-09-02...' -> 'Sep 2'."""
+    try:
+        return date.fromisoformat(str(v)[:10]).strftime("%b %-d")
+    except (ValueError, TypeError):
+        return str(v or "")[:10]
+
+
 @app.template_filter("gain")
 def _gain(v):
     if v is None:
@@ -106,12 +132,19 @@ def dashboard():
     extras = v2cards.dashboard_extras(c)
     snaps = v2cards.snapshots(c)
     recent = []
-    for d in list_deals(c)[:8]:
+    # the feed leads with the cards that moved, not the counterparty —
+    # the owner remembers the cards
+    def brief(x):
+        slab = x["_table"] == "graded_cards"
+        return {"name": x["card_name"], "company": x.get("grading_company") if slab else "",
+                "grade": x.get("grade") if slab else "", "kind": "slab" if slab else "raw"}
+    for d in list_deals(c)[:6]:
         det = get_deal(c, d["id"])
         recent.append({
             "id": d["id"], "occurred_at": d["occurred_at"],
             "counterparty": d["counterparty"], "cash": d["cash_amount"],
             "n_out": len(det["cards_out"]), "n_in": len(det["cards_in"]),
+            "out": [brief(x) for x in det["cards_out"]], "in": [brief(x) for x in det["cards_in"]],
             "gain": round(sum((x["realized_gain"] or 0) for x in det["cards_out"]), 2),
         })
     tstats = v2cards.trade_stats(c)
@@ -121,10 +154,18 @@ def dashboard():
     sell = v2cards.sell_candidates(c)
     psa = v2cards.psa_capital(c)
     c.close()
+    if extras.get("delta") and snaps and len(snaps) >= 2 and snaps[-2]["value"]:
+        extras["delta"]["pct"] = round(extras["delta"]["amount"] / snaps[-2]["value"] * 100, 1)
+    elif extras.get("delta"):
+        extras["delta"]["pct"] = None
+    days_out = [g["days"] for g in grading if g["days"] is not None]
     return render_template("dashboard.html", active="dashboard",
                            stats=stats, extras=extras, tstats=tstats,
                            cash=cash, movers=movers, grading=grading, sell=sell,
-                           psa=psa, snaps=snaps, recent=recent)
+                           psa=psa, snaps=snaps, recent=recent,
+                           today_label=date.today().strftime("%A, %B %-d"),
+                           year=date.today().year,
+                           grading_oldest=(max(days_out) if days_out else None))
 
 
 @app.get("/collection")
@@ -599,10 +640,13 @@ def collection_csv():
 
 def _sell_rows(c, pct: int):
     """Active slabs still profitable at pct% of market. Unknown-basis cards are
-    excluded — no cost means no knowable profit."""
+    excluded — no cost means no knowable profit. Personal-collection cards are
+    excluded too: the dashboard count already left them out, but this list
+    (the CSV and the printed sell sheet) did not, so the BGS 10 Mega Charizard
+    on the owner's desk was showing up as stock for sale."""
     rows = []
     for r in c.execute("SELECT * FROM graded_cards WHERE status='active' "
-                       "AND market_value IS NOT NULL AND basis_unknown=0"):
+                       "AND market_value IS NOT NULL AND basis_unknown=0 AND is_pc=0"):
         sale = r["market_value"] * pct / 100
         basis = r["acquisition_price"] or 0
         profit = sale - basis
@@ -969,6 +1013,11 @@ def api_save_deal():
     except ValueError as e:
         c.close()
         return jsonify({"ok": False, "error": str(e)}), 400
+    # keep what was typed, verbatim, next to what was booked
+    import json
+    c.execute("INSERT INTO deal_entries (deal_id, entered_at, payload_json) VALUES (?,?,?)",
+              (res["deal_id"], datetime.now().isoformat(timespec="seconds"), json.dumps(p)))
+    c.commit()
     c.close()
     return jsonify({"ok": True, **res})
 
@@ -1127,11 +1176,39 @@ def api_pc():
     return jsonify({"ok": True})
 
 
+def _integrity_report():
+    """Run every data-integrity invariant against the live database. The
+    result is shown as a banner on every page until it is clean, so a broken
+    number can never sit unnoticed until it bites at tax time."""
+    from . import checks as v2checks
+    c = v2db.get_connection()       # runs before the app serves, so no request context
+    found = []
+    try:
+        for fn in v2checks.CHECKS:
+            try:
+                bad = fn(c)
+            except Exception as e:                       # a crashed check is itself a finding
+                bad = [f"check crashed: {type(e).__name__}: {e}"]
+            if bad:
+                found.append({"check": fn.__name__, "n": len(bad), "first": bad[:3]})
+    finally:
+        c.close()
+    return found
+
+
+@app.context_processor
+def _inject_integrity():
+    return {"integrity": app.config.get("INTEGRITY", [])}
+
+
 def main():
     guard = v2db.get_connection()   # startup guard: refuse to boot against v1
     v2db.migrate_schema(guard)      # idempotent — applies any new v2 tables
     guard.close()
     v2db.backup_v2()                # daily local + iCloud snapshot of the v2 db
+    app.config["INTEGRITY"] = _integrity_report()
+    if app.config["INTEGRITY"]:
+        print(f"  DATA INTEGRITY: {len(app.config['INTEGRITY'])} check(s) failing — see the banner in the app")
     config.ensure_env_file()        # create ~/.cardvaultmac/v2.env template
     host = config.get_host()
     print(f"CardVault v2 — http://{'127.0.0.1' if host == '127.0.0.1' else host}:5177  (Ctrl+C to stop)")

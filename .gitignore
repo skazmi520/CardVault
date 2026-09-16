@@ -45,3 +45,10 @@ pricing/alt_config.json
 
 # sample format guides are meant to ship
 !samples/*.csv
+
+# private data and generated bundles
+backups/
+reports/
+design/cardvault-look/cardvault-look.html
+design/cardvault-look/archive/
+docs/design-review-shots/

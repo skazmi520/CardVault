@@ -62,13 +62,23 @@ def certs_are_unique(conn):
     legitimately appears on two rows when a card is sold and bought back later
     — the Gengar VMAX sold 2026-06-27 and reacquired 2026-07-18 is one physical
     card owned twice. So the violation is overlapping ownership, not repetition.
+
+    A row whose status is 'promoted' or 'cracked' is the predecessor half of a
+    lifecycle change — the raw row a slab grew out of, or the slab a raw card
+    was cut out of. The successor row holds the card now, so the predecessor
+    must not count as a concurrent owner. Recording a cert on a raw card while
+    it sits at PSA and then promoting it is the normal workflow, and without
+    this every converted submission would report itself as duplicated.
     """
+    SUPERSEDED = ("removed", "promoted", "cracked")
+    superseded_sql = "(" + ",".join(f"'{s}'" for s in SUPERSEDED) + ")"
     owners = {}
     for t, cert_col in (("graded_cards", "serial_number"), ("ungraded_cards", "psa_cert")):
         acq = "acquisition_date" if t == "graded_cards" else "purchase_date"
         for r in _rows(conn,
             f"SELECT id, card_name, TRIM({cert_col}) cert, {acq} acq, disposed_at, status "
-            f"FROM {t} WHERE TRIM(COALESCE({cert_col},'')) <> '' AND status <> 'removed'"):
+            f"FROM {t} WHERE TRIM(COALESCE({cert_col},'')) <> '' "
+            f"AND status NOT IN {superseded_sql}"):
             owners.setdefault(r["cert"], []).append(
                 (f"{t.split('_')[0]}#{r['id']}", r["card_name"],
                  (r["acq"] or "")[:10], (r["disposed_at"] or "")[:10]))

@@ -113,19 +113,31 @@ def backup_v2():
     src = sqlite3.connect(V2_DB_PATH)
     try:
         for dest_path, keep, dest_dir in destinations:
-            if dest_path.exists():
+            # A zero-byte file is not a backup. sqlite3.connect() used to create
+            # the file before the copy ran, and when the copy then failed the
+            # exception was swallowed — leaving an empty file that this very
+            # check treated as "already done" every day after. The 2026-08-10
+            # snapshot was such a file: no restore point for that day at all.
+            if dest_path.exists() and dest_path.stat().st_size > 0:
                 continue                      # already backed up today
+            tmp = dest_path.with_suffix(".db.part")
             try:
                 dest_dir.mkdir(parents=True, exist_ok=True)
-                dst = sqlite3.connect(dest_path)
+                tmp.unlink(missing_ok=True)
+                dst = sqlite3.connect(tmp)
                 src.backup(dst)               # WAL-safe consistent snapshot
+                n = dst.execute("SELECT COUNT(*) FROM graded_cards").fetchone()[0]
                 dst.close()
+                if n <= 0:
+                    raise RuntimeError("snapshot has no cards")
+                tmp.replace(dest_path)        # only a verified copy gets the real name
                 # prune old snapshots — only our own v2 dailies
                 old = sorted(dest_dir.glob("cardvault_v2_????-??-??.db"))
                 for f in old[:-keep]:
                     f.unlink(missing_ok=True)
             except Exception:
-                pass                          # one bad destination can't block the other
+                tmp.unlink(missing_ok=True)   # never leave a partial file behind
+                dest_path.unlink(missing_ok=True) if dest_path.exists() and dest_path.stat().st_size == 0 else None
     finally:
         src.close()
 
@@ -161,6 +173,17 @@ CREATE TABLE IF NOT EXISTS deal_photos (
     deal_id     INTEGER NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
     file_path   TEXT NOT NULL,
     captured_at TEXT
+);
+
+-- exactly what was typed on the deal screen, verbatim, at save time. The
+-- engine's booked numbers live on the cards; this is the evidence of what
+-- they were derived from, so "did I type $400 or did the app invent $700?"
+-- is never again unanswerable.
+CREATE TABLE IF NOT EXISTS deal_entries (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    deal_id      INTEGER NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+    entered_at   TEXT NOT NULL,
+    payload_json TEXT NOT NULL
 );
 
 -- Phase 4: slab photo ingestion / extraction pipeline

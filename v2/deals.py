@@ -40,7 +40,6 @@ from datetime import datetime
 
 from . import db as v2db
 
-RECONCILE_TOLERANCE = 0.05   # warn when itemized sides differ by more than 5%
 _LAST_CLAMP = None           # set by _resolve_side when a side total under-covers lines
 
 
@@ -204,76 +203,86 @@ def save_deal(conn, *,
     in_weights = [(ln.market_value if (ln.market_value or 0) > 0 else in_avg)
                   for ln in cards_in]
 
-    # ── resolve side values ──────────────────────────────────────────────────
-    out_vals, out_ok = _resolve_side(out_vals_entered, out_weights, out_side_total)
-    in_vals,  in_ok  = _resolve_side(in_vals_entered,  in_weights,  in_side_total)
+    # ── the owner's model of a deal (2026-09-15) ────────────────────────────────
+    # "Cash plus trade take-in values compared to cost basis of the cards going
+    # out is the only way to calculate." An outgoing card has a fixed basis and
+    # NO sale price of its own. What it fetched is whatever came back — cash
+    # plus the take-in prices of the cards received — and that is its proceeds.
+    # A take-in price is firm: typed, it books verbatim. Only a blank is ever
+    # derived, and only from a total. There is no such thing as "the sides
+    # don't reconcile": taking in less than you gave is a loss you chose, and
+    # it books as one, quietly.
+    #
+    # The old engine had a separate "agreed value" on the out side (prefilled
+    # from market) and, when it disagreed with what came back, either warned or
+    # — before 08-28 — rescaled the take-in prices to make it balance. That is
+    # how deal 37 turned a $400 card into $700 of cost and a $142 loss into a
+    # $158 gain. Both behaviours are gone. The out-side number is now the ASK:
+    # the total to split across blank take-ins, and otherwise informational.
 
-    if out_ok and in_ok:
-        v_out, v_in = sum(out_vals), sum(in_vals)
-        # reconcile fully-itemized sides: V_out should equal V_in + cash
-        expected_out = v_in + cash_amount
-        if cards_out and cards_in:
-            denom = max(abs(v_out), abs(expected_out), 0.01)
-            if abs(v_out - expected_out) / denom > RECONCILE_TOLERANCE:
-                warnings.append(
-                    f"Sides don't reconcile: cards-out total ${v_out:,.2f} vs "
-                    f"cards-in + cash ${expected_out:,.2f} "
-                    f"(diff ${abs(v_out - expected_out):,.2f}, >5%). Saving anyway.")
-        elif cards_in and not cards_out and abs(v_in + cash_amount) > 0.01 and cash_amount != 0:
-            warnings.append(
-                f"Pure buy: cards-in total ${v_in:,.2f} differs from cash paid "
-                f"${-cash_amount:,.2f}.")
-    elif out_ok and not in_ok:
-        v_out = sum(out_vals)
-        v_in = round(v_out - cash_amount, 2)          # balance identity
-        if v_in < 0:
+    # the ask: what my side was put out at — out_side_total, else the typed
+    # per-card values, else the market as a last resort
+    ask = None
+    if cards_out:
+        if out_side_total is not None:
+            ask = round(out_side_total, 2)
+        elif out_vals_entered and all(v is not None for v in out_vals_entered):
+            ask = round(sum(out_vals_entered), 2)
+        else:
+            ask = round(sum(out_weights), 2)
+
+    # ── take-in prices ───────────────────────────────────────────────────────
+    in_vals, in_ok = _resolve_side(in_vals_entered, in_weights, in_side_total)
+    if not in_ok:
+        # blanks split what is left of the ask after the cash, by market
+        pool = round((ask if ask is not None else 0.0) - cash_amount, 2)
+        if pool < 0:
             warnings.append("Derived cards-in value was negative; clamped to $0.")
-            v_in = 0.0
-        in_vals = _fill_from_total(in_vals_entered, in_weights, v_in)
-    elif in_ok and not out_ok:
-        v_in = sum(in_vals)
-        v_out = round(v_in + cash_amount, 2)          # balance identity
-        if v_out < 0:
-            warnings.append("Derived cards-out value was negative; clamped to $0.")
-            v_out = 0.0
-        out_vals = _fill_from_total(out_vals_entered, out_weights, v_out)
-    else:
-        raise ValueError(
-            "cannot resolve deal values: both sides have unvalued lines and no side totals")
-
+            pool = 0.0
+        in_vals = _fill_from_total(in_vals_entered, in_weights, pool)
     if _LAST_CLAMP is not None:
         warnings.append(
             f"Entered line values exceed the side total by ${-_LAST_CLAMP:,.2f}; "
             "remaining lines were allocated $0.")
         _LAST_CLAMP = None
 
-    # ── pure sale: the cash IS the proceeds ──────────────────────────────────
-    # Deliberately outside the branch chain above. It used to live inside the
-    # "both sides fully valued" branch, which meant a single unvalued give-line
-    # sent the deal down another path where entered values above the cash were
-    # kept as-is — booking $6,467 of proceeds against $5,405 received. A fuzz
-    # run found that in eighteen deals. Normalising here covers every path.
-    #
-    # Zero cash is left alone on purpose: it is either a giveaway (proceeds
-    # really are $0) or a sale whose cash was never logged, and the engine
-    # cannot tell which. Scaling those to zero would destroy real gains.
-    if cards_out and not cards_in and cash_amount > 0:
-        stated = round(sum(out_vals), 2)
-        if abs(stated - cash_amount) > 0.01:
-            out_vals = _allocate(cash_amount, out_vals)
-            pct = 100.0 * cash_amount / stated if stated else 0.0
-            warnings.append(
-                f"Pure sale: cards-out were valued at ${stated:,.2f} but cash "
-                f"received was ${cash_amount:,.2f} ({pct:.1f}%). Proceeds scaled "
-                f"to the cash, pro rata, so realized gain reflects what you were "
-                f"actually paid.")
-    elif cards_out and not cards_in and cash_amount == 0 and sum(out_vals) > 0:
-        warnings.append(
-            f"Nothing came back (no cards in, no cash) but cards-out are valued "
-            f"at ${sum(out_vals):,.2f} — that books ${sum(out_vals):,.2f} of "
-            f"proceeds. For a giveaway, set each card's value to 0 so the loss is "
-            f"recorded correctly. For a sale whose cash you are not logging, "
-            f"leave the values as the sale prices and note it.")
+    # ── proceeds ─────────────────────────────────────────────────────────────
+    out_vals = []
+    if cards_out:
+        came_back = round(cash_amount + sum(in_vals), 2)
+        if cards_in or cash_amount != 0:
+            # typed per-card out values only decide the split; so does market
+            if all(v is not None for v in out_vals_entered) and sum(out_vals_entered) > 0:
+                split = list(out_vals_entered)
+            else:
+                split = out_weights
+            if came_back < 0:
+                # gave cards AND more cash than the take-in covers — the cards
+                # cannot fetch less than nothing, so they book $0 and the rest
+                # of the cash is what the incoming cards really cost
+                warnings.append(
+                    f"Cash paid ${-cash_amount:,.2f} exceeds the take-in ${sum(in_vals):,.2f}; "
+                    f"the cards going out book $0 proceeds (clamped).")
+                came_back = 0.0
+            out_vals = _allocate(came_back, split)
+        else:
+            # nothing came back: a giveaway, or a sale whose cash was never
+            # logged. The engine cannot tell which, so typed values stand.
+            out_vals, ok = _resolve_side(out_vals_entered, out_weights, out_side_total)
+            if not ok:
+                out_vals = _fill_from_total(out_vals_entered, out_weights, sum(out_weights))
+            if _LAST_CLAMP is not None:
+                warnings.append(
+                    f"Entered line values exceed the side total by ${-_LAST_CLAMP:,.2f}; "
+                    "remaining lines were allocated $0.")
+                _LAST_CLAMP = None
+            if sum(out_vals) > 0:
+                warnings.append(
+                    f"Nothing came back (no cards in, no cash) but cards-out are valued "
+                    f"at ${sum(out_vals):,.2f} — that books ${sum(out_vals):,.2f} of "
+                    f"proceeds. For a giveaway, set each card's value to 0 so the loss is "
+                    f"recorded correctly. For a sale whose cash you are not logging, "
+                    f"leave the values as the sale prices and note it.")
 
     v_out, v_in = round(sum(out_vals), 2), round(sum(in_vals), 2)
 
@@ -332,10 +341,11 @@ def save_deal(conn, *,
                              "market_value": info["weight"],
                              "proceeds": proceeds, "realized_gain": gain})
         plan_in = [{"name": ln.card_name, "agreed_value": v, "basis": b,
-                    "market_value": ln.market_value}
+                    "market_value": ln.market_value,
+                    "built_in": (round(ln.market_value - b, 2) if ln.market_value else None)}
                    for ln, v, b in zip(cards_in, in_vals, in_basis)]
         return {"preview": True, "warnings": warnings, "v_out": v_out,
-                "v_in": v_in, "cash_amount": cash_amount,
+                "v_in": v_in, "cash_amount": cash_amount, "ask": ask, "closed": v_out,
                 "out_lines": plan_out, "in_lines": plan_in}
 
     # ── write everything in one transaction ──────────────────────────────────
@@ -430,7 +440,7 @@ def save_deal(conn, *,
         conn.rollback()
         raise
 
-    return {"deal_id": deal_id, "warnings": warnings,
+    return {"deal_id": deal_id, "warnings": warnings, "ask": ask, "closed": v_out,
             "v_out": v_out, "v_in": v_in, "cash_amount": cash_amount,
             "out_lines": out_lines, "in_lines": in_lines}
 
@@ -536,4 +546,38 @@ def get_deal(conn, deal_id: int) -> dict | None:
             f"AND status NOT IN ('promoted','cracked')", (deal_id,))]
     photos = conn.execute(
         "SELECT * FROM deal_photos WHERE deal_id=?", (deal_id,)).fetchall()
-    return {"deal": deal, "cards_out": out, "cards_in": inn, "photos": photos}
+    return {"deal": deal, "cards_out": out, "cards_in": inn, "photos": photos,
+            "entered": deal_as_entered(conn, deal_id)}
+
+
+def deal_as_entered(conn, deal_id: int) -> dict | None:
+    """What the owner actually typed on the deal screen, kept verbatim in
+    deal_entries at save time. The whole deal-37 investigation stalled on one
+    question — "did I type $400 or did the engine invent $700?" — and nothing
+    had kept the answer. Now it is stored, and shown on the deal page."""
+    import json
+    import sqlite3
+    try:
+        row = conn.execute(
+            "SELECT entered_at, payload_json FROM deal_entries WHERE deal_id=? "
+            "ORDER BY id DESC LIMIT 1", (deal_id,)).fetchone()
+    except sqlite3.OperationalError:          # database predates the table
+        return None
+    if row is None:
+        return None
+    try:
+        p = json.loads(row["payload_json"])
+    except (TypeError, ValueError):
+        return None
+    out = []
+    for x in p.get("cards_out", []):
+        t, i = x.get("table"), x.get("id")
+        name = ""
+        if t in ("graded_cards", "ungraded_cards") and i is not None:
+            r = conn.execute(f"SELECT card_name FROM {t} WHERE id=?", (i,)).fetchone()
+            name = r["card_name"] if r else f"{t}#{i}"
+        out.append({"name": name, "typed": x.get("deal_value")})
+    inn = [{"name": x.get("name", ""), "typed": x.get("deal_value"),
+            "market": x.get("market_value")} for x in p.get("cards_in", [])]
+    return {"entered_at": row["entered_at"], "ask": p.get("out_side_total"),
+            "cash": p.get("cash_amount"), "out": out, "in": inn}

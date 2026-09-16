@@ -173,46 +173,45 @@ def props_after_deal(c, spec, result):
     if in_total < -PENNY:
         bad.append(f"P5 incoming basis total is negative: {in_total:.2f}")
 
-    # P6 — in a trade, an entered agreed price books exactly; the engine may
-    # fill blanks but must never rewrite a number the user typed. (Pure sales
-    # are exempt: there the cash deliberately rescales the lines.)
-    if spec["cards_in"]:
+    # P6 — a typed take-in price IS the basis. The engine may fill blanks but
+    # must never rewrite a number the user typed on the receive side.
+    for ln in spec["cards_in"]:
+        if ln.deal_value is None:
+            continue
+        got = c.execute(
+            "SELECT acquisition_price FROM graded_cards WHERE card_name=? AND acquired_via_deal_id=? "
+            "UNION ALL SELECT purchase_price FROM ungraded_cards WHERE card_name=? AND acquired_via_deal_id=?",
+            (ln.card_name, did, ln.card_name, did)).fetchone()
+        if got is not None and abs(float(got[0]) - ln.deal_value) > PENNY:
+            bad.append(f"P6 in-card {ln.card_name}: entered {ln.deal_value} "
+                       f"but basis {got[0]}")
+
+    # P7 — the owner's model: what the outgoing cards fetched is exactly what came
+    # back, cash plus take-in. Whenever anything came back (cards in, or cash
+    # either way) the identity holds, no tolerance, no "reconcile" escape
+    # hatch. The only exception the engine is allowed is a negative came-back
+    # (more cash paid than take-in), which it clamps to $0 and warns about.
+    came_back = spec["cards_in"] or cash != 0
+    clamped = any("clamped" in w for w in result["warnings"])
+    if out_rows and came_back and not clamped:
+        slack = PENNY * (len(out_rows) + len(spec["cards_in"]) + 1)
+        if abs(out_total - (in_total + cash)) > slack:
+            bad.append(f"P7 proceeds {out_total:.2f} != cash {cash:.2f} + take-in {in_total:.2f}")
+
+    # P8 — typed per-card out values set the SPLIT of the proceeds, never the
+    # total: proceeds must be in the same proportion as the typed values.
+    typed = [ln.deal_value for ln in spec["cards_out"]]
+    if out_rows and came_back and not clamped and len(typed) > 1 \
+            and all(v is not None for v in typed) and sum(typed) > 0 and out_total > 0:
         by_id = {(t, r["id"]): r for t, r in out_rows}
         for ln in spec["cards_out"]:
-            if ln.deal_value is None:
-                continue
             r = by_id.get((ln.table, ln.card_id))
-            if r is not None and r["p"] is not None and abs(float(r["p"]) - ln.deal_value) > PENNY:
-                bad.append(f"P6 {ln.table}#{ln.card_id}: entered {ln.deal_value} "
-                           f"but booked {r['p']}")
-        # same rule on the receive side: an entered price IS the basis
-        for ln in spec["cards_in"]:
-            if ln.deal_value is None:
+            if r is None or r["p"] is None:
                 continue
-            got = c.execute(
-                "SELECT acquisition_price FROM graded_cards WHERE card_name=? AND acquired_via_deal_id=? "
-                "UNION ALL SELECT purchase_price FROM ungraded_cards WHERE card_name=? AND acquired_via_deal_id=?",
-                (ln.card_name, did, ln.card_name, did)).fetchone()
-            if got is not None and abs(float(got[0]) - ln.deal_value) > PENNY:
-                bad.append(f"P6 in-card {ln.card_name}: entered {ln.deal_value} "
-                           f"but basis {got[0]}")
-
-    # P7 — when the engine did NOT warn about unreconciled sides, the balance
-    # identity must hold: cards out = cards in + cash (within a cent per line)
-    # the engine flags a broken identity three ways: the reconcile warning
-    # (both sides typed, don't match), the clamp warning (typed lines exceed a
-    # derived total, blanks get $0), and the negative-derivation clamp
-    flagged = any(("reconcile" in w or "exceed the side total" in w or "clamped" in w)
-                  for w in result["warnings"])
-    if spec["cards_in"] and out_rows and not flagged:
-        # mirror the engine's own reconcile formula exactly — its denominator is
-        # the larger side, so a 4.94% gap on the smaller side is legal silence
-        slack = PENNY * (len(out_rows) + len(spec["cards_in"]) + 1)
-        expect = in_total + cash
-        denom = max(abs(out_total), abs(expect), 0.01)
-        if abs(out_total - expect) > max(slack, 0.05 * denom):
-            bad.append(f"P7 no reconcile warning but out {out_total:.2f} != "
-                       f"in {in_total:.2f} + cash {cash:.2f}")
+            want = out_total * ln.deal_value / sum(typed)
+            if abs(float(r["p"]) - want) > PENNY * 2:
+                bad.append(f"P8 {ln.table}#{ln.card_id}: typed {ln.deal_value} of {sum(typed):.2f} "
+                           f"should take {want:.2f} of {out_total:.2f}, booked {r['p']}")
 
     return bad
 

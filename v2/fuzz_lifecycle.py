@@ -107,7 +107,8 @@ def op(rng, c, lineage):
     choices = []
     if held_raw:
         choices += ["promote", "reprice_raw", "expected_grade", "grading_status",
-                    "remove_raw", "lost_raw", "bulk", "expected_back", "pc_raw"]
+                    "remove_raw", "lost_raw", "bulk", "expected_back", "pc_raw",
+                    "stamp_cert"]
     if held_slab:
         choices += ["crack", "reprice_slab", "remove_slab", "lost_slab", "pc_slab", "confirm"]
     if gone_raw:
@@ -117,11 +118,21 @@ def op(rng, c, lineage):
     choices += ["create_raw", "create_slab"]
     what = rng.choice(choices)
 
-    if what == "promote":
+    if what == "stamp_cert":
+        # the real workflow: a PSA order is reconciled and the cert lands on the
+        # raw card while it is still at grading, days before the box arrives
+        c.execute("UPDATE ungraded_cards SET psa_cert=? WHERE id=?",
+                  (str(rng.randrange(10**8)), rng.choice(held_raw)))
+        c.commit()
+    elif what == "promote":
         src = rng.choice(held_raw)
+        # if a cert was already stamped on the raw row, the slab carries that
+        # same number — anything else would invent a second physical card
+        pre = c.execute("SELECT TRIM(COALESCE(psa_cert,'')) FROM ungraded_cards WHERE id=?",
+                        (src,)).fetchone()[0]
         gid = v2cards.promote_raw(c, src, grading_company=rng.choice(v2db.GRADING_COMPANIES),
                                   grade=rng.choice(["10", "9", "8", "N5"]),
-                                  serial_number=str(rng.randrange(10**8)),
+                                  serial_number=pre or str(rng.randrange(10**8)),
                                   grading_cost=round(rng.choice([0, 20, 80, 350]) * rng.uniform(0, 2), 2))
         lineage["promoted"][src] = gid
     elif what == "crack":
