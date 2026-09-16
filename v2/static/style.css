@@ -429,11 +429,25 @@ td.saved-flash { animation: saved-flash .9s ease-out; }
   .tab { margin: 0 8px; }
 }
 @media (max-width: 760px) {
-  .topbar { height: auto; flex-wrap: wrap; padding: 10px 14px; gap: 8px; position: static; }
-  .tabs { order: 3; width: 100%; overflow-x: auto; }
-  .tab { height: 40px; margin: 0 10px 0 0; white-space: nowrap; }
-  .search { width: 100%; order: 2; }
+  /* the phone is a read-only companion at the table: brand, theme, search,
+     and every screen as a swipeable tab row. No New deal — he never books
+     deals on the phone — and the More menu (hover-only) flattens into tabs. */
+  .topbar { height: auto; flex-wrap: wrap; padding: 10px 14px 0; gap: 8px 10px; position: static; }
+  .brand { margin-right: 0; }
+  .topbar .spacer { order: 0; }
+  .topbar > .btn, .avatar, .kbd { display: none; }
+  .theme-btn { margin-left: 0; }
+  .search { width: 100%; order: 2; height: 38px; }
+  .tabs { order: 3; width: calc(100% + 28px); margin: 0 -14px; padding: 0 14px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { height: 42px; margin: 0 18px 0 0; white-space: nowrap; font-size: 13.5px; }
+  .more { display: contents; }
+  .more > .tab { display: none; }
+  .more .menu { display: contents; }
+  .more .menu a { display: inline-flex; align-items: center; height: 42px; padding: 0 2px; margin: 0 18px 0 0; border-radius: 0; color: var(--muted); font-weight: 500; font-size: 13.5px; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .more .menu a:hover, .more .menu a.active { background: none; color: var(--text); border-bottom-color: var(--text); }
   .main { max-width: calc(100% - 28px); padding: 18px 0 50px; }
+  .page-title { font-size: 26px; }
   .hero { height: auto; }
   .hero .chart { position: relative; left: 0; right: 0; top: 0; height: 160px; margin: 12px 24px 0; }
   .hero .strip { position: relative; left: 0; right: 0; bottom: 0; margin: 16px 24px 24px; flex-wrap: wrap; gap: 20px 28px; }

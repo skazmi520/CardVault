@@ -36,11 +36,24 @@ tr.done .tick svg { display: block; }
 .age { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
 .age.stale { color: var(--warn); }
 @media (max-width: 760px) {
-  .sc-strip { gap: 22px; }
+  .sc-head { flex-wrap: wrap; }
+  .sc-head .sub { display: none; }
+  .sc-head .btn { height: 32px; font-size: 12.5px; padding: 0 12px; }
+  .sc-strip { gap: 22px; flex-wrap: wrap; }
+  .sc-strip .kv .v { font-size: 22px; }
   .sc-filters input[type=text] { width: 100%; }
   .sc-filters .hint { display: none; }
-  #tbl th.c-num, #tbl td.c-num, #tbl th.c-age, #tbl td.c-age, #tbl th.c-id, #tbl td.c-id { display: none; }
-  tbody td { padding: 10px 8px; }
+  #tbl th.c-num, #tbl td.c-num, #tbl th.c-age, #tbl td.c-age, #tbl th.c-ok, #tbl td.c-ok { display: none; }
+  #tbl { font-size: 13px; }
+  #tbl thead th { padding: 0 6px 8px; }
+  #tbl tbody td { padding: 9px 4px; }
+  #tbl tbody td:first-child { padding-left: 2px !important; width: 28px; }
+  #tbl td.name { min-width: 0 !important; }
+  #tbl thead th { width: auto !important; }
+  #tbl td.mv-cell { padding-right: 4px; }
+  #tbl td.name .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+  #tbl td.mv-cell { font-size: 13px; }
+  .chip { height: 20px; padding: 0 6px; font-size: 10px; }
 }
 </style>
 
@@ -96,7 +109,7 @@ tr.done .tick svg { display: block; }
       <th>Card</th>
       <th class="c-num" style="width:70px">#</th>
       <th class="num" style="width:120px">Market</th>
-      <th style="width:40px" title="Confirm the price is still accurate without changing it"></th>
+      <th class="c-ok" style="width:40px" title="Confirm the price is still accurate without changing it"></th>
       <th class="c-age" style="width:96px">Repriced</th>
     </tr></thead>
     <tbody id="tbody"></tbody>
@@ -155,7 +168,7 @@ function render() {
         <div class="meta">${esc(r.set || "")}${r.cert ? `${r.set ? " · " : ""}cert ${esc(r.cert)}` : ""}</div></td>
       <td class="muted c-num">${r.number ? "#" + esc(r.number) : ""}</td>
       <td class="num mv-cell" data-i="${i}" title="Click to reprice">${fmt(r.market_value)}</td>
-      <td style="text-align:center">${r.market_value != null
+      <td class="c-ok" style="text-align:center">${r.market_value != null
         ? `<button class="ok" data-confirm="${r.id}" title="Price still right — mark verified today">${OK}</button>` : ""}</td>
       <td class="c-age"><span class="age ${isStale(r) ? 'stale' : ''}">${age(r)}</span></td>
     </tr>`).join("");
