@@ -3,22 +3,22 @@
 {% block content %}
 <div class="page-title" style="display:flex;align-items:center;justify-content:space-between">
   <span>Deals</span>
-  <a class="btn" href="/deals/new">+ New Deal</a>
+  
 </div>
 
 <div class="panel">
-  <h2>Show Day — {{ today }}</h2>
+  <h2>Show day <span class="muted">{{ today|mdy }}</span></h2>
   <div class="tiles" style="margin-bottom:0">
-    <div class="tile"><div class="v">{{ today_rows|length }}</div><div class="l">Deals Today</div></div>
-    <div class="tile"><div class="v pos">{{ cash_in|money }}</div><div class="l">Cash In</div></div>
-    <div class="tile"><div class="v neg">{{ cash_out|money }}</div><div class="l">Cash Out</div></div>
-    <div class="tile"><div class="v {{ 'pos' if (cash_in - cash_out) >= 0 else 'neg' }}">{{ (cash_in - cash_out)|gain }}</div><div class="l">Net Cash</div></div>
-    <div class="tile"><div class="v {{ 'pos' if day_gain >= 0 else 'neg' }}">{{ day_gain|gain }}</div><div class="l">Realized Gain Today</div></div>
+    <div class="tile"><div class="v">{{ today_rows|length }}</div><div class="l">Deals today</div></div>
+    <div class="tile"><div class="v">{{ cash_in|money0 }}</div><div class="l">Cash in</div></div>
+    <div class="tile"><div class="v">{{ cash_out|money0 }}</div><div class="l">Cash out</div></div>
+    <div class="tile"><div class="v">{{ (cash_in - cash_out)|gain0 }}</div><div class="l">Net cash</div></div>
+    <div class="tile"><div class="v {{ 'pos' if day_gain > 0 else 'neg' if day_gain < 0 else '' }}">{{ day_gain|gain0 if day_gain else '—' }}</div><div class="l">Realized today</div></div>
   </div>
 </div>
 
 <div class="panel">
-  <h2>All Deals</h2>
+  <h2>All deals</h2>
   {% if deals %}
   <div class="table-wrap">
     <table>
@@ -30,15 +30,15 @@
       <tbody>
         {% for d in deals %}
         <tr>
-          <td>{{ d.occurred_at[:16].replace('T', ' ') }}</td>
+          <td class="mono muted">{{ d.occurred_at|mdy }} <span class="faint">{{ d.occurred_at[11:16] }}</span></td>
           <td>{{ d.counterparty or '—' }}</td>
           <td class="muted">{{ d.location or '—' }}</td>
           <td class="muted">{{ d.method }}</td>
           <td class="num">{{ d.n_out }}</td>
           <td class="num">{{ d.n_in }}</td>
-          <td class="num {{ 'pos' if d.cash > 0 else 'neg' if d.cash < 0 else 'muted' }}">{{ d.cash|gain if d.cash else "—" }}</td>
-          <td class="num {{ 'pos' if d.gain >= 0 else 'neg' }}">{{ d.gain|gain }}</td>
-          <td><a href="/deals/{{ d.id }}">view</a></td>
+          <td class="num muted">{{ d.cash|gain0 if d.cash else "—" }}</td>
+          <td class="num {{ 'pos' if d.gain > 0 else 'neg' if d.gain < 0 else 'muted' }}">{{ d.gain|gain0 if d.gain else "—" }}</td>
+          <td><a href="/deals/{{ d.id }}" class="muted">open →</a></td>
         </tr>
         {% endfor %}
       </tbody>

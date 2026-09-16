@@ -135,9 +135,10 @@ a:hover { color: #fff; text-decoration: underline; text-decoration-color: var(--
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 thead th {
   background: none; color: var(--muted); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none;
-  text-align: left; padding: 0 12px 12px; white-space: nowrap; position: sticky; top: 60px; cursor: pointer; user-select: none;
-  background: var(--bg);
+  text-align: left; padding: 0 12px 12px; white-space: nowrap; cursor: pointer; user-select: none;
 }
+/* no sticky table headers for now: inside a scrolling .table-wrap a top
+   offset just slid the header down over the first row (deals list, 09-16) */
 .num { text-align: right; }
 .rowid { font-size: 11px; color: var(--faint); width: 46px; padding-right: 10px; font-family: var(--font-mono); }
 tbody td { padding: 12px; border-top: 1px solid var(--border); white-space: nowrap; vertical-align: middle; }
