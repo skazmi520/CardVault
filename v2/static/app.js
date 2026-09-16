@@ -185,3 +185,15 @@ function lineChartDraw(el, points) {
   });
   el.addEventListener("mouseleave", () => { hov.style.display = "none"; tip.style.display = "none"; });
 }
+
+/* theme: dark is the default; a saved "light" wins */
+document.addEventListener("DOMContentLoaded", () => {
+  const b = document.getElementById("theme-btn");
+  if (!b) return;
+  b.addEventListener("click", () => {
+    const light = document.documentElement.getAttribute("data-theme") !== "light";
+    if (light) document.documentElement.setAttribute("data-theme", "light");
+    else document.documentElement.removeAttribute("data-theme");
+    try { localStorage.setItem("cardvault_theme", light ? "light" : "dark"); } catch (e) {}
+  });
+});

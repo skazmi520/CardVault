@@ -35,7 +35,7 @@
 .drawer .acts .btn { flex: 1; }
 .drawer .acts .btn.icon { flex: 0 0 36px; }
 .menu-wrap { position: relative; }
-.menu-wrap .menu { display: none; position: absolute; right: 0; top: 40px; min-width: 210px; padding: 6px; z-index: 5; background: #15140f; border: 1px solid var(--border-hi); border-radius: var(--r-inset); box-shadow: var(--shadow-lg); }
+.menu-wrap .menu { display: none; position: absolute; right: 0; top: 40px; min-width: 210px; padding: 6px; z-index: 5; background: var(--pop); border: 1px solid var(--border-hi); border-radius: var(--r-inset); box-shadow: var(--shadow-lg); }
 .menu-wrap.open .menu { display: block; }
 .menu-wrap .menu button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--r-tight); background: none; border: none; color: var(--text); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
 .menu-wrap .menu button:hover { background: var(--input); }
@@ -73,13 +73,14 @@
 </div>
 
 <div class="col-tabs" id="col-tabs">
-  <span class="ftab on" data-co="">All <span class="n" data-n=""></span></span>
+  <span class="ftab on" data-co="SLAB">Slabs <span class="n" data-n="SLAB"></span></span>
   <span class="ftab" data-co="PSA">PSA <span class="n" data-n="PSA"></span></span>
   <span class="ftab" data-co="BGS">BGS <span class="n" data-n="BGS"></span></span>
   <span class="ftab" data-co="TAG">TAG <span class="n" data-n="TAG"></span></span>
   <span class="ftab" data-co="CGC">CGC <span class="n" data-n="CGC"></span></span>
   <span class="ftab" data-co="RAW">Raw <span class="n" data-n="RAW"></span></span>
   <span class="ftab" data-co="PC">Personal <span class="n" data-n="PC"></span></span>
+  <span class="ftab" data-co="">All <span class="n" data-n=""></span></span>
   <div style="flex:1"></div>
   <span class="hint-line">↑↓ move · Enter price · E edit · / search · Esc close</span>
 </div>
@@ -230,7 +231,7 @@
 
 <script>
 const CARDS = {{ cards|tojson }};
-let sortKey = "name", sortDir = 1, focusIdx = -1, view = [], companyTab = "";
+let sortKey = "name", sortDir = 1, focusIdx = -1, view = [], companyTab = "SLAB";   // slabs by default — raw lives on the Grading screen
 
 const $ = id => document.getElementById(id);
 const E = $;
@@ -248,6 +249,7 @@ function paperClass(g) { return g == null ? "muted" : g > 0 ? "pos" : ""; }
 
 function matchesTab(r) {
   if (!companyTab) return true;
+  if (companyTab === "SLAB") return r.kind === "slab";
   if (companyTab === "RAW") return r.kind === "raw";
   if (companyTab === "PC") return !!r.is_pc;
   return r.kind === "slab" && r.company === companyTab;
@@ -271,8 +273,8 @@ function applyFilters() {
     return true;
   });
   // tab counts reflect every other filter, so the numbers mean "what you'd see"
-  const counts = { "": base.length, PSA: 0, BGS: 0, TAG: 0, CGC: 0, RAW: 0, PC: 0 };
-  base.forEach(r => { if (r.kind === "raw") counts.RAW++; else if (counts[r.company] !== undefined) counts[r.company]++; if (r.is_pc) counts.PC++; });
+  const counts = { "": base.length, SLAB: 0, PSA: 0, BGS: 0, TAG: 0, CGC: 0, RAW: 0, PC: 0 };
+  base.forEach(r => { if (r.kind === "raw") counts.RAW++; else { counts.SLAB++; if (counts[r.company] !== undefined) counts[r.company]++; } if (r.is_pc) counts.PC++; });
   document.querySelectorAll("#col-tabs .n").forEach(n => n.textContent = counts[n.dataset.n] ?? 0);
   view = base.filter(matchesTab);
   view.sort((a, b) => {
@@ -592,9 +594,12 @@ document.querySelectorAll("thead th").forEach(th => th.addEventListener("click",
   if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = 1; }
   applyFilters();
 }));
+function setTab(co) {
+  companyTab = co;
+  document.querySelectorAll("#col-tabs .ftab").forEach(x => x.classList.toggle("on", x.dataset.co === co));
+}
 document.querySelectorAll("#col-tabs .ftab").forEach(t => t.addEventListener("click", () => {
-  companyTab = t.dataset.co;
-  document.querySelectorAll("#col-tabs .ftab").forEach(x => x.classList.toggle("on", x === t));
+  setTab(t.dataset.co);
   focusIdx = -1; closeDrawer(); applyFilters();
 }));
 tbody.addEventListener("click", e => {
@@ -617,6 +622,13 @@ document.addEventListener("keydown", e => {
 function scrollFocus() { const row = tbody.querySelector("tr.focused"); if (row) row.scrollIntoView({ block: "nearest" }); }
 ["f-search", "f-set", "f-kind", "f-grade", "f-status", "f-stale"].forEach(id =>
   $(id).addEventListener("input", () => { focusIdx = -1; closeDrawer(); applyFilters(); }));
+// the kind filter and the tabs would otherwise contradict each other
+$("f-kind").addEventListener("input", () => {
+  const k = $("f-kind").value;
+  if (k === "raw") setTab("RAW"); else if (k === "slab" && (companyTab === "RAW" || !companyTab)) setTab("SLAB");
+  applyFilters();
+});
+$("f-search").addEventListener("input", () => { if ($("f-search").value.trim() && companyTab === "SLAB") { setTab(""); applyFilters(); } });
 
 /* deep links: ?status=submitted_for_grading, ?kind=slab|raw, ?q=… */
 {
@@ -624,6 +636,9 @@ function scrollFocus() { const row = tbody.querySelector("tr.focused"); if (row)
   if (params.get("status")) $("f-status").value = params.get("status");
   if (params.get("kind")) $("f-kind").value = params.get("kind");
   if (params.get("q")) $("f-search").value = params.get("q");
+  // anything that points at raw cards, or a search, needs to look past the slabs-only default
+  if (params.get("kind") === "raw" || params.get("status") === "submitted_for_grading") setTab("RAW");
+  else if (params.get("q") || params.get("status")) setTab("");
 }
 applyFilters();
 </script>

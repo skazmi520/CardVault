@@ -59,7 +59,14 @@ CGC `#c98bf0`, PC `#e0a52a`. Fill at 12% alpha, border at 34%, text solid.
 `--text #141412`, `--muted #6b6a64`, `--faint #a19f97`, `--accent #141412`,
 `--pos #1a9e5c`, `--neg #d6404c`, `--warn #b07a12`, `--input #f3f2ee`.
 Graders: PSA `#c8362e`, BGS `#2563eb`, TAG `#0f8f7a`, CGC `#7c3aed`.
-Applied with `[data-theme="light"]` on `<html>`; not built yet.
+Applied with `[data-theme="light"]` on `<html>`. Dark is the default; the
+sun/moon button in the top bar flips it and the choice is saved in
+`localStorage` (`cardvault_theme`) and applied before first paint. Values
+that are not "a colour" in the system but still flip with the theme are
+tokens too: `--pop` (menus, dialogs), `--on-accent` (text on the primary
+button), `--btn-hover`, `--spec` / `--spec-lo` (specular edge), `--dots`
+(canvas grid), `--backdrop`. Nothing in a stylesheet or template should
+name a dark-only hex; light grader chips are overridden explicitly.
 
 ### Surfaces
 
