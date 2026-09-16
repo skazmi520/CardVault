@@ -2,150 +2,158 @@
 {% block title %}New Deal{% endblock %}
 {% block content %}
 <style>
-/* deal screen — layered on the app tokens, scoped here */
-.dn-head .row > div label { font-size: 11px; }
-.dn-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
-@media (max-width: 1100px) { .dn-cols { grid-template-columns: 1fr; } }
-.dn-col h2 { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
-.dn-col h2 .badge {
-  margin-left: auto; font-size: 11px; font-weight: 600; color: var(--muted);
-  background: var(--surface-2); border: 1px solid var(--border);
-  padding: 2px 8px; border-radius: 999px;
-}
-.dn-col h2 .dir { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
-  font-weight: 700; padding: 2px 8px; border-radius: 5px; }
-.dir.out { color: #f0b429; background: rgba(237,161,0,.10); border: 1px solid rgba(237,161,0,.3); }
-.dir.in  { color: var(--pos); background: rgba(63,185,124,.10); border: 1px solid rgba(63,185,124,.3); }
+/* deal screen — composed to docs/design-system.md; every id and data-attribute
+   the script relies on is unchanged */
+.dn-meta { display: grid; grid-template-columns: 220px 200px 130px 190px minmax(0,1fr); gap: 12px; align-items: end; margin: 0 0 22px; }
+.dn-meta label { margin-bottom: 5px; }
+.dn-meta input, .dn-meta select { width: 100%; }
+.dn-cols { display: grid; grid-template-columns: minmax(0,1fr) 80px minmax(0,1fr); gap: 0; align-items: start; margin-bottom: 22px; }
+@media (max-width: 1100px) { .dn-cols { grid-template-columns: 1fr; } .dn-mid { display: none; } }
+.dn-col h2 { display: flex; align-items: baseline; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+.dn-col h2 .dir { font-family: var(--font-display); font-weight: 500; font-size: 21px; letter-spacing: 0; }
+.dn-col h2 .badge { margin-left: auto; font-size: 12.5px; font-weight: 400; color: var(--muted); }
+.dn-mid { display: flex; flex-direction: column; align-items: center; padding-top: 60px; gap: 8px; position: relative; align-self: stretch; }
+.dn-mid:before { content: ""; position: absolute; top: 56px; bottom: 0; left: 50%; border-left: 1px dashed var(--border-hi); }
+.dn-mid .knob { width: 44px; height: 44px; border-radius: 50%; background: var(--bg); border: 1px solid var(--border-hi); display: flex; align-items: center; justify-content: center; position: relative; color: var(--muted); }
+.dn-mid .knob svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.dn-mid .pct { position: relative; background: var(--bg); padding: 4px 0; display: flex; flex-direction: column; align-items: center; }
+.dn-mid .pct .n { font-family: var(--font-mono); font-size: 12.5px; }
+.dn-mid .pct .l { font-size: 11px; color: var(--muted); }
 
-.dn-line {
-  display: flex; align-items: center; gap: 10px;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 8px 10px; margin-bottom: 6px;
-}
-.dn-line .who { flex: 1; min-width: 0; }
-.dn-line .who .nm { font-weight: 600; }
-.dn-line .who .meta { font-size: 12px; color: var(--muted); margin-top: 1px; }
-.dn-pill {
-  font-variant-numeric: tabular-nums; font-size: 12.5px; white-space: nowrap;
-  background: var(--surface-3); border: 1px solid var(--border);
-  padding: 4px 9px; border-radius: 999px; color: var(--text);
-}
+/* leaving: each card is the focal surface */
+.dn-line { background: var(--surface-hi); border: 1px solid var(--border); border-radius: var(--r-surface); box-shadow: var(--shadow-lg); padding: 18px 20px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 14px; }
+.dn-line .top { display: flex; align-items: flex-start; gap: 12px; }
+.dn-line .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.dn-line .who .nm { font-family: var(--font-display); font-weight: 500; font-size: 22px; line-height: 1.1; }
+.dn-line .who .meta { font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+.dn-line .figs { display: flex; align-items: flex-end; gap: 22px; }
+.dn-line .figs .kv .v { font-size: 22px; }
+.dn-line .adj { display: flex; align-items: center; gap: 8px; }
+.dn-pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; background: var(--input); border: 1px solid var(--border); color: var(--muted); }
 .dn-pill:empty { display: none; }
-.dn-line .x { color: var(--muted); cursor: pointer; padding: 2px 4px; }
-.dn-line .x:hover { color: var(--neg); }
+.dn-line .x, .dn-inrow .x { color: var(--faint); cursor: pointer; padding: 2px 4px; font-size: 15px; line-height: 1; }
+.dn-line .x:hover, .dn-inrow .x:hover { color: var(--neg); }
 
-.dn-inrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
-.dn-inrow input, .dn-inrow select { min-height: 32px; }
+/* arriving: open rows on the canvas */
+.dn-inrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.dn-inrow input, .dn-inrow select { min-height: 34px; }
+.dn-inrow .brk { flex-basis: 100%; height: 0; }
+.dn-cash { display: flex; align-items: flex-end; gap: 12px; margin-top: 12px; }
+.dn-cash input { width: 150px; font-family: var(--font-mono); }
 
-.dn-dealbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.dn-dealbar .plabel { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--muted); font-weight: 700; margin-bottom: 4px; }
-#deal-price { font-size: 22px; font-weight: 700; width: 180px; padding: 8px 12px;
-  font-variant-numeric: tabular-nums; }
-#deal-price:disabled { opacity: .75; color: var(--muted); }
-.dn-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.dn-seg button {
-  background: var(--surface-2); color: var(--text); border: none; cursor: pointer;
-  padding: 9px 14px; font-size: 13px; font-weight: 600; min-height: 40px;
-  border-right: 1px solid var(--border);
-}
-.dn-seg button:last-child { border-right: none; }
-.dn-seg button:hover { background: var(--surface-3); }
-.dn-seg button.on { background: var(--accent); color: #fff; }
-
-.dn-summary { border-left: 3px solid var(--accent); }
-#pv-sentence { font-size: 15px; color: var(--text); }
-#pv-sentence.empty { color: var(--muted); }
-.dn-stats { display: flex; gap: 24px; align-items: center; }
-.dn-stat .lbl { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--muted); font-weight: 700; }
-.dn-stat .val { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
-#pv-market { font-size: 13px; }
+/* the bottom band: ask left, receipt right */
+.dn-band { display: grid; grid-template-columns: 440px minmax(0,1fr); gap: 40px; align-items: end; padding-top: 20px; border-top: 1px solid var(--border); margin-top: 6px; }
+@media (max-width: 1100px) { .dn-band { grid-template-columns: 1fr; } }
+.dn-dealbar { display: flex; flex-direction: column; gap: 12px; }
+.dn-dealbar .plabel { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+.dn-ask { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+#deal-price { font-family: var(--font-mono); font-size: 22px; font-weight: 500; width: 170px; padding: 6px 14px; min-height: 40px; letter-spacing: -.01em; }
+#deal-price:disabled { opacity: .7; color: var(--muted); }
+.dn-seg { display: inline-flex; background: var(--input); border: 1px solid var(--border); border-radius: 999px; padding: 3px; height: 34px; gap: 2px; }
+.dn-seg button { background: none; color: var(--muted); border: none; cursor: pointer; padding: 0 11px; font: inherit; font-size: 12px; font-weight: 500; border-radius: 999px; }
+.dn-seg button:hover { color: var(--text); }
+.dn-seg button.on { background: var(--surface-hi); color: var(--text); box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 1px 2px rgba(0,0,0,.3); }
+.dn-summary { display: flex; align-items: flex-end; justify-content: flex-end; gap: 28px; flex-wrap: wrap; }
+.dn-ledger { display: flex; flex-direction: column; gap: 3px; font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+.dn-ledger div { display: flex; justify-content: space-between; gap: 24px; }
+.dn-ledger div span:first-child { font-family: var(--font-ui); }
+.dn-ledger div span:last-child { color: var(--text); }
+.dn-stat { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.dn-stat .lbl { font-size: 12px; color: var(--muted); }
+.dn-stat .val { font-family: var(--font-display); font-weight: 500; font-size: 22px; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
+.dn-stat.big .val { font-size: 44px; line-height: .95; }
+#pv-sentence { font-size: 12.5px; color: var(--muted); text-align: right; margin-top: 10px; }
+#pv-sentence.empty { color: var(--faint); }
+#pv-market { font-size: 12.5px; color: var(--muted); text-align: right; margin-top: 4px; }
+#pv-market .pos { color: var(--pos); } #pv-market .neg { color: var(--neg); }
+#pv-warnings { margin-top: 8px; }
 </style>
 
-<div class="page-title">New Deal</div>
-
-<div class="panel dn-head">
-  <div class="row">
-    <div><label>Counterparty</label><input type="text" id="d-counterparty" placeholder="Name or table #" autofocus></div>
-    <div><label>Location</label><input type="text" id="d-location" placeholder="optional"></div>
-    <div><label>Payment</label>
-      <select id="d-method">{% for m in methods %}<option>{{ m }}</option>{% endfor %}</select>
-    </div>
-    <div><label>When</label><input type="datetime-local" id="d-when"></div>
-    <div style="flex:1"></div>
-    <div style="align-self:end;padding-bottom:6px">
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0">
-        <input type="checkbox" id="adjust-mode" style="min-height:auto">
-        <span class="muted" style="font-size:12px">adjust per card</span></label>
-    </div>
+<div style="display:flex;align-items:flex-end;gap:14px;margin-bottom:18px">
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <span class="page-title" style="margin:0">New deal</span>
+    <span class="muted" style="font-size:13px">Pick what leaves, enter what arrives, and the engine books the rest.</span>
   </div>
+  <div style="flex:1"></div>
+  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;padding-bottom:6px">
+    <input type="checkbox" id="adjust-mode" style="min-height:auto">
+    <span class="muted" style="font-size:12.5px">adjust per card</span></label>
+</div>
+
+<div class="dn-meta">
+  <div><label>Counterparty</label><input type="text" id="d-counterparty" placeholder="Name or table #" autofocus></div>
+  <div><label>Location</label><input type="text" id="d-location" placeholder="optional"></div>
+  <div><label>Payment</label><select id="d-method">{% for m in methods %}<option>{{ m }}</option>{% endfor %}</select></div>
+  <div><label>When</label><input type="datetime-local" id="d-when"></div>
+  <div><label>Notes</label><input type="text" id="d-notes" placeholder="anything worth remembering"></div>
 </div>
 
 <div class="dn-cols">
-  <div class="panel dn-col">
-    <h2><span class="dir out">Leaving</span><span class="muted">my cards + cash</span>
+  <div class="dn-col">
+    <h2><span class="dir">Leaving</span><span class="muted" style="font-size:12.5px">my cards + cash</span>
       <span class="badge" id="out-total">0 cards</span></h2>
+    <div id="out-lines"></div>
     <div style="position:relative;margin-bottom:10px">
-      <input type="text" id="out-search" placeholder="Search inventory to add…" style="width:100%">
+      <input type="text" id="out-search" placeholder="Add from my collection · name, set or cert" style="width:100%;border-style:dashed">
       <div class="picker-results" id="out-results" hidden></div>
     </div>
-    <div id="out-lines"></div>
-    <div class="row" style="margin-top:10px">
-      <div><label>Cash I pay</label>
-        <input type="text" id="cash-paid" placeholder="0.00" style="width:130px"></div>
+    <div class="dn-cash">
+      <div><label>Cash I pay</label><input type="text" id="cash-paid" placeholder="0.00"></div>
     </div>
   </div>
 
-  <div class="panel dn-col">
-    <h2><span class="dir in">Arriving</span><span class="muted">their cards + cash</span>
+  <div class="dn-mid">
+    <div class="knob"><svg viewBox="0 0 24 24"><path d="M4 7h14l-3-3"/><path d="M20 17H6l3 3"/></svg></div>
+    <div class="pct"><span class="n" id="mid-pct">—</span><span class="l">of market</span></div>
+  </div>
+
+  <div class="dn-col">
+    <h2><span class="dir">Arriving</span><span class="muted" style="font-size:12.5px">their cards + cash</span>
       <span class="badge" id="in-total">0 cards</span></h2>
     <div id="in-lines"></div>
-    <button class="btn ghost small" id="add-in">+ Add card</button>
-    <div class="row" style="margin-top:10px">
-      <div><label>Cash I receive</label>
-        <input type="text" id="cash-received" placeholder="0.00" style="width:130px"></div>
+    <div style="display:flex;align-items:flex-end;gap:12px;margin-top:12px">
+      <button class="btn ghost small" id="add-in">+ Add card</button>
+      <div style="flex:1"></div>
+      <div class="dn-cash" style="margin:0"><div><label>Cash I receive</label><input type="text" id="cash-received" placeholder="0.00"></div></div>
     </div>
   </div>
 </div>
 
-<div class="panel">
+<div class="dn-band">
   <div class="dn-dealbar">
     <div>
-      <div class="plabel" id="price-label">My side goes out at</div>
-      <input type="text" id="deal-price" placeholder="$">
-    </div>
-    <div>
-      <div class="plabel">of my market</div>
-      <div class="dn-seg" id="price-chips">
-        <button type="button" data-pct="85">85%</button>
-        <button type="button" data-pct="88">88%</button>
-        <button type="button" data-pct="90">90%</button>
-        <button type="button" data-pct="100">100%</button>
+      <div class="plabel" id="price-label">My ask</div>
+      <div class="dn-ask">
+        <input type="text" id="deal-price" placeholder="$">
+        <div class="dn-seg" id="price-chips">
+          <button type="button" data-pct="85">85%</button>
+          <button type="button" data-pct="88">88%</button>
+          <button type="button" data-pct="90">90%</button>
+          <button type="button" data-pct="100">100%</button>
+        </div>
+        <span class="muted" id="price-hint" style="font-size:12.5px"></span>
       </div>
     </div>
-    <span class="muted" id="price-hint" style="font-size:12px;align-self:end;padding-bottom:10px"></span>
-    <div style="flex:1"></div>
-    <div style="min-width:220px;flex:2"><label>Notes</label><input type="text" id="d-notes" style="width:100%"></div>
+    <span class="muted" style="font-size:12px;max-width:380px">The ask only fills blank take-ins. Typed take-ins are firm and never move; what your cards fetched is the cash plus the take-ins.</span>
   </div>
-</div>
 
-<div class="panel dn-summary" id="preview-panel">
-  <div id="pv-sentence" class="empty" style="margin-bottom:6px">Add cards to see what will book.</div>
-  <div id="pv-market" style="margin-bottom:4px"></div>
-  <div id="pv-warnings"></div>
-  <div style="display:flex;align-items:center;gap:14px;margin-top:10px;flex-wrap:wrap">
-    <div class="dn-stats">
-      <div class="dn-stat"><div class="lbl">Realized now</div><div class="val" id="t-realized">—</div></div>
-      <div class="dn-stat"><div class="lbl">Paper on arriving</div><div class="val" id="t-paper">—</div></div>
+  <div id="preview-panel">
+    <div class="dn-summary">
+      <div class="dn-ledger">
+        <div><span>Out fetched</span><span id="l-out">—</span></div>
+        <div><span>In at</span><span id="l-in">—</span></div>
+        <div><span>Cash</span><span id="l-cash">—</span></div>
+      </div>
+      <div class="dn-stat"><div class="lbl">Built in on arriving</div><div class="val" id="t-paper">—</div></div>
+      <div class="dn-stat big"><div class="lbl">Realized on this deal</div><div class="val" id="t-realized">—</div></div>
+      <button class="btn" id="save" style="height:44px;padding:0 22px;font-size:14px;margin-bottom:2px">Save deal →</button>
     </div>
-    <div style="flex:1"></div>
-    <button class="btn" id="save" style="min-width:140px">Save Deal</button>
+    <div id="pv-sentence" class="empty">Add cards to see what will book.</div>
+    <div id="pv-market"></div>
+    <div id="pv-warnings"></div>
   </div>
 </div>
-<div id="save-msg" style="margin-top:10px"></div>
+<div id="save-msg" style="margin-top:14px"></div>
 
 <script>
 const INVENTORY = {{ cards|tojson }};
@@ -221,26 +229,33 @@ const adjusting = () => $("adjust-mode").checked;
 function renderLines() {
   $("out-lines").innerHTML = outLines.map((l, i) => `
     <div class="dn-line">
-      <div class="who">
-        <div class="nm">${esc(l.name)}
-          ${l.is_pc ? '<span class="chip pc" title="Personal collection">PC</span>' : ''}</div>
-        <div class="meta">${esc(l.label)} · mv ${fmt(l.mv)} · ${l.basis_unknown
-          ? '<span class="unknown">basis unknown</span>' : "basis " + fmt(l.basis)}</div>
+      <div class="top">
+        <div class="who">
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <span class="chip ${l.label === "RAW" ? "raw" : esc(l.label.split(" ")[0])}">${esc(l.label)}</span>
+            ${l.is_pc ? '<span class="chip pc" title="Personal collection">PC</span>' : ''}
+          </div>
+          <div class="nm">${esc(l.name)}</div>
+          <div class="meta">${l.basis_unknown ? '<span class="unknown">basis unknown</span>' : ""}</div>
+        </div>
+        <span class="x" data-out="${i}">✕</span>
       </div>
-      ${adjusting() ? `
-        <button type="button" class="btn ghost small" data-mkt="${i}" tabindex="-1"
-                title="Use full market value for this card">=mkt</button>
-        <input class="val" data-side="out" data-i="${i}" type="text"
-               placeholder="agreed $" value="${esc(l.deal_value)}" style="width:96px">` : ""}
-      <span class="dn-pill" data-pv-out="${i}"></span>
-      <span class="x" data-out="${i}">✕</span>
-    </div>`).join("") || '<div class="muted" style="margin-bottom:8px">No cards leaving — a pure buy.</div>';
+      <div class="figs">
+        <div class="kv"><span class="l">Market</span><span class="v display">${fmt(l.mv)}</span></div>
+        <div class="kv"><span class="l">Basis</span><span class="v display">${l.basis_unknown ? "?" : fmt(l.basis)}</span></div>
+        <div style="flex:1"></div>
+        ${adjusting() ? `<div class="adj">
+          <button type="button" class="btn ghost small" data-mkt="${i}" tabindex="-1" title="Use full market value for this card">=mkt</button>
+          <input class="val" data-side="out" data-i="${i}" type="text" placeholder="agreed $" value="${esc(l.deal_value)}" style="width:110px"></div>` : ""}
+        <span class="dn-pill" data-pv-out="${i}"></span>
+      </div>
+    </div>`).join("") || '<div class="muted" style="margin-bottom:8px;font-size:12.5px">No cards leaving — a pure buy.</div>';
 
   $("in-lines").innerHTML = inLines.map((l, i) => `
     <div class="dn-inrow">
-      <input type="text" placeholder="Card name" style="flex:2;min-width:130px"
+      <input type="text" placeholder="Card name" style="flex:2;min-width:120px"
              data-in="${i}" data-f="name" value="${esc(l.name)}">
-      <input type="text" placeholder="Set" style="flex:1;min-width:80px"
+      <input type="text" placeholder="Set" style="flex:1;min-width:70px"
              data-in="${i}" data-f="set" value="${esc(l.set)}">
       <select data-in="${i}" data-f="is_graded" style="width:78px">
         <option value="1" ${l.is_graded ? "selected" : ""}>Slab</option>
@@ -250,22 +265,24 @@ function renderLines() {
         <select data-in="${i}" data-f="company" style="width:76px">
           ${["PSA","BGS","CGC","TAG"].map(co => `<option ${l.company===co?"selected":""}>${co}</option>`).join("")}
         </select>
-        <input type="text" placeholder="Grade" style="width:64px" data-in="${i}" data-f="grade" value="${esc(l.grade)}">
-        <input type="text" placeholder="Cert #" style="width:104px" data-in="${i}" data-f="cert" value="${esc(l.cert)}">
-        <input type="text" placeholder="Year" style="width:60px" data-in="${i}" data-f="year" value="${esc(l.year)}">
+        <input type="text" placeholder="Grade" style="width:60px" data-in="${i}" data-f="grade" value="${esc(l.grade)}">
+        <input type="text" placeholder="Cert #" style="width:100px" data-in="${i}" data-f="cert" value="${esc(l.cert)}">
+        <span class="brk"></span>
+        <input type="text" placeholder="Year" style="width:64px" data-in="${i}" data-f="year" value="${esc(l.year)}">
         ${l.company === "PSA" ? `<button type="button" class="btn ghost small" data-cert-lookup="${i}"
             title="Fetch name/set/# from PSA">${l._certBusy ? "…" : "PSA ↻"}</button>` : ""}` : ""}
-      <input type="text" placeholder="market $" style="width:86px;text-align:right"
+      ${l.is_graded ? "" : '<span class="brk"></span>'}
+      <input type="text" placeholder="market $" style="width:120px;text-align:right;font-family:var(--font-mono)"
              data-in="${i}" data-f="market_value" value="${esc(l.market_value)}"
              title="What the card is worth — drives the basis split and the paper-gain math">
       ${adjusting() ? `
-        <input class="val" type="text" placeholder="paid $ (pin)" data-side="in" data-i="${i}"
-               value="${esc(l.deal_value)}" style="width:92px"
+        <input class="val" type="text" placeholder="take-in $" data-side="in" data-i="${i}"
+               value="${esc(l.deal_value)}" style="width:120px;text-align:right;font-family:var(--font-mono)"
                title="Pin this card's cost; the rest of the deal total splits across the others">` : ""}
       <span class="dn-pill" data-pv-in="${i}"></span>
       <span class="x" data-inx="${i}">✕</span>
       ${l._certMsg ? `<div style="width:100%;font-size:11px;color:var(--${l._certOk ? "pos" : "neg"})">${esc(l._certMsg)}</div>` : ""}
-    </div>`).join("") || '<div class="muted" style="margin-bottom:8px">Nothing arriving but cash — a pure sale.</div>';
+    </div>`).join("") || '<div class="muted" style="margin-bottom:8px;font-size:12.5px">Nothing arriving but cash — a pure sale.</div>';
 
   bindLineEvents();
   refresh();
@@ -377,8 +394,8 @@ function refresh() {
   $("in-total").textContent  = namedIn().length + " cards";
   const ps = pureSale();
   $("deal-price").disabled = ps;
-  $("price-label").textContent = ps ? "Pure sale — price = cash"
-    : pureBuy() ? "Pure buy — basis = cash paid" : "My side goes out at";
+  $("price-label").textContent = ps ? "Pure sale · price is the cash"
+    : pureBuy() ? "Pure buy · basis is the cash paid" : "My ask";
   if (ps) { $("deal-price").value = String(cashReceived()); markChip(null); }
   const m = myMarket();
   $("price-hint").textContent = m > 0 ? `my market: ${fmt(m)}` : "";
@@ -402,6 +419,7 @@ async function preview() {
     $("pv-sentence").className = "empty";
     $("pv-market").textContent = ""; $("pv-warnings").innerHTML = "";
     $("t-realized").textContent = "—"; $("t-paper").textContent = "—";
+    ["l-out","l-in","l-cash","mid-pct"].forEach(id => $(id).textContent = "—");
     document.querySelectorAll(".dn-pill").forEach(el => el.textContent = "");
     return;
   }
@@ -429,51 +447,50 @@ async function preview() {
   $("t-realized").textContent = fmtGain(realized) + (unknownN ? ` (+${unknownN} ?)` : "");
   $("t-realized").className = "val " + gainClass(realized);
   $("t-paper").textContent = (res.in_lines || []).length ? fmtGain(paper) : "—";
-  $("t-paper").className = "val " + gainClass(paper);
+  $("t-paper").className = "val " + (paper > 0.5 ? "pos" : "");   // paper loss is never red
 
+  // What books, in the owner's terms (2026-09-15): the cards going out fetched
+  // cash plus take-in — that is the proceeds, and realized is that minus
+  // their basis. The cards arriving carry their take-in as basis; the gap to
+  // their market is unrealized, "built in", until they sell.
   const bits = [];
-  if (res.out_lines.length) bits.push(`${res.out_lines.length} card${res.out_lines.length > 1 ? "s" : ""} out at ${fmt(res.v_out)}`);
-  if (res.in_lines.length)  bits.push(`${res.in_lines.length} card${res.in_lines.length > 1 ? "s" : ""} in, basis ${fmt(res.v_in)}`);
+  if (res.out_lines.length) bits.push(`${res.out_lines.length} card${res.out_lines.length > 1 ? "s" : ""} out fetched ${fmt(res.closed)}`);
+  if (res.in_lines.length)  bits.push(`${res.in_lines.length} card${res.in_lines.length > 1 ? "s" : ""} in at ${fmt(res.v_in)}`);
   if (res.cash_amount)      bits.push(`cash ${fmtGain(res.cash_amount)}`);
   $("pv-sentence").textContent = "Books: " + bits.join(" · ");
   $("pv-sentence").className = "";
 
-  // Judgments, calibrated to how this business runs:
-  //  · red is reserved for a REALIZED LOSS — selling below basis. Objective.
-  //  · taking in more market than you give is the model working — green.
-  //  · giving a discount vs market is every normal sale, so it reads as a
-  //    neutral fact ("deal at 85% of my market"), never a warning.
-  const mineM = myMarket() + cashPaid();
-  const theirsM = theirMarket() + cashReceived();
+  // Three numbers and nothing red unless a realized loss books. Taking in less
+  // than you gave is a choice; giving a discount is every normal sale; neither
+  // is a warning.
   const mk = $("pv-market");
   const parts = [];
-  if (realized < -0.5) {
-    parts.push(`<span class="neg">Books a realized loss of ${fmt(-realized)}.</span>`);
+  parts.push(`<span class="${gainClass(realized)}">Realized ${fmtGain(realized)}${unknownN ? ` (+${unknownN} unknown-basis)` : ""}.</span>`);
+  if (res.in_lines.length && theirMarket() > 0.5) {
+    const pct = 100 * res.v_in / theirMarket();
+    parts.push(`<span class="${paper > 0.5 ? "pos" : "muted"}">Taking in ${fmt(theirMarket())} of market at ${fmt(res.v_in)} (${pct.toFixed(0)}%), ${fmtGain(paper)} built in.</span>`);
   }
-  // stay quiet until the arriving side actually has substance — comparing my
-  // market against a half-entered deal reads "0% of market" and means nothing
-  if (mineM > 0.5 && theirsM > 0.5) {
-    const diff = theirsM - mineM;
-    // worded for the shape of the deal — "what you're giving" is cash on a
-    // buy, so say it the way the owner would: paid X for Y of market
-    if (pureBuy()) {
-      const pct = 100 * cashPaid() / theirMarket();
-      const cls = diff > 0.5 ? "pos" : diff < -0.5 ? "muted" : "muted";
-      parts.push(`<span class="${cls}">Paying ${fmt(cashPaid())} for ${fmt(theirMarket())} of market (${pct.toFixed(1)}%).</span>`);
-    } else if (pureSale()) {
-      const pct = 100 * cashReceived() / myMarket();
-      if (diff > 0.5) parts.push(`<span class="pos">Sold ${fmt(diff)} above market (${pct.toFixed(1)}%).</span>`);
-      else if (diff < -0.5) parts.push(`<span class="muted">Deal at ${pct.toFixed(1)}% of your market (${fmt(-diff)} below).</span>`);
-    } else {
-      const pct = 100 * theirsM / mineM;
-      if (diff > 0.5) parts.push(`<span class="pos">Taking in ${fmt(diff)} more market value than you're giving.</span>`);
-      else if (diff < -0.5) parts.push(`<span class="muted">Deal at ${pct.toFixed(1)}% of your market (${fmt(-diff)} below).</span>`);
-    }
+  if (res.out_lines.length && myMarket() > 0.5) {
+    const pct = 100 * res.closed / myMarket();
+    const askTyped = num($("deal-price").value);
+    if (!pureSale() && askTyped != null && Math.abs(askTyped - res.closed) > 0.5)
+      parts.push(`<span class="muted">Asked ${fmt(askTyped)}, closed at ${fmt(res.closed)} — ${pct.toFixed(0)}% of your market.</span>`);
+    else
+      parts.push(`<span class="muted">Deal at ${pct.toFixed(0)}% of your market.</span>`);
+  } else if (pureBuy() && theirMarket() > 0.5) {
+    parts.push(`<span class="muted">Paying ${fmt(cashPaid())} for ${fmt(theirMarket())} of market (${(100 * cashPaid() / theirMarket()).toFixed(0)}%).</span>`);
   }
   mk.innerHTML = parts.join(" ");
 
   $("pv-warnings").innerHTML = (res.warnings || [])
     .map(w => `<div class="warn" style="margin-top:4px">${esc(w)}</div>`).join("");
+
+  // the receipt and the centre badge, straight from the engine's plan
+  $("l-out").textContent  = res.out_lines.length ? fmt(res.closed) : "—";
+  $("l-in").textContent   = res.in_lines.length ? fmt(res.v_in) : "—";
+  $("l-cash").textContent = res.cash_amount ? fmtGain(res.cash_amount) : "—";
+  const mm = myMarket();
+  $("mid-pct").textContent = (res.out_lines.length && mm > 0.5) ? Math.round(100 * res.closed / mm) + "%" : "—";
 }
 
 /* ── save ── */
@@ -492,14 +509,14 @@ $("save").addEventListener("click", async () => {
         + warns.map(w => `<li>${esc(w)}</li>`).join("") + `</ul></div>`
         + `<a class="btn" href="/deals/${res.deal_id}">Open deal #${res.deal_id} →</a>`;
       window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-      $("save").disabled = false; $("save").textContent = "Save Deal";
+      $("save").disabled = false; $("save").textContent = "Save deal →";
     } else {
       toastAfterReload(`Deal #${res.deal_id} saved.`, "success");
       window.location = `/deals/${res.deal_id}`;
     }
   } catch (err) {
     msg.innerHTML = `<div class="warn">${esc(err.message)}</div>`;
-    $("save").disabled = false; $("save").textContent = "Save Deal";
+    $("save").disabled = false; $("save").textContent = "Save deal →";
   }
 });
 
