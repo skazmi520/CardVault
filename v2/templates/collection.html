@@ -1,12 +1,90 @@
 {% extends "base.html" %}
 {% block title %}Collection{% endblock %}
 {% block content %}
-<div class="page-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-  <span>Collection <span class="sub" id="count-sub"></span></span>
-  <button class="btn small" id="add-card-btn">+ Add card</button>
+<style>
+/* collection — docs/design-system.md. The drawer is the one elevated surface. */
+.col-head { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 14px; }
+.col-head .sub { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.col-tabs { display: flex; align-items: center; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.ftab { display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 2px; margin-right: 24px; color: var(--muted); font-weight: 500; font-size: 13.5px; border-bottom: 2px solid transparent; cursor: pointer; user-select: none; }
+.ftab.on { color: var(--text); border-bottom-color: var(--text); }
+.ftab .n { font-size: 11.5px; color: var(--muted); }
+.col-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 0 10px; }
+.col-filters input[type=text] { width: 260px; }
+.col-filters select { min-height: 32px; padding: 4px 28px 4px 12px; font-size: 12.5px; }
+.col-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; align-items: start; }
+.col-grid.open { grid-template-columns: minmax(0, 1fr) 400px; }
+@media (max-width: 1100px) { .col-grid.open { grid-template-columns: 1fr; } }
+#tbl tbody tr { cursor: default; }
+#tbl tbody tr.focused td { background: var(--row-sel); }
+#tbl tbody tr.focused td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+#tbl td.name .nm { font-weight: 500; }
+#tbl td.name .meta { font-size: 11.5px; color: var(--muted); }
+#tbl td.mv-cell:hover { text-decoration: underline dotted var(--border-hi); }
+
+/* the drawer */
+.drawer { position: sticky; top: 86px; padding: 22px 22px 20px; display: flex; flex-direction: column; gap: 18px; border-radius: var(--r-surface); }
+.drawer .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.drawer .nm { font-family: var(--font-display); font-weight: 500; font-size: 22px; line-height: 1.15; }
+.drawer .meta { font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+.drawer .figs { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; }
+.drawer .figs .kv .v { font-size: 30px; line-height: 1; }
+.drawer .figs .kv.small .v { font-size: 18px; }
+.drawer .figs .ed { overflow: visible; max-width: none; }
+.drawer .acts { display: flex; gap: 8px; align-items: center; }
+.drawer .acts .btn { flex: 1; }
+.drawer .acts .btn.icon { flex: 0 0 36px; }
+.menu-wrap { position: relative; }
+.menu-wrap .menu { display: none; position: absolute; right: 0; top: 40px; min-width: 210px; padding: 6px; z-index: 5; background: #15140f; border: 1px solid var(--border-hi); border-radius: var(--r-inset); box-shadow: var(--shadow-lg); }
+.menu-wrap.open .menu { display: block; }
+.menu-wrap .menu button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--r-tight); background: none; border: none; color: var(--text); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
+.menu-wrap .menu button:hover { background: var(--input); }
+.menu-wrap .menu button.danger { color: var(--neg); }
+.menu-wrap .menu hr { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
+.dl { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px 12px; font-size: 13px; align-items: center; }
+.dl dt { color: var(--muted); font-size: 12px; }
+.dl dd { min-width: 0; }
+.ed { display: inline-block; min-width: 40px; padding: 3px 8px; margin: -3px -8px; border-radius: var(--r-tight); cursor: text; border: 1px solid transparent; transition: border-color .15s var(--ease), background .15s var(--ease); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ed:hover { background: var(--input); border-color: var(--border); }
+.ed.empty { color: var(--faint); font-style: italic; }
+.ed input { width: 100%; min-height: 30px; padding: 3px 8px; margin: -4px -9px; border-radius: var(--r-tight); font: inherit; }
+.ed input.mono { font-family: var(--font-mono); }
+.drawer .figs .ed { font: inherit; }
+.drawer .figs .ed input { font-family: var(--font-display); font-size: 26px; width: 180px; padding: 0 8px; min-height: 40px; border-radius: var(--r-tight); }
+.drawer .sec { display: flex; flex-direction: column; gap: 10px; padding-top: 16px; border-top: 1px solid var(--border); }
+.drawer .sec .eyebrow { letter-spacing: .02em; text-transform: none; font-size: 12px; }
+.hist { display: flex; flex-direction: column; gap: 8px; }
+.hist .it { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; line-height: 1.3; }
+.hist .it .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-hi); margin-top: 5px; flex-shrink: 0; }
+.hist .it .when { color: var(--muted); font-size: 11.5px; }
+.sell-row { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--r-inset); background: var(--input); border: 1px solid var(--border); }
+.sell-row .row > div { flex: 1; }
+.hint-line { font-size: 12px; color: var(--muted); }
+</style>
+
+<div class="col-head">
+  <div>
+    <span class="page-title" style="margin:0">Collection</span>
+    <div class="sub" id="count-sub"></div>
+  </div>
+  <div style="flex:1"></div>
+  <a class="btn ghost" href="/reports/collection.csv" style="height:34px">Export</a>
+  <button class="btn ghost" id="add-card-btn" style="height:34px">+ Add card</button>
 </div>
 
-<div class="filters">
+<div class="col-tabs" id="col-tabs">
+  <span class="ftab on" data-co="">All <span class="n" data-n=""></span></span>
+  <span class="ftab" data-co="PSA">PSA <span class="n" data-n="PSA"></span></span>
+  <span class="ftab" data-co="BGS">BGS <span class="n" data-n="BGS"></span></span>
+  <span class="ftab" data-co="TAG">TAG <span class="n" data-n="TAG"></span></span>
+  <span class="ftab" data-co="CGC">CGC <span class="n" data-n="CGC"></span></span>
+  <span class="ftab" data-co="RAW">Raw <span class="n" data-n="RAW"></span></span>
+  <span class="ftab" data-co="PC">Personal <span class="n" data-n="PC"></span></span>
+  <div style="flex:1"></div>
+  <span class="hint-line">↑↓ move · Enter price · E edit · / search · Esc close</span>
+</div>
+
+<div class="col-filters">
   <input type="text" id="f-search" placeholder="Search name, set, cert…  ( / )">
   <select id="f-set">
     <option value="">All sets</option>
@@ -29,88 +107,80 @@
     <option value="lost">Lost / stolen</option>
     <option value="removed">Removed from inventory</option>
   </select>
-  <span class="hint">↑↓ move · Enter edit price · E edit card · Esc cancel</span>
+  <label style="display:inline-flex;align-items:center;gap:6px;margin:0;font-size:12.5px;color:var(--muted);cursor:pointer"><input type="checkbox" id="f-stale" style="min-height:auto"> stale only</label>
 </div>
 
-<div class="table-wrap">
-  <table id="tbl">
-    <thead><tr>
-      <th data-k="id" class="num" title="CardVault's own number for this card. Two cards can share a name; this never repeats.">ID</th>
-      <th data-k="name">Name</th>
-      <th data-k="set">Set</th>
-      <th data-k="grade">Grade</th>
-      <th data-k="kind">Type</th>
-      <th data-k="acq_cost" class="num">Acq. Cost</th>
-      <th data-k="basis" class="num">Basis</th>
-      <th data-k="market_value" class="num">Market Value</th>
-      <th data-k="gain" class="num">Gain</th>
-      <th data-k="repriced">Repriced</th>
-      <th></th>
-    </tr></thead>
-    <tbody id="tbody"></tbody>
-  </table>
-</div>
+<div class="col-grid" id="col-grid">
+  <div class="table-wrap">
+    <table id="tbl">
+      <thead><tr>
+        <th data-k="id" class="num" title="CardVault's own number for this card. Two cards can share a name; this never repeats.">ID</th>
+        <th data-k="name">Card</th>
+        <th data-k="grade">Grade</th>
+        <th data-k="basis" class="num">Basis</th>
+        <th data-k="market_value" class="num">Market</th>
+        <th data-k="gain" class="num">Gain</th>
+        <th data-k="repriced" class="num">Repriced</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
 
-<!-- card edit modal -->
-<div class="modal-backdrop" id="edit-backdrop" hidden>
-  <div class="modal">
-    <h2 id="edit-title">Edit Card</h2>
-    <div class="row">
-      <div style="flex:2;min-width:200px"><label>Card name</label><input type="text" id="e-name" style="width:100%"></div>
-      <div><label>Card #</label><input type="text" id="e-number" style="width:90px"></div>
+  <aside class="card raised drawer" id="drawer" hidden>
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px">
+        <div class="chips" id="d-chips"></div>
+        <div class="nm"><span class="ed" data-f="name" id="d-name"></span></div>
+        <div class="meta" id="d-meta"></div>
+      </div>
+      <button class="rowedit" id="d-close" title="Close (Esc)">✕</button>
     </div>
-    <div class="row">
-      <div style="flex:1"><label>Set</label><input type="text" id="e-set" style="width:100%"></div>
-      <div><label>Year</label><input type="text" id="e-year" style="width:80px"></div>
+    <div class="figs">
+      <div class="kv"><span class="l">Market</span><span class="v display"><span class="ed mono" data-f="market_value" id="d-market"></span></span></div>
+      <div class="kv small" style="padding-bottom:4px"><span class="l">Basis</span><span class="v display"><span class="ed mono" data-f="basis" id="d-basis"></span></span></div>
     </div>
-    <div class="row" id="e-slab-row">
-      <div><label>Company</label>
-        <select id="e-company"><option>PSA</option><option>BGS</option><option>CGC</option><option>TAG</option></select></div>
-      <div><label>Grade</label><input type="text" id="e-grade" style="width:80px"></div>
-      <div style="flex:1"><label>Cert / serial #</label><input type="text" id="e-cert" style="width:100%"></div>
-    </div>
-    <div class="row">
-      <div><label>Cost basis ($)</label><input type="text" id="e-basis" style="width:120px"></div>
-      <div><label>Acquired</label><input type="date" id="e-date"></div>
-    </div>
-    <div class="row">
-      <div style="flex:1"><label>Notes</label><input type="text" id="e-notes" style="width:100%"></div>
-      <div style="align-self:end;padding-bottom:8px">
-        <label style="display:flex;align-items:center;gap:6px;margin:0;cursor:pointer">
-          <input type="checkbox" id="e-pc" style="min-height:auto">
-          Personal collection</label>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:-6px"><span class="pill" id="d-gain"></span><span class="hint-line" id="d-gain-note">unrealized · a paper gain until it sells</span></div>
+    <div class="acts">
+      <button class="btn" id="d-reprice">Reprice</button>
+      <button class="btn ghost" id="d-sell">Sell…</button>
+      <div class="menu-wrap" id="d-menu-wrap">
+        <button class="btn ghost icon" id="d-more" title="More actions">…</button>
+        <div class="menu">
+          <button id="m-pc"></button>
+          <button id="m-crack">Crack to raw…</button>
+          <hr>
+          <button id="m-remove">Remove from inventory…</button>
+          <button class="danger" id="m-lost">Mark lost…</button>
+          <button id="m-restore">Restore to inventory…</button>
+        </div>
       </div>
     </div>
-    <div class="row" id="e-sell-row" hidden
-         style="border-top:1px solid var(--border);padding-top:12px;margin-top:6px">
-      <div><label>Sold for ($)</label><input type="text" id="e-sell-price" style="width:110px"></div>
-      <div><label>Buyer</label><input type="text" id="e-sell-buyer" placeholder="optional" style="width:140px"></div>
-      <div><label>Method</label>
-        <select id="e-sell-method">
-          <option>cash</option><option>venmo</option><option>zelle</option><option>paypal</option>
-        </select></div>
-      <div><button class="btn" id="e-sell-confirm">Confirm sale</button></div>
+    <div class="sell-row" id="d-sell-row" hidden>
+      <div class="hint-line">One-card cash sale — books a deal underneath.</div>
+      <div class="row">
+        <div><label>Sold for ($)</label><input type="text" id="e-sell-price" class="mono"></div>
+        <div><label>Buyer</label><input type="text" id="e-sell-buyer" placeholder="optional"></div>
+        <div><label>Method</label><select id="e-sell-method"><option>cash</option><option>venmo</option><option>zelle</option><option>paypal</option></select></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost small" id="e-sell-cancel">Cancel</button><button class="btn small" id="e-sell-confirm">Book sale</button></div>
     </div>
-    <div class="actions">
-      <button class="btn ghost small" id="e-sell" style="margin-right:6px;color:var(--pos);border-color:var(--pos)"
-              title="One-card cash sale — books a deal underneath">Sell…</button>
-      <button class="btn ghost small" id="e-crack" style="margin-right:6px;color:var(--neg);border-color:var(--neg)"
-              title="Break the card out of its slab and move it to the raw section">Crack to raw…</button>
-      <button class="btn ghost small" id="e-remove" style="margin-right:6px"
-              title="Take this card out of inventory without selling it — pulled to a binder, entered by mistake">Remove…</button>
-      <select id="e-lost-reason" style="margin-right:4px;font-size:12px;min-height:auto"
-              title="Why the card is gone">
-        {% for reason in lost_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}
-      </select>
-      <button class="btn ghost small" id="e-lost" style="margin-right:6px;color:var(--neg);border-color:var(--neg)"
-              title="The card is gone and no money came back — books the basis as a realized loss">Lost…</button>
-      <button class="btn ghost small" id="e-restore" style="margin-right:auto;color:var(--pos);border-color:var(--pos)"
-              title="Put this card back into inventory">Restore</button>
-      <span id="e-msg" class="neg" style="align-self:center;font-size:12px"></span>
-      <button class="btn ghost" id="e-cancel">Cancel</button>
-      <button class="btn" id="e-save">Save</button>
+    <div class="sell-row" id="d-lost-row" hidden>
+      <div class="hint-line">Gone with no money back. Unlike Remove, this hits your P&amp;L.</div>
+      <div class="row">
+        <div><label>Reason</label><select id="e-lost-reason">{% for reason in lost_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost small" id="e-lost-cancel">Cancel</button><button class="btn danger small" id="e-lost-confirm">Mark lost</button></div>
     </div>
-  </div>
+    <div class="neg" id="e-msg" style="font-size:12px"></div>
+    <div class="sec">
+      <span class="eyebrow">Details <span class="faint">· click a value to change it</span></span>
+      <dl class="dl" id="d-details"></dl>
+    </div>
+    <div class="sec">
+      <span class="eyebrow">History</span>
+      <div class="hist" id="d-hist"><span class="muted" style="font-size:12.5px">Loading…</span></div>
+    </div>
+  </aside>
 </div>
 
 <!-- add card manually (no deal behind it) -->
@@ -160,99 +230,110 @@
 
 <script>
 const CARDS = {{ cards|tojson }};
-let sortKey = "name", sortDir = 1, focusIdx = -1, view = [];
+let sortKey = "name", sortDir = 1, focusIdx = -1, view = [], companyTab = "";
 
 const $ = id => document.getElementById(id);
+const E = $;
 const tbody = $("tbody");
 
-function staleClass(r) {
-  if (!r.repriced) return "muted";
-  const days = (Date.now() - new Date(r.repriced.slice(0,10))) / 864e5;
-  return days > 30 ? "stale" : "muted";
+function staleDays(r) {
+  if (!r.repriced) return null;
+  return Math.floor((Date.now() - new Date(r.repriced.slice(0, 10))) / 864e5);
+}
+function staleClass(r) { const d = staleDays(r); return d === null || d > 30 ? "stale" : "muted"; }
+function repricedLabel(r) { const d = staleDays(r); return d === null ? "never" : d === 0 ? "today" : d + "d"; }
+// the collection shows cards still held, so a negative gain here is a paper
+// loss — a plain number, never red. Red is for a realized loss.
+function paperClass(g) { return g == null ? "muted" : g > 0 ? "pos" : ""; }
+
+function matchesTab(r) {
+  if (!companyTab) return true;
+  if (companyTab === "RAW") return r.kind === "raw";
+  if (companyTab === "PC") return !!r.is_pc;
+  return r.kind === "slab" && r.company === companyTab;
 }
 
 function applyFilters() {
   const q = $("f-search").value.trim().toLowerCase();
   const set = $("f-set").value, kind = $("f-kind").value;
-  const grade = $("f-grade").value, status = $("f-status").value;
-  view = CARDS.filter(r => {
+  const grade = $("f-grade").value, status = $("f-status").value, staleOnly = $("f-stale").checked;
+  const base = CARDS.filter(r => {
     if (status ? r.status !== status
                : (r.status !== "active" && r.status !== "submitted_for_grading")) return false;
     if (kind && r.kind !== kind) return false;
     if (set && r.set !== set) return false;
     if (grade && parseFloat(r.grade) !== parseFloat(grade)) return false;
+    if (staleOnly && staleClass(r) !== "stale") return false;
     if (q) {
       const hay = (r.name + " " + r.set + " " + r.cert + " " + r.number + " " + r.id).toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
+  // tab counts reflect every other filter, so the numbers mean "what you'd see"
+  const counts = { "": base.length, PSA: 0, BGS: 0, TAG: 0, CGC: 0, RAW: 0, PC: 0 };
+  base.forEach(r => { if (r.kind === "raw") counts.RAW++; else if (counts[r.company] !== undefined) counts[r.company]++; if (r.is_pc) counts.PC++; });
+  document.querySelectorAll("#col-tabs .n").forEach(n => n.textContent = counts[n.dataset.n] ?? 0);
+  view = base.filter(matchesTab);
   view.sort((a, b) => {
     let x = a[sortKey], y = b[sortKey];
-    if (sortKey === "grade") {          // numeric: PSA 10 > 9.5 > 9, not lexicographic
-      x = parseFloat(x); y = parseFloat(y);
-      if (isNaN(x)) x = -Infinity;
-      if (isNaN(y)) y = -Infinity;
-    }
-    if (x === null || x === undefined || x === "") x = sortKey === "name" || sortKey === "set" || sortKey === "repriced" ? "" : -Infinity;
-    if (y === null || y === undefined || y === "") y = sortKey === "name" || sortKey === "set" || sortKey === "repriced" ? "" : -Infinity;
+    if (sortKey === "grade") { x = parseFloat(x); y = parseFloat(y); if (isNaN(x)) x = -Infinity; if (isNaN(y)) y = -Infinity; }
+    if (x === null || x === undefined || x === "") x = ["name","set","repriced"].includes(sortKey) ? "" : -Infinity;
+    if (y === null || y === undefined || y === "") y = ["name","set","repriced"].includes(sortKey) ? "" : -Infinity;
     if (typeof x === "string") { x = x.toLowerCase(); y = String(y).toLowerCase(); }
     return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
   });
   render();
 }
 
+function chipsFor(r) {
+  return (r.kind === "slab" ? `<span class="chip ${esc(r.company)}">${esc(r.company)} ${esc(r.grade)}</span>` : '<span class="chip raw">RAW</span>')
+    + (r.is_pc ? ' <span class="chip pc" title="Personal collection — not for sale">PC</span>' : '')
+    + (r.status === "lost" ? ' <span class="chip lost" title="Gone with no proceeds — basis booked as a realized loss">LOST</span>' : '')
+    + (r.status === "removed" ? ' <span class="chip gone" title="Pulled from inventory without a sale">REMOVED</span>' : '')
+    + (r.status === "submitted_for_grading" ? ' <span class="chip raw" title="Out at grading">AT GRADING</span>' : '');
+}
+
 function render() {
   if (!view.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:28px">
-      No cards match these filters.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:28px">No cards match these filters.</td></tr>`;
     $("count-sub").textContent = "0 cards";
     return;
   }
   tbody.innerHTML = view.map((r, i) => `
     <tr data-i="${i}" class="${i === focusIdx ? 'focused' : ''}">
       <td class="num muted rowid">${r.id}</td>
-      <td><strong>${esc(r.name)}</strong>${r.number ? ' <span class="muted">#' + esc(r.number) + '</span>' : ''}
-        ${r.cert ? `<div class="sub-line">cert ${esc(r.cert)}</div>` : ''}</td>
-      <td class="muted">${esc(r.set) || "—"}</td>
-      <td>${r.kind === "slab" ? `<span class="chip ${esc(r.company)}">${esc(r.company)} ${esc(r.grade)}</span>` : '<span class="chip raw">RAW</span>'}${r.is_pc ? ' <span class="chip pc" title="Personal collection — not for sale">PC</span>' : ''}${r.status === "lost" ? ' <span class="chip lost" title="Gone with no proceeds — basis booked as a realized loss">LOST</span>' : ''}${r.status === "removed" ? ' <span class="chip gone" title="Pulled from inventory without a sale">REMOVED</span>' : ''}</td>
-      <td class="muted">${r.kind}</td>
-      <td class="num">${r.basis_unknown ? '<span class="unknown">unknown</span>' : fmt(r.acq_cost)}</td>
-      <td class="num">${r.basis_unknown ? '<span class="unknown" title="Purchase price never recorded (legacy import)">unknown</span>' : fmt(r.basis)}</td>
-      <td class="num mv-cell" data-i="${i}" title="Click to reprice">${fmt(r.market_value)}</td>
-      <td class="num ${gainClass(r.gain)}">${fmtGain(r.gain)}</td>
-      <td class="${staleClass(r)}">${r.repriced ? r.repriced.slice(0, 10) : "never"}</td>
-      <td><button class="rowedit" data-edit="${i}" title="Edit card (E)">✎</button></td>
+      <td class="name"><div class="nm">${esc(r.name)}${r.number ? ' <span class="muted">#' + esc(r.number) + '</span>' : ''}</div>
+        <div class="meta">${esc(r.set) || "—"}${r.cert ? ' · cert ' + esc(r.cert) : ''}</div></td>
+      <td>${chipsFor(r)}</td>
+      <td class="num muted">${r.basis_unknown ? '<span class="unknown" title="Purchase price never recorded (legacy import)">unknown</span>' : fmt(r.basis)}</td>
+      <td class="num mv-cell" data-i="${i}" title="Click to reprice">${r.market_value == null ? '<span class="muted">—</span>' : fmt(r.market_value)}</td>
+      <td class="num ${paperClass(r.gain)}">${fmtGain(r.gain)}</td>
+      <td class="num ${staleClass(r)}" style="font-size:12px">${repricedLabel(r)}</td>
     </tr>`).join("");
-  $("count-sub").textContent = view.length + " cards";
+  const mkt = view.reduce((a, r) => a + (r.market_value || 0), 0);
+  $("count-sub").textContent = `${view.length} cards · ${fmt(mkt)} market`;
 }
 
+/* ── inline reprice in the row (kept) ── */
 function beginEdit(i) {
   const r = view[i];
-  if (!r) return;   // raw cards carry a market value too — both are repriceable
+  if (!r) return;
   const cell = tbody.querySelector(`td.mv-cell[data-i="${i}"]`);
   if (!cell || cell.querySelector("input")) return;
-  const cur = r.market_value ?? "";
-  cell.innerHTML = `<input type="text" value="${cur}">`;
+  cell.innerHTML = `<input type="text" value="${r.market_value ?? ""}" style="width:110px;text-align:right">`;
   const inp = cell.querySelector("input");
   inp.focus(); inp.select();
-
-  let committed = false;   // Enter + blur both fire — only the first wins
+  let committed = false;
   const commit = async (moveNext) => {
     if (committed) return;
     const raw = inp.value.trim().replace(/[$,]/g, "");
     if (raw !== "" && isNaN(parseFloat(raw))) { inp.focus(); return; }
     committed = true;
-    try {
-      const res = await postJSON("/api/reprice",
-        { card_id: r.id, table: r.table,
-          market_value: raw === "" ? null : parseFloat(raw) });
-      r.market_value = res.market_value; r.gain = res.gain; r.repriced = res.repriced || "";
-    } catch (e) { toast("Save failed: " + e.message, "error"); }
-    render();
+    await saveMarket(r, raw === "" ? null : parseFloat(raw));
+    render(); syncDrawer();
     const saved = tbody.querySelector(`td.mv-cell[data-i="${i}"]`);
-    if (saved) { saved.classList.add("saved-flash");
-                 setTimeout(() => saved.classList.remove("saved-flash"), 900); }
+    if (saved) { saved.classList.add("saved-flash"); setTimeout(() => saved.classList.remove("saved-flash"), 900); }
     if (moveNext && focusIdx < view.length - 1) { focusIdx++; render(); beginEdit(focusIdx); }
   };
   inp.addEventListener("keydown", ev => {
@@ -263,142 +344,226 @@ function beginEdit(i) {
   });
   inp.addEventListener("blur", () => { if (tbody.contains(inp)) commit(false); });
 }
-
-/* ── card edit modal ── */
-let editIdx = -1;
-const E = id => document.getElementById(id);
-
-function openCardEdit(i) {
-  const r = view[i];
-  if (!r) return;
-  editIdx = i;
-  E("edit-title").textContent = "Edit — " + r.name;
-  E("e-name").value = r.name; E("e-number").value = r.number;
-  E("e-set").value = r.set;   E("e-year").value = r.year || "";
-  E("e-slab-row").style.display = r.kind === "slab" ? "" : "none";
-  // a card already gone can't be sold, cracked, removed or lost again
-  const held = r.status === "active" || r.status === "submitted_for_grading";
-  E("e-crack").style.display = r.kind === "slab" && held ? "" : "none";
-  for (const el of ["e-sell", "e-remove", "e-lost", "e-lost-reason"]) {
-    E(el).style.display = held ? "" : "none";
-  }
-  // the mirror image: Restore only shows on a card that is already gone
-  E("e-restore").style.display =
-    (r.status === "removed" || r.status === "lost") ? "" : "none";
-  if (r.kind === "slab") {
-    E("e-company").value = r.company || "PSA";
-    E("e-grade").value = r.grade; E("e-cert").value = r.cert;
-  }
-  E("e-basis").value = r.basis ?? "";
-  E("e-date").value = (r.acq_date || "").slice(0, 10);
-  E("e-notes").value = r.notes || "";
-  E("e-pc").checked = !!r.is_pc;
-  E("e-msg").textContent = "";
-  E("e-sell-row").hidden = true;
-  E("edit-backdrop").hidden = false;
-  E("e-name").focus();
+async function saveMarket(r, value) {
+  try {
+    const res = await postJSON("/api/reprice", { card_id: r.id, table: r.table, market_value: value });
+    r.market_value = res.market_value; r.gain = res.gain; r.repriced = res.repriced || "";
+    toast("Repriced " + r.name + " to " + (value == null ? "—" : fmt(value)) + ".");
+  } catch (e) { toast("Save failed: " + e.message, "error"); }
 }
 
-function closeCardEdit() { E("edit-backdrop").hidden = true; editIdx = -1; }
-E("e-cancel").addEventListener("click", closeCardEdit);
-E("e-sell").addEventListener("click", () => {
-  const r = view[editIdx];
+/* ── the drawer ── */
+let drawerIdx = -1;
+const drawer = $("drawer");
+const FIELD_LABELS = { set: "Set", number: "Number", year: "Year", company: "Grader", grade: "Grade", cert: "Cert", acq_date: "Acquired", notes: "Notes", grading_status: "Grading", target_company: "Target" };
+
+function openDrawer(i) {
+  const r = view[i];
   if (!r) return;
-  const row = E("e-sell-row");
-  row.hidden = !row.hidden;
-  if (!row.hidden) {
-    E("e-sell-price").value = r.market_value ?? "";
-    E("e-sell-price").focus(); E("e-sell-price").select();
+  drawerIdx = i;
+  $("col-grid").classList.add("open");
+  drawer.hidden = false;
+  $("d-sell-row").hidden = true; $("d-lost-row").hidden = true; $("e-msg").textContent = "";
+  syncDrawer();
+  loadHistory(r);
+}
+function closeDrawer() { drawer.hidden = true; $("col-grid").classList.remove("open"); drawerIdx = -1; }
+$("d-close").addEventListener("click", closeDrawer);
+
+function edSpan(f, value, mono) {
+  const v = (value ?? "") === "" ? "" : String(value);
+  return `<span class="ed ${mono ? "mono" : ""} ${v ? "" : "empty"}" data-f="${f}">${v ? esc(v) : "add"}</span>`;
+}
+
+function syncDrawer() {
+  const r = view[drawerIdx];
+  if (!r || drawer.hidden) return;
+  $("d-chips").innerHTML = chipsFor(r);
+  $("d-name").textContent = r.name; $("d-name").classList.toggle("empty", !r.name);
+  const since = r.acq_date ? "in the case since " + r.acq_date.slice(0, 10) : "";
+  $("d-meta").textContent = [r.cert ? "cert " + r.cert : "", since].filter(Boolean).join(" · ");
+  $("d-market").textContent = r.market_value == null ? "—" : fmt(r.market_value);
+  $("d-basis").textContent = r.basis_unknown ? "unknown" : fmt(r.basis);
+  const g = $("d-gain");
+  if (r.gain == null) { g.className = "pill mutedbg"; g.textContent = "gain unknown"; }
+  else { g.className = "pill " + (r.gain > 0 ? "pos" : "mutedbg"); g.textContent = fmtGain(r.gain) + (r.basis ? " · " + (100 * r.gain / r.basis).toFixed(1) + "%" : ""); }
+  const held = r.status === "active" || r.status === "submitted_for_grading";
+  $("d-sell").style.display = held ? "" : "none";
+  $("m-crack").style.display = r.kind === "slab" && held ? "" : "none";
+  $("m-remove").style.display = held ? "" : "none";
+  $("m-lost").style.display = held ? "" : "none";
+  $("m-restore").style.display = (r.status === "removed" || r.status === "lost") ? "" : "none";
+  $("m-pc").textContent = r.is_pc ? "Take out of personal collection" : "Mark as personal collection";
+  const rows = [];
+  rows.push(["set", edSpan("set", r.set)]);
+  rows.push(["number", edSpan("number", r.number, true)]);
+  rows.push(["year", edSpan("year", r.year, true)]);
+  if (r.kind === "slab") {
+    rows.push(["company", `<span class="ed" data-f="company" data-select="PSA,BGS,CGC,TAG">${esc(r.company || "PSA")}</span>`]);
+    rows.push(["grade", edSpan("grade", r.grade, true)]);
+    rows.push(["cert", edSpan("cert", r.cert, true)]);
+  } else {
+    rows.push(["grading_status", `<span class="muted">${esc(r.grading_status || "")}${r.target_company ? " · " + esc(r.target_company) : ""}</span>`]);
   }
-});
-E("e-sell-confirm").addEventListener("click", async () => {
-  const r = view[editIdx];
-  if (!r) return;
-  const price = E("e-sell-price").value.trim();
-  if (!price) { E("e-msg").textContent = "Enter the sale price."; return; }
+  rows.push(["acq_date", edSpan("acq_date", (r.acq_date || "").slice(0, 10), true)]);
+  rows.push(["notes", edSpan("notes", r.notes)]);
+  $("d-details").innerHTML = rows.map(([f, html]) => `<dt>${FIELD_LABELS[f]}</dt><dd>${html}</dd>`).join("");
+}
+
+async function loadHistory(r) {
+  const box = $("d-hist");
+  box.innerHTML = '<span class="muted" style="font-size:12.5px">Loading…</span>';
   try {
-    const res = await postJSON("/api/quick-sale", {
-      table: r.table, card_id: r.id, price,
-      counterparty: E("e-sell-buyer").value.trim(),
-      payment_method: E("e-sell-method").value,
+    const res = await fetch(`/api/card/history?table=${r.table}&id=${r.id}`).then(x => x.json());
+    if (view[drawerIdx] !== r) return;     // moved on
+    const items = [];
+    if (res.deal) items.push(`<div class="it"><span class="dot"></span><div><a href="/deals/${res.deal.id}">Came in on deal ${res.deal.id}</a>${res.deal.counterparty ? " · " + esc(res.deal.counterparty) : ""}<div class="when">${esc(res.deal.date)}</div></div></div>`);
+    else if (r.acq_date) items.push(`<div class="it"><span class="dot"></span><div>Entered directly<div class="when">${esc(r.acq_date.slice(0, 10))}</div></div></div>`);
+    (res.prices || []).slice(-6).reverse().forEach((p, k, arr) => {
+      const prev = arr[k + 1];
+      items.push(`<div class="it"><span class="dot"></span><div>Repriced to <span class="mono">${fmt(p.value)}</span>${prev ? ` <span class="muted">from ${fmt(prev.value)}</span>` : ""}<div class="when">${esc(p.date)}</div></div></div>`);
     });
+    (res.notes || "").split(" | ").map(s => s.trim()).filter(s => /Cracked out of|Promoted|PSA returned|Restated|Delivered/i.test(s)).forEach(s =>
+      items.push(`<div class="it"><span class="dot"></span><div>${esc(s)}</div></div>`));
+    box.innerHTML = items.join("") || '<span class="muted" style="font-size:12.5px">No history recorded yet.</span>';
+  } catch (e) { box.innerHTML = `<span class="muted" style="font-size:12.5px">History unavailable: ${esc(e.message)}</span>`; }
+}
+
+/* click-to-edit: a value reads as text until clicked; Enter or blur saves one field */
+const FIELD_MAP = {
+  slab: { name: "card_name", set: "set_name", number: "card_number", year: "year", company: "grading_company", grade: "grade", cert: "serial_number", basis: "acquisition_price", acq_date: "acquisition_date", notes: "notes" },
+  raw:  { name: "card_name", set: "set_name", number: "card_number", year: "year", basis: "purchase_price", acq_date: "purchase_date", notes: "notes" },
+};
+drawer.addEventListener("click", e => {
+  const ed = e.target.closest(".ed");
+  if (!ed || ed.querySelector("input, select")) return;
+  const r = view[drawerIdx]; if (!r) return;
+  const f = ed.dataset.f;
+  const raw = f === "market_value" ? (r.market_value ?? "") : f === "basis" ? (r.basis_unknown ? "" : r.basis) : (f === "acq_date" ? (r.acq_date || "").slice(0, 10) : (r[f] ?? ""));
+  let inp;
+  if (ed.dataset.select) {
+    inp = document.createElement("select");
+    ed.dataset.select.split(",").forEach(o => { const op = document.createElement("option"); op.textContent = o; op.selected = o === raw; inp.appendChild(op); });
+  } else {
+    inp = document.createElement("input");
+    inp.type = f === "acq_date" ? "date" : "text";
+    inp.value = raw; if (ed.classList.contains("mono") || ["market_value","basis"].includes(f)) inp.className = "mono";
+  }
+  ed.innerHTML = ""; ed.appendChild(inp); ed.classList.remove("empty");
+  inp.focus(); if (inp.select) inp.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return; done = true;
+    if (save) await saveField(r, f, inp.value);
+    syncDrawer(); render();
+  };
+  inp.addEventListener("keydown", ev => {
+    if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+    else if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+    ev.stopPropagation();
+  });
+  inp.addEventListener("blur", () => finish(true));
+  if (inp.tagName === "SELECT") inp.addEventListener("change", () => finish(true));
+});
+async function saveField(r, f, value) {
+  value = String(value).trim();
+  if (f === "market_value") {
+    const v = value.replace(/[$,]/g, "");
+    if (v !== "" && isNaN(parseFloat(v))) { toast("Market must be a number.", "error"); return; }
+    await saveMarket(r, v === "" ? null : parseFloat(v)); return;
+  }
+  const key = FIELD_MAP[r.kind][f];
+  if (!key) return;
+  if (f === "name" && !value) { toast("Name is required.", "error"); return; }
+  if (f === "basis") { value = value.replace(/[$,]/g, ""); if (value !== "" && isNaN(parseFloat(value))) { toast("Basis must be a number.", "error"); return; } }
+  try {
+    const res = await postJSON("/api/card/update", { table: r.table, id: r.id, fields: { [key]: value } });
+    Object.assign(r, res.card);
+    toast(`Saved ${FIELD_LABELS[f] || f}.`);
+  } catch (e) { toast("Save failed: " + e.message, "error"); }
+}
+
+/* drawer actions */
+$("d-reprice").addEventListener("click", () => $("d-market").click());
+$("d-sell").addEventListener("click", () => {
+  const r = view[drawerIdx]; if (!r) return;
+  $("d-lost-row").hidden = true;
+  const row = $("d-sell-row"); row.hidden = !row.hidden;
+  if (!row.hidden) { $("e-sell-price").value = r.market_value ?? ""; $("e-sell-price").focus(); $("e-sell-price").select(); }
+});
+$("e-sell-cancel").addEventListener("click", () => { $("d-sell-row").hidden = true; });
+$("e-sell-confirm").addEventListener("click", async () => {
+  const r = view[drawerIdx]; if (!r) return;
+  const price = $("e-sell-price").value.trim();
+  if (!price) { $("e-msg").textContent = "Enter the sale price."; return; }
+  try {
+    const res = await postJSON("/api/quick-sale", { table: r.table, card_id: r.id, price, counterparty: $("e-sell-buyer").value.trim(), payment_method: $("e-sell-method").value });
     toastAfterReload(`Sale booked as deal #${res.deal_id}.`);
     location.href = "/deals/" + res.deal_id;
-  } catch (err) { E("e-msg").textContent = err.message; }
+  } catch (err) { $("e-msg").textContent = err.message; }
 });
-E("e-crack").addEventListener("click", async () => {
-  const r = view[editIdx];
-  if (!r || r.kind !== "slab") return;
-  const ok = await confirmDialog({
-    title: `Crack "${r.name}" out of its ${r.company} ${r.grade} slab?`,
-    body: "It moves to the raw section (Slated for regrading); basis and market value " +
-          "carry over; the slab row is kept as history.",
-    confirmText: "Crack to raw", danger: true,
-  });
+const menuWrap = $("d-menu-wrap");
+$("d-more").addEventListener("click", e => { e.stopPropagation(); menuWrap.classList.toggle("open"); });
+document.addEventListener("click", () => menuWrap.classList.remove("open"));
+$("m-pc").addEventListener("click", async () => {
+  const r = view[drawerIdx]; if (!r) return;
+  try { await postJSON("/api/pc", { table: r.table, id: r.id, is_pc: !r.is_pc }); r.is_pc = !r.is_pc; toast(r.is_pc ? "Marked personal." : "Back in inventory."); syncDrawer(); render(); applyFilters(); }
+  catch (err) { $("e-msg").textContent = err.message; }
+});
+$("m-crack").addEventListener("click", async () => {
+  const r = view[drawerIdx]; if (!r || r.kind !== "slab") return;
+  const ok = await confirmDialog({ title: `Crack "${r.name}" out of its ${r.company} ${r.grade} slab?`,
+    body: "It moves to the raw section (Slated for regrading); basis and market value carry over; the slab row is kept as history.",
+    confirmText: "Crack to raw", danger: true });
   if (!ok) return;
-  try {
-    await postJSON("/api/crack", { graded_id: r.id });
-    toastAfterReload(`Cracked "${r.name}" — it's now in Raw & Grading.`);
-    location.reload();
-  } catch (err) { E("e-msg").textContent = err.message; }
+  try { await postJSON("/api/crack", { graded_id: r.id }); toastAfterReload(`Cracked "${r.name}" — it's now in Raw & Grading.`); location.reload(); }
+  catch (err) { $("e-msg").textContent = err.message; }
 });
-E("edit-backdrop").addEventListener("click", e => {
-  if (e.target === E("edit-backdrop")) closeCardEdit();
+$("m-remove").addEventListener("click", async () => {
+  const r = view[drawerIdx]; if (!r) return;
+  const ok = await confirmDialog({ title: `Remove "${r.name}" from inventory?`,
+    body: "Use this when a card leaves without being sold — pulled into a binder, cracked for personal use, or entered by mistake. It disappears from every list and total. Nothing is deleted: its history and any deal it belonged to stay intact, so this is recoverable.",
+    confirmText: "Remove", danger: true });
+  if (!ok) return;
+  try { await postJSON("/api/card/remove", { table: r.table, id: r.id, reason: "pulled from inventory" }); toastAfterReload(`Removed ${r.name} from inventory.`, "info"); location.reload(); }
+  catch (err) { $("e-msg").textContent = err.message; }
 });
-
-E("e-save").addEventListener("click", async () => {
-  const r = view[editIdx];
-  if (!r) return;
-  const fields = {
-    card_name: E("e-name").value.trim(),
-    set_name: E("e-set").value.trim(),
-    card_number: E("e-number").value.trim(),
-    year: E("e-year").value.trim(),
-    notes: E("e-notes").value.trim(),
-  };
-  if (r.kind === "slab") {
-    fields.grading_company = E("e-company").value;
-    fields.grade = E("e-grade").value.trim();
-    fields.serial_number = E("e-cert").value.trim();
-    fields.acquisition_price = E("e-basis").value;
-    fields.acquisition_date = E("e-date").value;
-  } else {
-    fields.purchase_price = E("e-basis").value;
-    fields.purchase_date = E("e-date").value;
-  }
-  if (!fields.card_name) { E("e-msg").textContent = "Name is required."; return; }
-  try {
-    const res = await postJSON("/api/card/update", { table: r.table, id: r.id, fields });
-    Object.assign(r, res.card);   // refresh row data in place
-    if (E("e-pc").checked !== !!r.is_pc) {
-      await postJSON("/api/pc", { table: r.table, id: r.id, is_pc: E("e-pc").checked });
-      r.is_pc = E("e-pc").checked;
-    }
-    closeCardEdit(); render();
-    toast("Card saved.");
-  } catch (err) { E("e-msg").textContent = err.message; }
+$("m-lost").addEventListener("click", () => { $("d-sell-row").hidden = true; $("d-lost-row").hidden = false; });
+$("e-lost-cancel").addEventListener("click", () => { $("d-lost-row").hidden = true; });
+$("e-lost-confirm").addEventListener("click", async () => {
+  const r = view[drawerIdx]; if (!r) return;
+  const money = r.basis_unknown ? "its basis was never recorded, so no loss amount can be booked" : `your $${Number(r.basis).toLocaleString()} basis books as a realized loss`;
+  const ok = await confirmDialog({ title: `Mark "${r.name}" as lost?`,
+    body: `Use this when the card is gone and no money came back — misplaced, stolen, or moved in a deal you never wrote down. Unlike Remove, this hits your P&L: ${money}. The row is kept and the card can be restored if it turns up.`,
+    confirmText: "Mark lost", danger: true });
+  if (!ok) return;
+  const reason = $("e-lost-reason").value;
+  try { await postJSON("/api/card/lost", { table: r.table, id: r.id, reason }); toastAfterReload(`Marked ${r.name} lost (${reason}).`, "info"); location.reload(); }
+  catch (err) { $("e-msg").textContent = err.message; }
+});
+$("m-restore").addEventListener("click", async () => {
+  const r = view[drawerIdx]; if (!r) return;
+  const ok = await confirmDialog({ title: `Put "${r.name}" back into inventory?`,
+    body: r.status === "lost" ? "The card turned up. It returns to your holdings and the realized loss booked against it is reversed, so your P&L stops counting money you did not lose."
+                              : "The card returns to your holdings and starts counting toward your totals again.",
+    confirmText: "Restore" });
+  if (!ok) return;
+  try { await postJSON("/api/card/restore", { table: r.table, id: r.id }); toastAfterReload(`Restored ${r.name} to inventory.`, "success"); location.reload(); }
+  catch (err) { $("e-msg").textContent = err.message; }
 });
 
 /* ── add card manually ── */
 function openAdd() {
-  ["a-name","a-set","a-number","a-year","a-grade","a-cert","a-basis","a-mv","a-notes"]
-    .forEach(id => E(id).value = "");
-  E("a-pc").checked = false;
-  E("a-msg").textContent = "";
+  ["a-name","a-set","a-number","a-year","a-grade","a-cert","a-basis","a-mv","a-notes"].forEach(id => E(id).value = "");
+  E("a-pc").checked = false; E("a-msg").textContent = "";
   E("a-date").value = new Date().toISOString().slice(0, 10);
-  syncAddKind();
-  E("add-backdrop").hidden = false;
-  E("a-name").focus();
+  syncAddKind(); E("add-backdrop").hidden = false; E("a-name").focus();
 }
-function syncAddKind() {
-  E("a-slab-row").style.display = E("a-kind").value === "slab" ? "" : "none";
-}
+function syncAddKind() { E("a-slab-row").style.display = E("a-kind").value === "slab" ? "" : "none"; }
 E("add-card-btn").addEventListener("click", openAdd);
 E("a-kind").addEventListener("change", syncAddKind);
 E("a-cancel").addEventListener("click", () => { E("add-backdrop").hidden = true; });
-E("add-backdrop").addEventListener("click", e => {
-  if (e.target === E("add-backdrop")) E("add-backdrop").hidden = true;
-});
+E("add-backdrop").addEventListener("click", e => { if (e.target === E("add-backdrop")) E("add-backdrop").hidden = true; });
 E("a-save").addEventListener("click", async () => {
   const name = E("a-name").value.trim();
   if (!name) { E("a-msg").textContent = "Name is required."; return; }
@@ -410,124 +575,48 @@ E("a-save").addEventListener("click", async () => {
   try {
     await postJSON("/api/card/create", {
       is_graded: isGraded, card_name: name,
-      set_name: E("a-set").value.trim(), card_number: E("a-number").value.trim(),
-      year: E("a-year").value.trim(),
-      grading_company: isGraded ? E("a-company").value : "",
-      grade: isGraded ? E("a-grade").value.trim() : "",
+      set_name: E("a-set").value.trim(), card_number: E("a-number").value.trim(), year: E("a-year").value.trim(),
+      grading_company: isGraded ? E("a-company").value : "", grade: isGraded ? E("a-grade").value.trim() : "",
       serial_number: isGraded ? E("a-cert").value.trim() : "",
-      basis: basisRaw === "" ? null : parseFloat(basisRaw),
-      market_value: mvRaw === "" ? null : parseFloat(mvRaw),
-      acquisition_date: E("a-date").value,
-      notes: E("a-notes").value.trim(),
-      is_pc: E("a-pc").checked,
+      basis: basisRaw === "" ? null : parseFloat(basisRaw), market_value: mvRaw === "" ? null : parseFloat(mvRaw),
+      acquisition_date: E("a-date").value, notes: E("a-notes").value.trim(), is_pc: E("a-pc").checked,
     });
     toastAfterReload(`Added ${name}${basisRaw === "" ? " (basis unknown)" : ""}.`);
     location.reload();
   } catch (err) { E("a-msg").textContent = err.message; }
 });
 
-/* ── remove from inventory (not a sale) ── */
-E("e-remove").addEventListener("click", async () => {
-  const r = view[editIdx];
-  if (!r) return;
-  const ok = await confirmDialog({
-    title: `Remove "${r.name}" from inventory?`,
-    body: "Use this when a card leaves without being sold — pulled into a binder, "
-        + "cracked for personal use, or entered by mistake. It disappears from every "
-        + "list and total. Nothing is deleted: its history and any deal it belonged to "
-        + "stay intact, so this is recoverable.",
-    confirmText: "Remove", danger: true,
-  });
-  if (!ok) return;
-  try {
-    await postJSON("/api/card/remove", { table: r.table, id: r.id, reason: "pulled from inventory" });
-    toastAfterReload(`Removed ${r.name} from inventory.`, "info");
-    location.reload();
-  } catch (err) { E("e-msg").textContent = err.message; }
-});
-
-/* ── restore a removed or lost card ── */
-E("e-restore").addEventListener("click", async () => {
-  const r = view[editIdx];
-  if (!r) return;
-  const ok = await confirmDialog({
-    title: `Put "${r.name}" back into inventory?`,
-    body: r.status === "lost"
-      ? "The card turned up. It returns to your holdings and the realized loss "
-        + "booked against it is reversed, so your P&L stops counting money you did not lose."
-      : "The card returns to your holdings and starts counting toward your totals again.",
-    confirmText: "Restore",
-  });
-  if (!ok) return;
-  try {
-    await postJSON("/api/card/restore", { table: r.table, id: r.id });
-    toastAfterReload(`Restored ${r.name} to inventory.`, "success");
-    location.reload();
-  } catch (err) { E("e-msg").textContent = err.message; }
-});
-
-/* ── mark lost / stolen (a real loss, unlike Remove) ── */
-E("e-lost").addEventListener("click", async () => {
-  const r = view[editIdx];
-  if (!r) return;
-  const money = r.basis_unknown ? "its basis was never recorded, so no loss amount can be booked"
-                                : `your $${Number(r.basis).toLocaleString()} basis books as a realized loss`;
-  const ok = await confirmDialog({
-    title: `Mark "${r.name}" as lost?`,
-    body: "Use this when the card is gone and no money came back — misplaced, stolen, or "
-        + `moved in a deal you never wrote down. Unlike Remove, this hits your P&L: ${money}. `
-        + "The row is kept and the card can be restored if it turns up.",
-    confirmText: "Mark lost", danger: true,
-  });
-  if (!ok) return;
-  const reason = E("e-lost-reason").value;
-  try {
-    await postJSON("/api/card/lost", { table: r.table, id: r.id, reason });
-    toastAfterReload(`Marked ${r.name} lost (${reason}).`, "info");
-    location.reload();
-  } catch (err) { E("e-msg").textContent = err.message; }
-});
-
-/* interactions */
+/* ── interactions ── */
 document.querySelectorAll("thead th").forEach(th => th.addEventListener("click", () => {
-  const k = th.dataset.k;
-  if (!k) return;
+  const k = th.dataset.k; if (!k) return;
   if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = 1; }
   applyFilters();
 }));
-tbody.addEventListener("dblclick", e => {
-  const row = e.target.closest("tr");
-  if (row && !e.target.closest("td.mv-cell")) openCardEdit(+row.dataset.i);
-});
+document.querySelectorAll("#col-tabs .ftab").forEach(t => t.addEventListener("click", () => {
+  companyTab = t.dataset.co;
+  document.querySelectorAll("#col-tabs .ftab").forEach(x => x.classList.toggle("on", x === t));
+  focusIdx = -1; closeDrawer(); applyFilters();
+}));
 tbody.addEventListener("click", e => {
-  const editBtn = e.target.closest("[data-edit]");
-  if (editBtn) { focusIdx = +editBtn.dataset.edit; render(); openCardEdit(+editBtn.dataset.edit); return; }
   const cell = e.target.closest("td.mv-cell");
   const row = e.target.closest("tr");
-  if (row) { focusIdx = +row.dataset.i; render(); }
-  if (cell) beginEdit(+cell.dataset.i);
+  if (!row || row.dataset.i === undefined) return;
+  focusIdx = +row.dataset.i; render();
+  if (cell) beginEdit(focusIdx); else openDrawer(focusIdx);
 });
 document.addEventListener("keydown", e => {
-  if (!E("edit-backdrop").hidden) {
-    if (e.key === "Escape") closeCardEdit();
-    return;
-  }
-  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") {
-    if (e.key === "/" ) e.stopPropagation();
-    return;
-  }
+  if (!E("add-backdrop").hidden) { if (e.key === "Escape") E("add-backdrop").hidden = true; return; }
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") { if (e.key === "/") e.stopPropagation(); return; }
   if (e.key === "/") { e.preventDefault(); $("f-search").focus(); return; }
-  if (e.key === "ArrowDown") { e.preventDefault(); focusIdx = Math.min(focusIdx + 1, view.length - 1); render(); scrollFocus(); }
-  else if (e.key === "ArrowUp") { e.preventDefault(); focusIdx = Math.max(focusIdx - 1, 0); render(); scrollFocus(); }
-  else if (e.key === "Enter" && focusIdx >= 0) { e.preventDefault(); beginEdit(focusIdx); }
-  else if ((e.key === "e" || e.key === "E") && focusIdx >= 0) { e.preventDefault(); openCardEdit(focusIdx); }
+  if (e.key === "Escape") { if (!drawer.hidden) closeDrawer(); return; }
+  if (e.key === "ArrowDown") { e.preventDefault(); focusIdx = Math.min(focusIdx + 1, view.length - 1); render(); scrollFocus(); if (!drawer.hidden) openDrawer(focusIdx); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); focusIdx = Math.max(focusIdx - 1, 0); render(); scrollFocus(); if (!drawer.hidden) openDrawer(focusIdx); }
+  else if (e.key === "Enter" && focusIdx >= 0) { e.preventDefault(); if (!drawer.hidden) $("d-market").click(); else beginEdit(focusIdx); }
+  else if ((e.key === "e" || e.key === "E") && focusIdx >= 0) { e.preventDefault(); openDrawer(focusIdx); $("d-name").click(); }
 });
-function scrollFocus() {
-  const row = tbody.querySelector("tr.focused");
-  if (row) row.scrollIntoView({ block: "nearest" });
-}
-["f-search", "f-set", "f-kind", "f-grade", "f-status"].forEach(id =>
-  $(id).addEventListener("input", () => { focusIdx = -1; applyFilters(); }));
+function scrollFocus() { const row = tbody.querySelector("tr.focused"); if (row) row.scrollIntoView({ block: "nearest" }); }
+["f-search", "f-set", "f-kind", "f-grade", "f-status", "f-stale"].forEach(id =>
+  $(id).addEventListener("input", () => { focusIdx = -1; closeDrawer(); applyFilters(); }));
 
 /* deep links: ?status=submitted_for_grading, ?kind=slab|raw, ?q=… */
 {
@@ -536,7 +625,6 @@ function scrollFocus() {
   if (params.get("kind")) $("f-kind").value = params.get("kind");
   if (params.get("q")) $("f-search").value = params.get("q");
 }
-
 applyFilters();
 </script>
 {% endblock %}

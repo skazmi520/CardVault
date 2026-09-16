@@ -1167,6 +1167,41 @@ def api_card_restore():
     return jsonify({"ok": True, **res})
 
 
+@app.get("/api/card/history")
+def api_card_history():
+    """What the collection drawer shows under History: the deal a card came in
+    on, its repricings, and the lifecycle trail kept in its notes."""
+    table = request.args.get("table", "graded_cards")
+    if table not in ("graded_cards", "ungraded_cards"):
+        return jsonify({"ok": False, "error": "unknown table"}), 400
+    try:
+        card_id = int(request.args.get("id", ""))
+    except ValueError:
+        return jsonify({"ok": False, "error": "bad id"}), 400
+    c = conn()
+    row = c.execute(f"SELECT * FROM {table} WHERE id=?", (card_id,)).fetchone()
+    if row is None:
+        c.close()
+        return jsonify({"ok": False, "error": "card not found"}), 404
+    deal = None
+    if row["acquired_via_deal_id"]:
+        d = c.execute("SELECT id, occurred_at, counterparty, cash_amount FROM deals WHERE id=?",
+                      (row["acquired_via_deal_id"],)).fetchone()
+        if d:
+            deal = {"id": d["id"], "date": d["occurred_at"][:10], "counterparty": d["counterparty"] or "",
+                    "cash": d["cash_amount"]}
+    prices = []
+    if table == "graded_cards":
+        prices = [{"date": r["recorded_at"][:10], "value": r["market_value"]} for r in c.execute(
+            "SELECT recorded_at, market_value FROM price_history WHERE card_id=? ORDER BY recorded_at, id",
+            (card_id,))]
+    c.close()
+    return jsonify({"ok": True, "deal": deal, "prices": prices,
+                    "notes": row["notes"] or "", "status": row["status"],
+                    "disposed_at": row["disposed_at"], "proceeds": row["disposal_proceeds"],
+                    "realized_gain": row["realized_gain"]})
+
+
 @app.post("/api/pc")
 def api_pc():
     p = request.get_json(force=True)

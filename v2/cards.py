@@ -37,6 +37,7 @@ def list_cards(conn, include_disposed: bool = False,
             "status": r["status"], "acq_date": r["acquisition_date"] or "",
             "notes": r["notes"] or "",
             "is_pc": bool(r["is_pc"]),
+            "deal_id": r["acquired_via_deal_id"],
         })
     u_where = (f"WHERE status IN ('active','submitted_for_grading'{gone})"
                if not include_disposed else "WHERE status != 'promoted'")
@@ -63,6 +64,7 @@ def list_cards(conn, include_disposed: bool = False,
             "sub_type": r["sub_type"] or "",
             "expected_back": r["expected_back"] or "",
             "is_pc": bool(r["is_pc"]),
+            "deal_id": r["acquired_via_deal_id"],
         })
     return out
 
