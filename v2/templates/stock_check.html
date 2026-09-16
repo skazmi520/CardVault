@@ -1,17 +1,77 @@
 {% extends "base.html" %}
 {% block title %}Stock Check{% endblock %}
 {% block content %}
-<div class="page-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-  <span>Stock Check <span class="sub" id="progress">0 / {{ total }} checked</span></span>
-  <span style="display:flex;gap:8px">
-    <a class="btn ghost small" id="print-link" href="/stock-check/print" target="_blank">Print list</a>
-    <button class="btn ghost small" id="reset">Reset all</button>
-  </span>
+<style>
+/* stock check — docs/design-system.md. A working list: rows on the canvas,
+   a progress line under the header, no surface. Also the phone companion at
+   the table, so the row keeps working narrow. */
+.sc-head { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 14px; }
+.sc-head .sub { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.sc-head .btn { height: 34px; }
+.sc-strip { display: flex; gap: 48px; padding: 16px 0 18px; border-top: 1px solid var(--border); }
+.sc-bar { height: 3px; background: var(--input); border-radius: 2px; overflow: hidden; margin-bottom: 8px; }
+.sc-bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 2px; transition: width .4s var(--ease); }
+.col-tabs { display: flex; align-items: center; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.ftab { display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 2px; margin-right: 24px; color: var(--muted); font-weight: 500; font-size: 13.5px; border: none; border-bottom: 2px solid transparent; cursor: pointer; user-select: none; background: none; font-family: inherit; }
+.ftab.on { color: var(--text); border-bottom-color: var(--text); }
+.ftab .n { font-size: 11.5px; color: var(--muted); }
+.sc-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 0 10px; }
+.sc-filters input[type=text] { width: 260px; }
+.sc-filters select { min-height: 32px; padding: 4px 28px 4px 12px; font-size: 12.5px; }
+.sc-filters .hint { margin-left: auto; }
+#tbl tbody tr { cursor: pointer; }
+#tbl tbody tr.done td { color: var(--muted); }
+#tbl tbody tr.done td.name .nm { text-decoration: line-through; text-decoration-color: var(--border-hi); font-weight: 400; }
+#tbl tbody tr.done .chip { opacity: .55; }
+#tbl td.name .nm { font-weight: 500; }
+#tbl td.name .meta { font-size: 11.5px; color: var(--muted); }
+.tick { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--border-hi); align-items: center; justify-content: center; }
+.tick svg { width: 11px; height: 11px; stroke: var(--bg); stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round; display: none; }
+tr.done .tick { background: var(--text); border-color: var(--text); }
+tr.done .tick svg { display: block; }
+.ok { width: 28px; height: 28px; border-radius: 50%; border: 1px solid transparent; background: none; color: var(--muted); font: inherit; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.ok svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.ok:hover { background: var(--input); border-color: var(--border); color: var(--text); }
+.ok.did { color: var(--pos); }
+.age { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.age.stale { color: var(--warn); }
+@media (max-width: 760px) {
+  .sc-strip { gap: 22px; }
+  .sc-filters input[type=text] { width: 100%; }
+  .sc-filters .hint { display: none; }
+  #tbl th.c-num, #tbl td.c-num, #tbl th.c-age, #tbl td.c-age, #tbl th.c-id, #tbl td.c-id { display: none; }
+  tbody td { padding: 10px 8px; }
+}
+</style>
+
+<div class="sc-head">
+  <div>
+    <span class="page-title" style="margin:0">Stock check</span>
+    <div class="sub">Tap a row to tick it off · click a price to change it · progress stays on this device</div>
+  </div>
+  <div style="flex:1"></div>
+  <a class="btn ghost" id="print-link" href="/stock-check/print" target="_blank">Print list</a>
+  <button class="btn ghost" id="reset">Start over</button>
 </div>
 
-<div class="filters">
-  <input type="text" id="f-search" placeholder="Search name, set, cert…  ( / )">
-  <select id="f-company">
+<div class="sc-bar"><i id="sc-fill"></i></div>
+<div class="sc-strip">
+  <div class="kv"><span class="l">Checked</span><span class="v display" id="progress">0 / {{ total }}</span></div>
+  <div class="kv"><span class="l">Still to find</span><span class="v display" id="sc-left">{{ total }}</span></div>
+  <div class="kv"><span class="l">Stale price · 30d+</span><span class="v display" id="sc-stale">—</span></div>
+  <div class="kv"><span class="l">No price</span><span class="v display" id="sc-none">—</span></div>
+</div>
+
+<div class="col-tabs" id="sc-tabs">
+  <button class="ftab on" data-co="">All <span class="n">{{ total }}</span></button>
+  {% for c in companies %}
+  <button class="ftab" data-co="{{ c }}">{{ c }} <span class="n">{{ cards|selectattr('company', 'equalto', c)|list|length }}</span></button>
+  {% endfor %}
+</div>
+
+<div class="sc-filters">
+  <input type="text" id="f-search" placeholder="Filter by card, set or cert  ( / )">
+  <select id="f-company" hidden>
     <option value="">All graders</option>
     {% for c in companies %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
   </select>
@@ -25,23 +85,24 @@
     <option value="stale">Not repriced in 30+ days</option>
     <option value="none">No market value</option>
   </select>
-  <span class="hint">Tap a row to check off · click a price to edit · saved on this device</span>
+  <span class="hint" id="sc-shown"></span>
 </div>
 
 <div class="table-wrap">
-  <table>
+  <table id="tbl">
     <thead><tr>
-      <th style="width:44px"></th>
+      <th style="width:38px"></th>
       <th style="width:86px">Grade</th>
       <th>Card</th>
-      <th style="width:70px">Card #</th>
-      <th class="num" style="width:130px">Market Value</th>
-      <th style="width:40px" title="Confirm the price is still accurate without changing it">OK</th>
-      <th style="width:96px">Repriced</th>
+      <th class="c-num" style="width:70px">#</th>
+      <th class="num" style="width:120px">Market</th>
+      <th style="width:40px" title="Confirm the price is still accurate without changing it"></th>
+      <th class="c-age" style="width:96px">Repriced</th>
     </tr></thead>
     <tbody id="tbody"></tbody>
   </table>
 </div>
+<div class="muted" id="sc-none-rows" style="padding:24px 4px;font-size:13px" hidden>No cards match.</div>
 
 <script>
 const CARDS = {{ cards|tojson }};
@@ -56,6 +117,11 @@ function save() { localStorage.setItem(KEY, JSON.stringify([...checked])); }
 function isStale(r) {
   if (!r.repriced) return true;
   return (Date.now() - new Date(r.repriced.slice(0, 10))) / 864e5 > 30;
+}
+function age(r) {
+  if (!r.repriced) return "never";
+  const d = Math.floor((Date.now() - new Date(r.repriced.slice(0, 10))) / 864e5);
+  return d <= 0 ? "today" : d + "d ago";
 }
 
 function applyFilters() {
@@ -76,25 +142,33 @@ function applyFilters() {
   render();
 }
 
+const TICK = '<span class="tick"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></span>';
+const OK = '<svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>';
+
 function render() {
   tbody.innerHTML = view.map((r, i) => `
-    <tr data-id="${r.id}" data-i="${i}" style="cursor:pointer${checked.has(r.id) ? ';opacity:.5' : ''}">
-      <td style="text-align:center;font-size:16px">${checked.has(r.id) ? "☑" : "☐"}</td>
+    <tr data-id="${r.id}" data-i="${i}" class="${checked.has(r.id) ? 'done' : ''}">
+      <td style="text-align:center;padding-left:8px">${TICK}</td>
       <td><span class="chip ${esc(r.company)}">${esc(r.company)} ${esc(r.grade)}</span></td>
-      <td><strong style="${checked.has(r.id) ? 'text-decoration:line-through' : ''}">${esc(r.name)}</strong>
-        ${r.set ? `<span class="muted"> · ${esc(r.set)}</span>` : ''}
-        ${r.cert ? `<div class="sub-line">cert ${esc(r.cert)}</div>` : ''}</td>
-      <td class="muted">${r.number ? "#" + esc(r.number) : "—"}</td>
+      <td class="name" style="white-space:normal;min-width:180px">
+        <div class="nm">${esc(r.name)}</div>
+        <div class="meta">${esc(r.set || "")}${r.cert ? `${r.set ? " · " : ""}cert ${esc(r.cert)}` : ""}</div></td>
+      <td class="muted c-num">${r.number ? "#" + esc(r.number) : ""}</td>
       <td class="num mv-cell" data-i="${i}" title="Click to reprice">${fmt(r.market_value)}</td>
       <td style="text-align:center">${r.market_value != null
-        ? `<button class="rowedit" data-confirm="${r.id}" title="Price still right — mark verified today">✓</button>` : ""}</td>
-      <td class="${isStale(r) ? 'stale' : 'muted'}">
-        ${r.repriced ? r.repriced.slice(0, 10) : "never"}</td>
+        ? `<button class="ok" data-confirm="${r.id}" title="Price still right — mark verified today">${OK}</button>` : ""}</td>
+      <td class="c-age"><span class="age ${isStale(r) ? 'stale' : ''}">${age(r)}</span></td>
     </tr>`).join("");
   const total = CARDS.length;
   const done = CARDS.filter(c => checked.has(c.id)).length;
-  $("progress").textContent = `${done} / ${total} checked`;
-  $("progress").className = "sub " + (done === total && total ? "pos" : "");
+  $("progress").textContent = `${done} / ${total}`;
+  $("progress").className = "v display " + (done === total && total ? "pos" : "");
+  $("sc-left").textContent = total - done;
+  $("sc-stale").textContent = CARDS.filter(c => c.market_value != null && isStale(c)).length;
+  $("sc-none").textContent = CARDS.filter(c => c.market_value == null).length;
+  $("sc-fill").style.width = (total ? done / total * 100 : 0) + "%";
+  $("sc-shown").textContent = view.length === total ? "" : `${view.length} of ${total} shown`;
+  $("sc-none-rows").hidden = view.length > 0;
 }
 
 /* inline repricing — same flow as Collection: Enter saves, Tab saves + next row */
@@ -146,7 +220,7 @@ tbody.addEventListener("click", e => {
   if (ok) {
     e.stopPropagation();
     postJSON("/api/confirm-price", { card_id: +ok.dataset.confirm })
-      .then(() => { ok.textContent = "✓✓"; ok.style.color = "var(--pos)";
+      .then(() => { ok.classList.add("did");
                     toast("Price confirmed as still accurate."); })
       .catch(err => toast(err.message, "error"));
     return;
@@ -173,11 +247,17 @@ $("reset").addEventListener("click", async () => {
 ["f-search", "f-company", "f-show", "f-stale"].forEach(id =>
   $(id).addEventListener("input", applyFilters));
 
-// keep the print link scoped to the grader filter
-$("f-company").addEventListener("input", () => {
+// grader tabs drive the (hidden) company select so deep links and the
+// print link keep working off one value
+function syncTabs() {
   const co = $("f-company").value;
+  document.querySelectorAll("#sc-tabs .ftab").forEach(b => b.classList.toggle("on", b.dataset.co === co));
   $("print-link").href = "/stock-check/print" + (co ? "?company=" + encodeURIComponent(co) : "");
-});
+}
+document.querySelectorAll("#sc-tabs .ftab").forEach(b => b.addEventListener("click", () => {
+  $("f-company").value = b.dataset.co;
+  syncTabs(); applyFilters();
+}));
 
 document.addEventListener("keydown", e => {
   if (e.key === "/" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") {
@@ -194,6 +274,7 @@ document.addEventListener("keydown", e => {
   if (params.get("q")) $("f-search").value = params.get("q");
 }
 
+syncTabs();
 applyFilters();
 </script>
 {% endblock %}

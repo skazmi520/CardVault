@@ -1,107 +1,145 @@
 {% extends "base.html" %}
 {% block title %}Deal #{{ d.id }}{% endblock %}
 {% block content %}
-<div class="page-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-  <span>Deal #{{ d.id }}
-  <span class="sub">{{ d.occurred_at[:16].replace('T', ' ') }}
-    {% if d.counterparty %} · {{ d.counterparty }}{% endif %}
-    {% if d.location %} · {{ d.location }}{% endif %}
-    · {{ d.payment_method }}</span></span>
-  <button class="btn ghost small" id="void-deal"
-          style="color:var(--neg);border-color:var(--neg)">Void deal…</button>
+<style>
+/* deal detail — docs/design-system.md. Two columns of rows on the canvas
+   (what left, what arrived); the receipt is the figure strip. */
+.dd-head { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 18px; }
+.dd-head .sub { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.dd-head .btn { height: 34px; }
+.dd-strip { display: flex; gap: 48px; padding: 16px 0 20px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.dd-note { font-family: var(--font-display); font-size: 17px; line-height: 1.45; color: var(--text); padding: 18px 4px 6px; max-width: 760px; }
+.dd-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; align-items: start; margin-top: 8px; }
+.dd-line { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 4px; border-top: 1px solid var(--border); }
+.dd-line .lead { justify-content: center; }
+.dd-line .nm { font-size: 14.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dd-line .meta { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dd-line .figs { display: flex; gap: 18px; align-items: baseline; white-space: nowrap; }
+.dd-line .figs .kv .l { font-size: 11px; }
+.dd-line .figs .kv .v { font-size: 14px; font-family: var(--font-mono); }
+.dd-line .figs .kv.g .v { font-family: var(--font-ui); }
+.dd-sum { display: flex; justify-content: space-between; padding: 12px 4px 0; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted); }
+.dd-sum .mono { color: var(--text); }
+.dd-more { margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--border); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; }
+.dd-more .t { font-family: var(--font-display); font-weight: 500; font-size: 18px; margin-bottom: 4px; }
+.dd-more .s { font-size: 12.5px; color: var(--muted); margin-bottom: 12px; }
+.ent { display: grid; grid-template-columns: 44px minmax(0, 1fr) 110px 110px; gap: 12px; padding: 8px 4px; border-top: 1px solid var(--border); font-size: 13px; align-items: center; }
+.ent .side { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+.ent .r { text-align: right; font-family: var(--font-mono); }
+.ent .r.blank { color: var(--faint); font-family: var(--font-ui); font-style: italic; }
+.ent.h { border-top: none; padding-top: 0; }
+.ent.h span { font-size: 11.5px; color: var(--muted); font-family: var(--font-ui); font-style: normal; text-transform: none; letter-spacing: 0; }
+.photo-grid:empty + .up { margin-top: 0; }
+.up { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.up input[type=file] { font-size: 12.5px; color: var(--muted); }
+.up input[type=file]::file-selector-button { font: inherit; font-size: 12.5px; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--input); color: var(--text); margin-right: 10px; cursor: pointer; }
+@media (max-width: 900px) { .dd-cols, .dd-more { grid-template-columns: 1fr; gap: 28px; } .dd-strip { gap: 24px; flex-wrap: wrap; } }
+</style>
+
+{% set gain = cards_out|map(attribute='realized_gain')|select|sum %}
+{% set out_basis = cards_out|map(attribute='acquisition_price')|select|sum + cards_out|map(attribute='purchase_price')|select|sum %}
+{% set out_proceeds = cards_out|map(attribute='disposal_proceeds')|select|sum %}
+{% set in_basis = cards_in|map(attribute='acquisition_price')|select|sum + cards_in|map(attribute='purchase_price')|select|sum %}
+{% set in_market = cards_in|map(attribute='market_value')|select|sum %}
+
+<div class="dd-head">
+  <div>
+    <span class="page-title" style="margin:0">{% if cards_out and cards_in %}Trade{% elif cards_out %}Sale{% elif cards_in %}Purchase{% else %}Deal{% endif %} <span class="muted" style="font-family:var(--font-mono);font-size:16px;letter-spacing:0">#{{ d.id }}</span></span>
+    <div class="sub">{{ d.occurred_at|mdy }} {{ d.occurred_at[:4] }} · {{ d.occurred_at[11:16] }}{% if d.counterparty %} · {{ d.counterparty }}{% endif %}{% if d.location %} · {{ d.location }}{% endif %} · {{ d.payment_method }}</div>
+  </div>
+  <div style="flex:1"></div>
+  <a class="btn ghost" href="/deals">All deals</a>
+  <button class="btn danger-ghost" id="void-deal">Void deal…</button>
 </div>
 <div id="void-msg"></div>
 
-<div class="tiles">
-  <div class="tile"><div class="v {{ 'pos' if d.cash_amount > 0 else 'neg' if d.cash_amount < 0 else '' }}">{{ d.cash_amount|gain if d.cash_amount else "—" }}</div><div class="l">Cash ({{ 'received' if d.cash_amount >= 0 else 'paid' }})</div></div>
-  <div class="tile"><div class="v">{{ cards_out|length }}</div><div class="l">Cards Out</div></div>
-  <div class="tile"><div class="v">{{ cards_in|length }}</div><div class="l">Cards In</div></div>
-  {% set gain = cards_out|map(attribute='realized_gain')|select|sum %}
-  <div class="tile"><div class="v {{ 'pos' if gain >= 0 else 'neg' }}">{{ gain|gain }}</div><div class="l">Realized Gain</div></div>
+<div class="dd-strip">
+  <div class="kv"><span class="l">Cash {{ 'received' if d.cash_amount >= 0 else 'paid' }}</span><span class="v display">{{ (d.cash_amount if d.cash_amount >= 0 else -d.cash_amount)|money0 if d.cash_amount else '—' }}</span></div>
+  <div class="kv"><span class="l">Left · basis</span><span class="v display">{{ cards_out|length }} <span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400">{{ out_basis|money0 }}</span></span></div>
+  <div class="kv"><span class="l">Arrived · basis</span><span class="v display">{{ cards_in|length }} <span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400">{{ in_basis|money0 }}</span></span></div>
+  <div class="kv"><span class="l">Realized</span><span class="v display {{ 'pos' if gain > 0 else 'neg' if gain < 0 else '' }}">{% if not cards_out %}—{% elif gain %}{{ gain|gain0 }}{% else %}even{% endif %}</span></div>
+  {% if cards_in and in_market %}<div class="kv"><span class="l">Paper on what arrived</span><span class="v display {{ 'pos' if (in_market - in_basis) > 0 else '' }}">{{ (in_market - in_basis)|gain0 }}</span></div>{% endif %}
 </div>
 
-{% if d.notes %}<div class="panel"><h2>Notes</h2>{{ d.notes }}</div>{% endif %}
+{% if d.notes %}<div class="dd-note">{{ d.notes }}</div>{% endif %}
 
-<div class="panel">
-  <h2>As entered <span class="muted">what was typed on the deal screen, verbatim</span></h2>
-  {% if entered %}
-  <div class="muted" style="font-size:12px;margin-bottom:6px">saved {{ entered.entered_at[:16].replace('T', ' ') }}</div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Side</th><th>Card</th><th class="num">Typed price</th><th class="num">Typed market</th></tr></thead>
-    <tbody>
-      {% if entered.ask is not none %}
-      <tr><td class="muted">ask</td><td class="muted">my side put out at</td><td class="num">{{ entered.ask|money }}</td><td></td></tr>
-      {% endif %}
-      {% for x in entered.out %}
-      <tr><td>out</td><td>{{ x.name }}</td><td class="num">{{ x.typed|money if x.typed is not none else '— (blank)' }}</td><td></td></tr>
-      {% endfor %}
-      {% for x in entered['in'] %}
-      <tr><td>in</td><td>{{ x.name }}</td><td class="num">{{ x.typed|money if x.typed is not none else '— (blank)' }}</td><td class="num">{{ x.market|money if x.market is not none else '' }}</td></tr>
-      {% endfor %}
-      {% if entered.cash %}
-      <tr><td>cash</td><td class="muted">{{ 'received' if entered.cash > 0 else 'paid' }}</td><td class="num">{{ (entered.cash if entered.cash > 0 else -entered.cash)|money }}</td><td></td></tr>
-      {% endif %}
-    </tbody>
-  </table></div>
-  <div class="muted" style="font-size:12px;margin-top:6px">A blank typed price means the engine derived that number. Everything else above is exactly what was keyed in.</div>
-  {% else %}
-  <div class="muted">Not recorded — this deal predates the entry log (added 2026-09-15). The booked numbers below are all that survives of it.</div>
-  {% endif %}
-</div>
-
-{% if cards_out %}
-<div class="panel">
-  <h2>Cards Out</h2>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Card</th><th>Type</th><th class="num">Basis</th>
-      <th class="num">Proceeds</th><th class="num">Gain</th></tr></thead>
-    <tbody>
-      {% for c in cards_out %}
-      <tr>
-        <td><strong>{{ c.card_name }}</strong>{% if c.set_name or c.card_number %} <span class="muted">{{ c.set_name }}{% if c.card_number %} #{{ c.card_number }}{% endif %}</span>{% endif %}
-          {% if c._table == 'graded_cards' and c.serial_number %}<div class="muted" style="font-size:.85em">cert {{ c.serial_number }}</div>{% endif %}</td>
-        <td>{% if c._table == 'graded_cards' %}<span class="chip {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
-        <td class="num">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</td>
-        <td class="num">{{ c.disposal_proceeds|money }}</td>
-        <td class="num {{ 'pos' if (c.realized_gain or 0) >= 0 else 'neg' }}">{{ c.realized_gain|gain }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table></div>
-</div>
-{% endif %}
-
-{% if cards_in %}
-<div class="panel">
-  <h2>Cards In</h2>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Card</th><th>Type</th><th class="num">Basis</th><th class="num">Market Value</th></tr></thead>
-    <tbody>
-      {% for c in cards_in %}
-      <tr>
-        <td><strong>{{ c.card_name }}</strong>{% if c.set_name or c.card_number %} <span class="muted">{{ c.set_name }}{% if c.card_number %} #{{ c.card_number }}{% endif %}</span>{% endif %}
-          {% if c._table == 'graded_cards' and c.serial_number %}<div class="muted" style="font-size:.85em">cert {{ c.serial_number }}</div>{% endif %}</td>
-        <td>{% if c._table == 'graded_cards' %}<span class="chip {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip raw">RAW</span>{% endif %}</td>
-        <td class="num">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</td>
-        <td class="num">{{ c.market_value|money }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table></div>
-</div>
-{% endif %}
-
-<div class="panel">
-  <h2>Photos <span class="muted">(documentation only)</span></h2>
-  <div class="photo-grid" id="photo-grid">
-    {% for p in photos %}
-      <a href="/deal-photos/{{ p.file_path }}" target="_blank"><img src="/deal-photos/{{ p.file_path }}" alt="deal photo"></a>
+<div class="dd-cols">
+  <div>
+    <div class="sec-h"><span class="t">Left</span><span class="s">{{ cards_out|length }} card{{ 's' if cards_out|length != 1 }} · booked at cost, realized against what came back</span></div>
+    {% for c in cards_out %}
+    <div class="dd-line">
+      {% if c._table == 'graded_cards' %}<span class="chip lead {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip lead raw">RAW</span>{% endif %}
+      <div style="min-width:0;display:flex;flex-direction:column;line-height:1.25">
+        <span class="nm">{{ c.card_name }}</span>
+        <span class="meta">{{ c.set_name }}{% if c.card_number %}{{ ' · ' if c.set_name }}#{{ c.card_number }}{% endif %}{% if c._table == 'graded_cards' and c.serial_number %}{{ ' · ' if c.set_name or c.card_number }}cert {{ c.serial_number }}{% endif %}</span>
+      </div>
+      <div class="figs">
+        <div class="kv"><span class="l">basis</span><span class="v muted">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</span></div>
+        <div class="kv"><span class="l">fetched</span><span class="v">{{ c.disposal_proceeds|money }}</span></div>
+        <div class="kv g"><span class="l">&nbsp;</span><span class="v">{% if c.realized_gain is none %}<span class="muted">—</span>{% elif c.realized_gain > 0 %}<span class="pill pos">{{ c.realized_gain|gain }}</span>{% elif c.realized_gain < 0 %}<span class="pill neg">{{ c.realized_gain|gain }}</span>{% else %}<span class="pill mutedbg">even</span>{% endif %}</span></div>
+      </div>
+    </div>
+    {% else %}
+    <div class="muted" style="padding:14px 4px;font-size:13px">Nothing left inventory.</div>
     {% endfor %}
+    {% if cards_out|length > 1 %}<div class="dd-sum"><span>basis <span class="mono">{{ out_basis|money }}</span></span><span>fetched <span class="mono">{{ out_proceeds|money }}</span></span></div>{% endif %}
   </div>
-  <div style="margin-top:12px">
-    <input type="file" id="photo-file" accept="image/*" multiple>
-    <button class="btn ghost small" id="photo-upload">Upload</button>
-    <span id="photo-msg" class="muted"></span>
+  <div>
+    <div class="sec-h"><span class="t">Arrived</span><span class="s">{{ cards_in|length }} card{{ 's' if cards_in|length != 1 }} · basis is what you took it in at</span></div>
+    {% for c in cards_in %}
+    <div class="dd-line">
+      {% if c._table == 'graded_cards' %}<span class="chip lead {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip lead raw">RAW</span>{% endif %}
+      <div style="min-width:0;display:flex;flex-direction:column;line-height:1.25">
+        <span class="nm">{{ c.card_name }}</span>
+        <span class="meta">{{ c.set_name }}{% if c.card_number %}{{ ' · ' if c.set_name }}#{{ c.card_number }}{% endif %}{% if c._table == 'graded_cards' and c.serial_number %}{{ ' · ' if c.set_name or c.card_number }}cert {{ c.serial_number }}{% endif %}</span>
+      </div>
+      <div class="figs">
+        <div class="kv"><span class="l">basis</span><span class="v">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</span></div>
+        <div class="kv"><span class="l">market</span><span class="v muted">{{ c.market_value|money if c.market_value is not none else '—' }}</span></div>
+      </div>
+    </div>
+    {% else %}
+    <div class="muted" style="padding:14px 4px;font-size:13px">Nothing arrived.</div>
+    {% endfor %}
+    {% if cards_in|length > 1 %}<div class="dd-sum"><span>basis <span class="mono">{{ in_basis|money }}</span></span><span>market <span class="mono">{{ in_market|money }}</span></span></div>{% endif %}
+  </div>
+</div>
+
+<div class="dd-more">
+  <div>
+    <div class="t">As entered</div>
+    <div class="s">What was typed on the deal screen, verbatim{% if entered %} · saved {{ entered.entered_at|mdy }} {{ entered.entered_at[11:16] }}{% endif %}. A blank price means the engine derived that number.</div>
+    {% if entered %}
+    <div class="ent h"><span></span><span></span><span class="r">typed price</span><span class="r">typed market</span></div>
+    {% if entered.ask is not none %}
+    <div class="ent"><span class="side">ask</span><span class="muted">my side put out at</span><span class="r">{{ entered.ask|money }}</span><span></span></div>
+    {% endif %}
+    {% for x in entered.out %}
+    <div class="ent"><span class="side">out</span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ x.name }}</span><span class="r {{ 'blank' if x.typed is none }}">{{ x.typed|money if x.typed is not none else 'blank' }}</span><span></span></div>
+    {% endfor %}
+    {% for x in entered['in'] %}
+    <div class="ent"><span class="side">in</span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ x.name }}</span><span class="r {{ 'blank' if x.typed is none }}">{{ x.typed|money if x.typed is not none else 'blank' }}</span><span class="r muted">{{ x.market|money if x.market is not none else '' }}</span></div>
+    {% endfor %}
+    {% if entered.cash %}
+    <div class="ent"><span class="side">cash</span><span class="muted">{{ 'received' if entered.cash > 0 else 'paid' }}</span><span class="r">{{ (entered.cash if entered.cash > 0 else -entered.cash)|money }}</span><span></span></div>
+    {% endif %}
+    {% else %}
+    <div class="muted" style="font-size:13px">Not recorded — this deal predates the entry log (added 2026-09-15). The booked numbers above are all that survives of it.</div>
+    {% endif %}
+  </div>
+  <div>
+    <div class="t">Photos</div>
+    <div class="s">Documentation only — nothing here changes the numbers.</div>
+    <div class="photo-grid" id="photo-grid">
+      {% for p in photos %}
+        <a href="/deal-photos/{{ p.file_path }}" target="_blank"><img src="/deal-photos/{{ p.file_path }}" alt="deal photo"></a>
+      {% endfor %}
+    </div>
+    <div class="up">
+      <input type="file" id="photo-file" accept="image/*" multiple>
+      <button class="btn ghost small" id="photo-upload">Upload</button>
+      <span id="photo-msg" class="muted" style="font-size:12.5px"></span>
+    </div>
   </div>
 </div>
 
