@@ -32,7 +32,7 @@
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --psa: #ff6b62; --bgs: #5aa2ff; --tag: #4fd1b8; --cgc: #c98bf0; --pc: #e0a52a;
   /* things that are not "a colour" in the system but still flip with the theme */
-  --pop:        var(--pop);                  /* menus, popovers, dialogs */
+  --pop:        #15140f;                  /* menus, popovers, dialogs */
   --on-accent:  #0b0a09;                  /* text on the primary button */
   --btn-hover:  #fff;
   --spec:       rgba(255,255,255,.10);    /* specular top edge */
