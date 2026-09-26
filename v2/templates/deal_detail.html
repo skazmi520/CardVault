@@ -40,7 +40,12 @@
 {% set out_basis = cards_out|map(attribute='acquisition_price')|select|sum + cards_out|map(attribute='purchase_price')|select|sum %}
 {% set out_proceeds = cards_out|map(attribute='disposal_proceeds')|select|sum %}
 {% set in_basis = cards_in|map(attribute='acquisition_price')|select|sum + cards_in|map(attribute='purchase_price')|select|sum %}
-{% set in_market = cards_in|map(attribute='market_value')|select|sum %}
+{% set in_mkt_rows = cards_in|selectattr('market_then')|list %}
+{% set in_mkt_then = in_mkt_rows|map(attribute='market_then')|sum %}
+{% set in_mkt_basis = (in_mkt_rows|map(attribute='acquisition_price')|select|sum) + (in_mkt_rows|map(attribute='purchase_price')|select|sum) %}
+{% set out_mkt_rows = cards_out|selectattr('market_then')|list %}
+{% set out_mkt_then = out_mkt_rows|map(attribute='market_then')|sum %}
+{% set out_mkt_fetched = out_mkt_rows|map(attribute='disposal_proceeds')|select|sum %}
 
 <div class="dd-head">
   <div>
@@ -58,14 +63,15 @@
   <div class="kv"><span class="l">Left · basis</span><span class="v display">{{ cards_out|length }} <span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400">{{ out_basis|money0 }}</span></span></div>
   <div class="kv"><span class="l">Arrived · basis</span><span class="v display">{{ cards_in|length }} <span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400">{{ in_basis|money0 }}</span></span></div>
   <div class="kv"><span class="l">Realized</span><span class="v display {{ 'pos' if gain > 0 else 'neg' if gain < 0 else '' }}">{% if not cards_out %}—{% elif gain %}{{ gain|gain0 }}{% else %}even{% endif %}</span></div>
-  {% if cards_in and in_market %}<div class="kv"><span class="l">Paper on what arrived</span><span class="v display {{ 'pos' if (in_market - in_basis) > 0 else '' }}">{{ (in_market - in_basis)|gain0 }}</span></div>{% endif %}
+  {% if out_mkt_then %}<div class="kv"><span class="l">Sold at</span><span class="v display">{{ (out_mkt_fetched / out_mkt_then * 100)|round|int }}%<span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400"> of market then</span></span></div>{% endif %}
+  {% if in_mkt_then %}<div class="kv"><span class="l">Took in at</span><span class="v display">{{ (in_mkt_basis / in_mkt_then * 100)|round|int }}%<span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400"> of market then</span></span></div>{% endif %}
 </div>
 
 {% if d.notes %}<div class="dd-note">{{ d.notes }}</div>{% endif %}
 
 <div class="dd-cols">
   <div>
-    <div class="sec-h"><span class="t">Left</span><span class="s">{{ cards_out|length }} card{{ 's' if cards_out|length != 1 }} · booked at cost, realized against what came back</span></div>
+    <div class="sec-h"><span class="t">Left</span><span class="s">{{ cards_out|length }} card{{ 's' if cards_out|length != 1 }} · cost, market that day, and what each fetched</span></div>
     {% for c in cards_out %}
     <div class="dd-line">
       {% if c._table == 'graded_cards' %}<span class="chip lead {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip lead raw">RAW</span>{% endif %}
@@ -75,17 +81,18 @@
       </div>
       <div class="figs">
         <div class="kv"><span class="l">basis</span><span class="v muted">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</span></div>
-        <div class="kv"><span class="l">fetched</span><span class="v">{{ c.disposal_proceeds|money }}</span></div>
+        <div class="kv"><span class="l">market then</span><span class="v muted">{{ c.market_then|money if c.market_then is not none else '—' }}</span></div>
+        <div class="kv"><span class="l">fetched{% if c.market_then %} · {{ (c.disposal_proceeds / c.market_then * 100)|round|int }}%{% endif %}</span><span class="v">{{ c.disposal_proceeds|money }}</span></div>
         <div class="kv g"><span class="l">&nbsp;</span><span class="v">{% if c.realized_gain is none %}<span class="muted">—</span>{% elif c.realized_gain > 0 %}<span class="pill pos">{{ c.realized_gain|gain }}</span>{% elif c.realized_gain < 0 %}<span class="pill neg">{{ c.realized_gain|gain }}</span>{% else %}<span class="pill mutedbg">even</span>{% endif %}</span></div>
       </div>
     </div>
     {% else %}
     <div class="muted" style="padding:14px 4px;font-size:13px">Nothing left inventory.</div>
     {% endfor %}
-    {% if cards_out|length > 1 %}<div class="dd-sum"><span>basis <span class="mono">{{ out_basis|money }}</span></span><span>fetched <span class="mono">{{ out_proceeds|money }}</span></span></div>{% endif %}
+    {% if cards_out|length > 1 %}<div class="dd-sum"><span>basis <span class="mono">{{ out_basis|money }}</span></span>{% if out_mkt_then %}<span>market then <span class="mono">{{ out_mkt_then|money }}</span></span>{% endif %}<span>fetched <span class="mono">{{ out_proceeds|money }}</span></span></div>{% endif %}
   </div>
   <div>
-    <div class="sec-h"><span class="t">Arrived</span><span class="s">{{ cards_in|length }} card{{ 's' if cards_in|length != 1 }} · basis is what you took it in at</span></div>
+    <div class="sec-h"><span class="t">Arrived</span><span class="s">{{ cards_in|length }} card{{ 's' if cards_in|length != 1 }} · market as it stood that day, and what you took each in at</span></div>
     {% for c in cards_in %}
     <div class="dd-line">
       {% if c._table == 'graded_cards' %}<span class="chip lead {{ c.grading_company }}">{{ c.grading_company }} {{ c.grade }}</span>{% else %}<span class="chip lead raw">RAW</span>{% endif %}
@@ -94,14 +101,15 @@
         <span class="meta">{{ c.set_name }}{% if c.card_number %}{{ ' · ' if c.set_name }}#{{ c.card_number }}{% endif %}{% if c._table == 'graded_cards' and c.serial_number %}{{ ' · ' if c.set_name or c.card_number }}cert {{ c.serial_number }}{% endif %}</span>
       </div>
       <div class="figs">
-        <div class="kv"><span class="l">basis</span><span class="v">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</span></div>
-        <div class="kv"><span class="l">market</span><span class="v muted">{{ c.market_value|money if c.market_value is not none else '—' }}</span></div>
+        {% set b = c.acquisition_price if c._table == 'graded_cards' else c.purchase_price %}
+        <div class="kv"><span class="l">market then</span><span class="v muted">{{ c.market_then|money if c.market_then is not none else '—' }}</span></div>
+        <div class="kv"><span class="l">took in at{% if c.market_then %} · {{ ((b or 0) / c.market_then * 100)|round|int }}%{% endif %}</span><span class="v">{{ b|money }}</span></div>
       </div>
     </div>
     {% else %}
     <div class="muted" style="padding:14px 4px;font-size:13px">Nothing arrived.</div>
     {% endfor %}
-    {% if cards_in|length > 1 %}<div class="dd-sum"><span>basis <span class="mono">{{ in_basis|money }}</span></span><span>market <span class="mono">{{ in_market|money }}</span></span></div>{% endif %}
+    {% if cards_in|length > 1 %}<div class="dd-sum"><span>basis <span class="mono">{{ in_basis|money }}</span></span>{% if in_mkt_then %}<span>market then <span class="mono">{{ in_mkt_then|money }}</span></span>{% endif %}</div>{% endif %}
   </div>
 </div>
 

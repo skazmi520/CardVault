@@ -544,6 +544,26 @@ def get_deal(conn, deal_id: int) -> dict | None:
         inn += [dict(r, _table=table) for r in conn.execute(
             f"SELECT * FROM {table} WHERE acquired_via_deal_id=? "
             f"AND status NOT IN ('promoted','cracked')", (deal_id,))]
+    # The deal page is a record of that day, not of today. An arriving slab
+    # gets a price_history row stamped at the deal time when it is booked, so
+    # that is its market then; a card that left is never repriced afterwards,
+    # so its stored market is the market at disposal. Raw take-ins are marked
+    # at what was paid, which says nothing about market, so they get None.
+    occurred = deal["occurred_at"]
+    for c in inn:
+        c["market_then"] = None
+        if c["_table"] == "graded_cards":
+            row = conn.execute(
+                "SELECT market_value FROM price_history WHERE card_id=? "
+                "AND recorded_at=? ORDER BY id LIMIT 1", (c["id"], occurred)).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT market_value FROM price_history WHERE card_id=? "
+                    "AND substr(recorded_at,1,10)=? ORDER BY recorded_at, id LIMIT 1",
+                    (c["id"], (occurred or "")[:10])).fetchone()
+            c["market_then"] = row["market_value"] if row else None
+    for c in out:
+        c["market_then"] = c["market_value"] if c["_table"] == "graded_cards" else None
     photos = conn.execute(
         "SELECT * FROM deal_photos WHERE deal_id=?", (deal_id,)).fetchall()
     return {"deal": deal, "cards_out": out, "cards_in": inn, "photos": photos,
