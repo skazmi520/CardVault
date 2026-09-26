@@ -49,7 +49,7 @@ document.querySelectorAll("[data-go]").forEach(btn => btn.addEventListener("clic
       btn.textContent = "Extract"; btn.disabled = false; return;
     }
     const pid = up.ids[0];
-    const ex = await (await fetch(`/api/photos/${pid}/extract`, { method: "POST" })).json();
+    const ex = await (await fetch(`/api/photos/${pid}/extract`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json();
     if (!ex.ok) { toastAfterReload("Extraction failed: " + ex.error + " — you can still review manually.", "error"); }
     location.href = `/photos/${pid}`;
   } catch (e) {

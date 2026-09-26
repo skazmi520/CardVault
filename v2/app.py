@@ -8,8 +8,10 @@ missing or unmarked, the app refuses to start. v1 is never opened for writing.
 """
 
 import json
+import threading
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from flask import (Flask, abort, g, jsonify, redirect, render_template,
                    request, send_from_directory, url_for)
@@ -20,8 +22,8 @@ from . import db as v2db
 from . import photos as v2photos
 from . import psa_api
 from . import psa_orders
-from .deals import (CardIn, CardOut, add_deal_photo, edit_deal, get_deal, list_deals,
-                    save_deal)
+from .deals import (CardIn, CardOut, LaterChangesError, add_deal_photo, edit_deal,
+                    get_deal, list_deals, save_deal)
 
 app = Flask(__name__)
 
@@ -170,6 +172,53 @@ def _api_errors(e):
         app.logger.error(traceback.format_exc())
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
     raise e
+
+
+_WRITES = ("POST", "PUT", "PATCH", "DELETE")
+
+
+@app.before_request
+def _same_origin_writes():
+    """Only this app's own pages can change the books. A browser always sends
+    Origin (or at least Referer) on a cross-site POST, so a page elsewhere that
+    posts to 127.0.0.1:5177 is refused here. Requiring a JSON body closes the
+    one kind of cross-site request that needs no preflight: a plain form post.
+    Photo uploads are multipart and pass the second check, never the first."""
+    if request.method not in _WRITES:
+        return None
+    src = request.headers.get("Origin") or request.headers.get("Referer")
+    if src is not None and urlsplit(src).netloc.lower() != request.host.lower():
+        return jsonify({"ok": False, "error": "refused: request came from another site"}), 403
+    if request.mimetype != "multipart/form-data" and not request.is_json:
+        return jsonify({"ok": False, "error": "send the request body as JSON"}), 415
+    return None
+
+
+_backup_lock = threading.Lock()
+
+
+@app.before_request
+def _daily_backup():
+    """The startup backup covers a day only if the app is restarted that day.
+    Left running through a show weekend, the first request of each new day
+    takes the snapshot instead, off the request thread, errors swallowed.
+    Only armed by main(): a test client never writes to the backup folders."""
+    last = app.config.get("LAST_BACKUP")
+    today = date.today()
+    if last is None or last == today:
+        return None
+    with _backup_lock:
+        if app.config.get("LAST_BACKUP") == today:
+            return None
+        app.config["LAST_BACKUP"] = today
+
+    def run():
+        try:
+            v2db.backup_v2()
+        except Exception:
+            pass
+    threading.Thread(target=run, daemon=True).start()
+    return None
 
 
 # ── pages ───────────────────────────────────────────────────────────────────────
@@ -361,13 +410,24 @@ def _edit_prefill(c, deal_id: int) -> dict | None:
             "cards_out": outs, "cards_in": ins}
 
 
+def _editable(det: dict) -> bool:
+    """Edit deal replays the entry log, so a deal booked before it existed
+    cannot be edited, only voided and rebooked."""
+    return bool(det["editable"])
+
+
 @app.get("/deals/<int:deal_id>/edit")
 def deal_edit(deal_id):
     c = conn()
-    prefill = _edit_prefill(c, deal_id)
-    if prefill is None:
+    det = get_deal(c, deal_id)
+    if det is None:
         c.close()
         abort(404)
+    if not _editable(det):
+        c.close()
+        # the deal page says why, where the Edit button would be
+        return redirect(url_for("deal_detail", deal_id=deal_id))
+    prefill = _edit_prefill(c, deal_id)
     cards = [x for x in v2cards.list_cards(c) if x["status"] == "active"]
     c.close()
     return render_template("deal_new.html", active="deals", cards=cards,
@@ -384,7 +444,7 @@ def deal_detail(deal_id):
     return render_template("deal_detail.html", active="deals", d=det["deal"],
                            cards_out=det["cards_out"], cards_in=det["cards_in"],
                            photos=det["photos"], entered=det["entered"],
-                           revisions=det["revisions"])
+                           revisions=det["revisions"], editable=_editable(det))
 
 
 @app.get("/raw")
@@ -617,15 +677,23 @@ def api_quick_sale():
         return jsonify({"ok": False, "error": str(e)}), 400
     if not price or price <= 0:
         return jsonify({"ok": False, "error": "price must be positive"}), 400
+    counterparty = p.get("counterparty", "")
+    method = p.get("payment_method", "cash")
+    notes = p.get("notes", "Quick sale")
     c = conn()
     try:
+        # the entry is in the deal screen's own shape, so replay() and Edit
+        # deal read it like any other: one card out at the price, that cash in
         res = save_deal(
             c, cards_out=[CardOut(table, card_id, price)],
             cash_amount=price,
-            counterparty=p.get("counterparty", ""),
-            payment_method=p.get("payment_method", "cash"),
-            notes=p.get("notes", "Quick sale"),
-            entry_payload={"quick_sale": True, **p})
+            counterparty=counterparty, payment_method=method, notes=notes,
+            entry_payload={"source": "quick sale", "cash_amount": price,
+                           "out_side_total": None,
+                           "cards_out": [{"table": table, "id": card_id,
+                                          "deal_value": price}],
+                           "cards_in": [], "counterparty": counterparty,
+                           "payment_method": method, "notes": notes})
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     return jsonify({"ok": True, "deal_id": res["deal_id"],
@@ -635,14 +703,32 @@ def api_quick_sale():
 @app.post("/api/deals/<int:deal_id>/void")
 def api_void_deal(deal_id):
     """Undo a mistaken deal: restores cards that left, removes cards it
-    created, deletes the deal. Refused if any created card has moved on."""
+    created, deletes the deal. Refused if any created card has moved on.
+    If a card it brought in was changed since (repriced, cert, renamed), the
+    first call answers 409 with those changes; the screen shows them and
+    resends with confirm_lose_changes once the owner agrees to lose them."""
     from .deals import void_deal
+    p = request.get_json(silent=True) or {}
     c = conn()
     try:
-        res = void_deal(c, deal_id)
+        res = void_deal(c, deal_id, **_confirm_flag(p))
+    except LaterChangesError as e:
+        return _later_changes(e)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     return jsonify({"ok": True, **res})
+
+
+def _confirm_flag(p) -> dict:
+    """{"confirm_lose_changes": True} only when the request says exactly that.
+    Left out otherwise, so the engine's own default (refuse) applies."""
+    ok = isinstance(p, dict) and p.get("confirm_lose_changes") is True
+    return {"confirm_lose_changes": True} if ok else {}
+
+
+def _later_changes(e):
+    return jsonify({"ok": False, "error": str(e),
+                    "later_changes": list(getattr(e, "changes", []) or [])}), 409
 
 
 @app.post("/api/crack")
@@ -1210,10 +1296,16 @@ def api_deal_preview():
     try:
         edit_of = p.get("edit_of")
         if isinstance(edit_of, int) and not isinstance(edit_of, bool):
-            res = edit_deal(c, edit_of, cards_out=outs, cards_in=ins,
-                            in_card_refs=_in_refs(p), cash_amount=cash_amount,
-                            out_side_total=out_total, in_side_total=in_total,
-                            dry_run=True)
+            args = dict(cards_out=outs, cards_in=ins, in_card_refs=_in_refs(p),
+                        cash_amount=cash_amount, out_side_total=out_total,
+                        in_side_total=in_total, dry_run=True)
+            try:
+                res = edit_deal(c, edit_of, **args)
+            except LaterChangesError as e:
+                # a preview writes nothing, so show what would book and name
+                # the later changes Save will ask about
+                res = edit_deal(c, edit_of, confirm_lose_changes=True, **args)
+                res = {**res, "later_changes": list(e.changes or [])}
         else:
             res = save_deal(c, cards_out=outs, cards_in=ins, cash_amount=cash_amount,
                             out_side_total=out_total, in_side_total=in_total,
@@ -1266,7 +1358,11 @@ def api_edit_deal(deal_id):
             cash_amount=cash_amount, occurred_at=p.get("occurred_at") or None,
             counterparty=p.get("counterparty", ""), location=p.get("location", ""),
             payment_method=p.get("payment_method", "cash"), notes=p.get("notes", ""),
-            out_side_total=out_total, in_side_total=in_total, entry_payload=p)
+            out_side_total=out_total, in_side_total=in_total, entry_payload=p,
+            **_confirm_flag(p))
+    except LaterChangesError as e:
+        c.close()
+        return _later_changes(e)
     except ValueError as e:
         c.close()
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -1505,6 +1601,7 @@ def main():
     guard = v2db.get_connection()   # startup guard: refuse to boot against v1
     guard.close()
     v2db.backup_v2()                # daily snapshot BEFORE any migration touches the db
+    app.config["LAST_BACKUP"] = date.today()   # arms the new-day backup in _daily_backup
     guard = v2db.get_connection()
     v2db.migrate_schema(guard)      # idempotent — applies any new v2 tables
     guard.close()

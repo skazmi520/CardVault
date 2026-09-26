@@ -42,10 +42,16 @@
 {% set in_basis = cards_in|map(attribute='acquisition_price')|select|sum + cards_in|map(attribute='purchase_price')|select|sum %}
 {% set in_mkt_rows = cards_in|selectattr('market_then')|list %}
 {% set in_mkt_then = in_mkt_rows|map(attribute='market_then')|sum %}
-{% set in_mkt_basis = (in_mkt_rows|map(attribute='acquisition_price')|select|sum) + (in_mkt_rows|map(attribute='purchase_price')|select|sum) %}
+{# a % of market needs a basis on both sides of the ratio: arriving cards with
+   no basis are left out of it, never counted as $0 #}
+{% set in_pct_rows = in_mkt_rows|rejectattr('basis_unknown')|list %}
+{% set in_pct_mkt = in_pct_rows|map(attribute='market_then')|sum %}
+{% set in_pct_basis = (in_pct_rows|map(attribute='acquisition_price')|select|sum) + (in_pct_rows|map(attribute='purchase_price')|select|sum) %}
 {% set out_mkt_rows = cards_out|selectattr('market_then')|list %}
 {% set out_mkt_then = out_mkt_rows|map(attribute='market_then')|sum %}
-{% set out_mkt_fetched = out_mkt_rows|map(attribute='disposal_proceeds')|select|sum %}
+{% set out_pct_rows = out_mkt_rows|rejectattr('disposal_proceeds', 'none')|list %}
+{% set out_pct_mkt = out_pct_rows|map(attribute='market_then')|sum %}
+{% set out_mkt_fetched = out_pct_rows|map(attribute='disposal_proceeds')|sum %}
 
 <div class="dd-head">
   <div>
@@ -54,7 +60,8 @@
   </div>
   <div style="flex:1"></div>
   <a class="btn ghost" href="/deals">All deals</a>
-  <a class="btn ghost" href="/deals/{{ d.id }}/edit">Edit deal</a>
+  {% if editable %}<a class="btn ghost" href="/deals/{{ d.id }}/edit">Edit deal</a>
+  {% else %}<span class="muted" style="font-size:12.5px;max-width:260px;text-align:right">Booked before the entry log: void and rebook to change it.</span>{% endif %}
   <button class="btn danger-ghost" id="void-deal">Void deal…</button>
 </div>
 <div id="void-msg"></div>
@@ -64,8 +71,8 @@
   <div class="kv"><span class="l">Left · basis</span><span class="v display">{{ cards_out|length }} <span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400">{{ out_basis|money0 }}</span></span></div>
   <div class="kv"><span class="l">Arrived · basis</span><span class="v display">{{ cards_in|length }} <span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400">{{ in_basis|money0 }}</span></span></div>
   <div class="kv"><span class="l">Realized</span><span class="v display {{ 'pos' if gain > 0 else 'neg' if gain < 0 else '' }}">{% if not cards_out %}—{% elif gain %}{{ gain|gain0 }}{% else %}even{% endif %}</span></div>
-  {% if out_mkt_then %}<div class="kv"><span class="l">Sold at</span><span class="v display">{{ (out_mkt_fetched / out_mkt_then * 100)|round|int }}%<span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400"> of market then</span></span></div>{% endif %}
-  {% if in_mkt_then %}<div class="kv"><span class="l">Took in at</span><span class="v display">{{ (in_mkt_basis / in_mkt_then * 100)|round|int }}%<span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400"> of market then</span></span></div>{% endif %}
+  {% if out_pct_mkt %}<div class="kv"><span class="l">Sold at</span><span class="v display">{{ (out_mkt_fetched / out_pct_mkt * 100)|round|int }}%<span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400"> of market then</span></span></div>{% endif %}
+  {% if in_pct_mkt %}<div class="kv"><span class="l">Took in at</span><span class="v display">{{ (in_pct_basis / in_pct_mkt * 100)|round|int }}%<span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400"> of market then</span></span></div>{% endif %}
 </div>
 
 {% if d.notes %}<div class="dd-note">{{ d.notes }}</div>{% endif %}
@@ -84,7 +91,7 @@
       <div class="figs">
         <div class="kv"><span class="l">basis</span><span class="v muted">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</span></div>
         <div class="kv"><span class="l">market then</span><span class="v muted" {% if c.market_note %}title="{{ c.market_note }}"{% elif c.market_set_at %}title="market last set {{ c.market_set_at[:10] }}"{% endif %}>{{ c.market_then|money if c.market_then is not none else ('unknown' if c.market_note else '—') }}</span></div>
-        <div class="kv"><span class="l">fetched{% if c.market_then %} · {{ (c.disposal_proceeds / c.market_then * 100)|round|int }}%{% endif %}</span><span class="v">{{ c.disposal_proceeds|money }}</span></div>
+        <div class="kv"><span class="l">fetched{% if c.market_then and c.disposal_proceeds is not none %} · {{ (c.disposal_proceeds / c.market_then * 100)|round|int }}%{% endif %}</span><span class="v">{{ c.disposal_proceeds|money }}</span></div>
         <div class="kv g"><span class="l">&nbsp;</span><span class="v">{% if c.realized_gain is none %}<span class="muted">—</span>{% elif c.realized_gain > 0 %}<span class="pill pos">{{ c.realized_gain|gain }}</span>{% elif c.realized_gain < 0 %}<span class="pill neg">{{ c.realized_gain|gain }}</span>{% else %}<span class="pill mutedbg">even</span>{% endif %}</span></div>
       </div>
     </div>
@@ -108,7 +115,7 @@
         {% set b = c.acquisition_price if c._table == 'graded_cards' else c.purchase_price %}
         {% set src = 'typed' if c.basis_entered is not none else ('split from ask' if c.basis_derived is not none else ('legacy · source unknown' if c.basis_legacy is not none else 'unknown')) %}
         <div class="kv"><span class="l">market then</span><span class="v muted" {% if c.market_note %}title="{{ c.market_note }}"{% endif %}>{{ c.market_then|money if c.market_then is not none else ('unknown' if c.market_note else '—') }}</span></div>
-        <div class="kv"><span class="l">took in at · {{ src }}{% if c.market_then %} · {{ ((b or 0) / c.market_then * 100)|round|int }}%{% endif %}</span><span class="v{{ ' derived' if c.basis_entered is none }}">{{ b|money if b is not none else 'unknown' }}</span></div>
+        <div class="kv"><span class="l">took in at · {{ src }}{% if c.market_then and b is not none and not c.basis_unknown %} · {{ (b / c.market_then * 100)|round|int }}%{% endif %}</span><span class="v{{ ' derived' if c.basis_entered is none }}">{{ b|money if b is not none else 'unknown' }}</span></div>
       </div>
     </div>
     {% else %}
@@ -162,14 +169,29 @@
 document.getElementById("void-deal").addEventListener("click", async () => {
   const sure = await confirmDialog({
     title: "Void deal #{{ d.id }}?",
-    body: "Cards that left will return to inventory, cards this deal created will be " +
-          "removed, and the cash flow is reversed. The full deal is archived first, so nothing is lost.",
+    body: "Cards that left will return to inventory, cards this deal brought in will be " +
+          "removed from it, and the cash is reversed. A copy of the deal as booked is kept " +
+          "in the void archive, but the app cannot restore it: to undo a void, book the deal again.",
     confirmText: "Void deal", danger: true,
   });
   if (!sure) return;
+  const voidIt = body => postJSON("/api/deals/{{ d.id }}/void", body);
   try {
-    const res = await postJSON("/api/deals/{{ d.id }}/void", {});
-    toastAfterReload(`Deal voided — restored ${res.restored.length}, removed ${res.removed.length}.`, "info");
+    let res;
+    try { res = await voidIt({}); }
+    catch (e) {
+      // a card this deal brought in was changed since: say what goes with it
+      if (e.status !== 409 || !(e.data.later_changes || []).length) throw e;
+      const again = await confirmDialog({
+        title: "Also undo later changes?",
+        body: "Voiding will also undo these later changes:\n" +
+              e.data.later_changes.map(x => "· " + x).join("\n"),
+        confirmText: "Void and undo them", danger: true,
+      });
+      if (!again) return;
+      res = await voidIt({ confirm_lose_changes: true });
+    }
+    toastAfterReload(`Deal voided. Restored ${res.restored.length}, removed ${res.removed.length}.`, "info");
     location.href = "/deals";
   } catch (e) {
     document.getElementById("void-msg").innerHTML =

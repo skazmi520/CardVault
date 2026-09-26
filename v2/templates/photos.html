@@ -79,7 +79,7 @@ $("upload").addEventListener("click", async () => {
 document.querySelectorAll("[data-extract]").forEach(b => b.addEventListener("click", async () => {
   b.textContent = "extracting…"; b.disabled = true;
   try {
-    const r = await fetch(`/api/photos/${b.dataset.extract}/extract`, { method: "POST" });
+    const r = await fetch(`/api/photos/${b.dataset.extract}/extract`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     const d = await r.json();
     if (d.ok) { location.href = `/photos/${b.dataset.extract}`; return; }
     toast(d.error || "Extraction failed.", "error");
@@ -92,7 +92,7 @@ $("extract-all").addEventListener("click", async () => {
   const btn = $("extract-all");
   btn.textContent = "extracting…"; btn.disabled = true;
   try {
-    const r = await fetch("/api/photos/extract-all", { method: "POST" });
+    const r = await fetch("/api/photos/extract-all", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     const d = await r.json();
     const nErr = (d.errors || []).length;
     toastAfterReload(`Processed ${d.processed} photos ($${d.cost}) — ${nErr} error${nErr === 1 ? "" : "s"}.`,

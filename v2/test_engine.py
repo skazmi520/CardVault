@@ -15,8 +15,11 @@ import json
 import sqlite3
 import sys
 
+from . import cards as v2cards
 from . import db as v2db
-from .deals import CardOut, CardIn, save_deal, void_deal
+from . import deals as v2deals
+from .deals import (CardIn, CardOut, LaterChangesError, _allocate, edit_deal, get_deal,
+                    later_changes, replay, save_deal, void_deal)
 
 FAILURES = []
 PASSES = []
@@ -41,6 +44,20 @@ def slab(c, name, basis, mv, unknown=0):
         (name, None if unknown else basis, mv))
     c.commit()
     return cur.lastrowid
+
+
+def refused(c, name, fn, needle="", exc=ValueError):
+    """Assert fn raises exc (message containing needle) and writes no deal."""
+    before = c.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+    try:
+        fn()
+    except exc as e:
+        after = c.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+        check(name, needle in str(e) and after == before,
+              f"message {str(e)!r} (want {needle!r}); deals {before} -> {after}")
+        return e
+    check(name, False, "no error raised")
+    return None
 
 
 def basis_cols(c, table, cid):
@@ -74,27 +91,28 @@ def test_pure_sale_scales_to_cash(c):
 def test_pure_sale_scales_with_an_unvalued_line(c):
     """Found by the fuzzer, not by us. A single blank give-line sent the deal
     down a different resolution branch where entered values above the cash were
-    kept as-is — booking $6,467 of proceeds against $5,405 received."""
+    kept as-is — booking $6,467 of proceeds against $5,405 received.
+    2026-09-25 (E6): a split typed on some cards but not all is now refused
+    outright, so this shape can no longer book at all."""
     a, b = slab(c, "A1", 800, 1000), slab(c, "B1", 800, 1000)
-    save_deal(c, cards_out=[CardOut("graded_cards", a, 4000.0),
-                            CardOut("graded_cards", b, None)],      # <- blank
-              cash_amount=1500.0, occurred_at="2026-02-01T00:00:00")
-    tot = proceeds_of(c, a) + proceeds_of(c, b)
-    check("pure sale scales even when a line has no value entered",
-          abs(tot - 1500.0) < 0.01, f"proceeds {tot} should be 1500")
+    refused(c, "a split value typed on one card out but not the other is refused",
+            lambda: save_deal(c, cards_out=[CardOut("graded_cards", a, 4000.0),
+                                            CardOut("graded_cards", b, None)],   # <- blank
+                              cash_amount=1500.0, occurred_at="2026-02-01T00:00:00"),
+            "every card going out, or on none")
 
 
 def test_zero_cash_is_not_scaled(c):
     """Zero cash is ambiguous — giveaway, or a sale whose cash was not logged.
-    Auto-zeroing would have destroyed $X of real gains on the [unreconciled]
-    deals, so the engine must warn and leave the entered values alone."""
+    It used to warn and book the typed values as proceeds with no cash behind
+    them. 2026-09-25 (E7): refused; only an all-zero giveaway books."""
     a = slab(c, "C", 500, 900)
-    r = save_deal(c, cards_out=[CardOut("graded_cards", a, 900.0)],
-                  cash_amount=0.0, occurred_at="2026-02-01T00:00:00")
-    check("zero-cash sale keeps entered values", abs(proceeds_of(c, a) - 900.0) < 0.01,
-          f"proceeds {proceeds_of(c, a)} should stay 900")
-    check("zero-cash sale warns", any("no cash" in w for w in r["warnings"]),
-          f"warnings: {r['warnings']}")
+    refused(c, "zero-cash sale with a positive typed value is refused",
+            lambda: save_deal(c, cards_out=[CardOut("graded_cards", a, 900.0)],
+                              cash_amount=0.0, occurred_at="2026-02-01T00:00:00"),
+            "Nothing came back")
+    status = c.execute("SELECT status FROM graded_cards WHERE id=?", (a,)).fetchone()[0]
+    check("the refused card is still held", status == "active", f"status {status}")
 
 
 def test_unknown_basis_books_no_gain(c):
@@ -432,6 +450,299 @@ def test_generated_columns_refuse_writes(c):
         check("UPDATE of a generated column raises OperationalError", True)
 
 
+# ── edit / void / refusal regressions (work orders E1-E11, 2026-09-25) ──────────
+
+WHEN = "2026-09-20T12:00:00"
+
+
+def buy_giratina(c, market=3500.0, paid=3000.0):
+    """A pure buy of one slab with a typed market. Returns (deal_id, card_id)."""
+    r = save_deal(c, cards_in=[CardIn(card_name="Giratina", set_name="Lost Origin",
+                                      card_number="186", grading_company="PSA", grade="10",
+                                      deal_value=paid, market_value=market)],
+                  cash_amount=-paid, occurred_at=WHEN)
+    return r["deal_id"], r["in_lines"][0]["card_id"]
+
+
+def giratina_line(market=3500.0, paid=3000.0, **kw):
+    spec = dict(card_name="Giratina", set_name="Lost Origin", card_number="186",
+                grading_company="PSA", grade="10", deal_value=paid, market_value=market)
+    spec.update(kw)
+    return CardIn(**spec)
+
+
+def card(c, cid, table="graded_cards"):
+    return c.execute(f"SELECT * FROM {table} WHERE id=?", (cid,)).fetchone()
+
+
+def points(c, cid):
+    return sorted((r["recorded_at"], r["market_value"]) for r in c.execute(
+        "SELECT recorded_at, market_value FROM price_history WHERE card_id=?", (cid,)))
+
+
+def test_edit_keeps_later_reprice_cert_and_rename(c):
+    """E1: Edit deal rewrote a kept card's identity and market from the form,
+    wiping a reprice, a cert and a rename made after the deal was booked."""
+    did, cid = buy_giratina(c)
+    v2cards.reprice(c, cid, 3400.0)
+    v2db.update_card(c, "graded_cards", cid,
+                     {"card_name": "Giratina V", "serial_number": "81234567"}, "you", "drawer")
+    c.commit()
+    # same typing for the card; the take-in and cash change
+    edit_deal(c, did, cards_in=[giratina_line(paid=2900.0)],
+              in_card_refs=[("graded_cards", cid)], cash_amount=-2900.0,
+              occurred_at=WHEN, counterparty="table 12")
+    row = card(c, cid)
+    check("edit keeps a later rename", row["card_name"] == "Giratina V", row["card_name"])
+    check("edit keeps a later cert", row["serial_number"] == "81234567", row["serial_number"])
+    check("edit keeps a later reprice", row["market_value"] == 3400.0, f"{row['market_value']}")
+    check("edit still rewrites the basis", row["basis_entered"] == 2900.0,
+          f"{row['basis_entered']}")
+    check("the reprice's price point survives",
+          any(mv == 3400.0 for _, mv in points(c, cid)), f"{points(c, cid)}")
+    check("the deal-seeded point is untouched when the typed market did not change",
+          (WHEN, 3500.0) in points(c, cid), f"{points(c, cid)}")
+    # a changed typed name is written
+    edit_deal(c, did, cards_in=[giratina_line(paid=2900.0, card_name="Giratina VSTAR")],
+              in_card_refs=[("graded_cards", cid)], cash_amount=-2900.0, occurred_at=WHEN)
+    check("a name retyped in the edit is written", card(c, cid)["card_name"] == "Giratina VSTAR",
+          card(c, cid)["card_name"])
+    check("the cert still survives", card(c, cid)["serial_number"] == "81234567")
+    r = replay(c, did)
+    check("the edited deal replays exactly", r["ok"], f"{r}")
+
+
+def test_edit_market_change_replaces_only_the_seeded_point(c):
+    """E1: _unbook deleted every price point at the deal's second, including a
+    reprice that shared it. Only the deal-seeded point goes, and only when
+    the typed market changed."""
+    did, cid = buy_giratina(c)
+    # a reprice in the very same second as the deal
+    c.execute("INSERT INTO price_history (card_id, recorded_at, market_value, source) "
+              "VALUES (?,?,3600,'entered')", (cid, WHEN))
+    c.commit()
+    edit_deal(c, did, cards_in=[giratina_line()], in_card_refs=[("graded_cards", cid)],
+              cash_amount=-3000.0, occurred_at=WHEN)
+    check("unchanged typed market leaves every price point alone",
+          points(c, cid) == [(WHEN, 3500.0), (WHEN, 3600.0)], f"{points(c, cid)}")
+    edit_deal(c, did, cards_in=[giratina_line(market=3700.0)],
+              in_card_refs=[("graded_cards", cid)], cash_amount=-3000.0, occurred_at=WHEN)
+    check("changed typed market replaces only the deal-seeded point",
+          points(c, cid) == [(WHEN, 3600.0), (WHEN, 3700.0)], f"{points(c, cid)}")
+    check("changed typed market is written to the card", card(c, cid)["market_value"] == 3700.0)
+    edit_deal(c, did, cards_in=[giratina_line(market=None)],
+              in_card_refs=[("graded_cards", cid)], cash_amount=-3000.0, occurred_at=WHEN)
+    check("blanking the typed market removes its point and seeds none",
+          points(c, cid) == [(WHEN, 3600.0)], f"{points(c, cid)}")
+    check("blanked market is blank on the card", card(c, cid)["market_value"] is None)
+
+
+def test_legacy_deal_edit_refused(c):
+    """E2: a deal from before the entry log has nothing typed to edit."""
+    did, cid = buy_giratina(c)
+    check("a deal with an entry log is editable", get_deal(c, did)["editable"] is True)
+    c.execute("DELETE FROM deal_entries WHERE deal_id=?", (did,))
+    c.commit()
+    check("a deal without an entry log is not editable", get_deal(c, did)["editable"] is False)
+    refused(c, "editing a deal from before the entry log is refused",
+            lambda: edit_deal(c, did, cards_in=[giratina_line()],
+                              in_card_refs=[("graded_cards", cid)], cash_amount=-3000.0),
+            f"Deal #{did} was booked before the entry log")
+    did2, _ = buy_giratina(c)
+    c.execute("DELETE FROM deal_lines WHERE deal_id=?", (did2,))
+    c.commit()
+    check("a deal without deal_lines is not editable", get_deal(c, did2)["editable"] is False)
+    check("the card survives the refused edit", card(c, cid) is not None)
+
+
+def test_edit_slab_raw_switch_refused(c):
+    """E3: a kept card can't switch between slab and raw in an edit."""
+    did, cid = buy_giratina(c)
+    refused(c, "switching a kept card from slab to raw is refused",
+            lambda: edit_deal(c, did, cards_in=[giratina_line(is_graded=False)],
+                              in_card_refs=[("graded_cards", cid)], cash_amount=-3000.0),
+            "between slab and raw")
+    check("the slab is untouched", card(c, cid)["status"] == "active")
+    check("the deal is untouched",
+          c.execute("SELECT COUNT(*) FROM voided_deals").fetchone()[0] == 0)
+
+
+def test_edit_duplicate_refs_refused(c):
+    """E3: two lines can't point at the same kept card."""
+    did, cid = buy_giratina(c)
+    refused(c, "two lines on the same kept card are refused",
+            lambda: edit_deal(c, did, cards_in=[giratina_line(paid=1500.0),
+                                                giratina_line(paid=1500.0)],
+                              in_card_refs=[("graded_cards", cid), ("graded_cards", cid)],
+                              cash_amount=-3000.0),
+            "same card")
+
+
+def test_later_changes_lists_a_reprice(c):
+    """E4: later_changes names what an undo would destroy, once per change."""
+    did, cid = buy_giratina(c)
+    check("a fresh deal has no later changes", later_changes(c, did) == [],
+          f"{later_changes(c, did)}")
+    v2cards.reprice(c, cid, 3400.0)
+    ch = later_changes(c, did)
+    check("later_changes lists the reprice in plain English",
+          len(ch) == 1 and ch[0].startswith("Giratina: market 3500 → 3400 (reprice, "),
+          f"{ch}")
+
+
+def test_void_refused_without_confirm(c):
+    """E4: a void must not silently discard later work on arriving cards."""
+    did, cid = buy_giratina(c)
+    v2cards.reprice(c, cid, 3400.0)
+    e = refused(c, "void of a deal with later changes is refused without confirm",
+                lambda: void_deal(c, did), "reprice", exc=LaterChangesError)
+    check("the refusal carries the changes", e is not None and len(e.changes) == 1,
+          f"{getattr(e, 'changes', None)}")
+    check("the card survives the refused void", card(c, cid) is not None)
+    res = void_deal(c, did, confirm_lose_changes=True)
+    check("confirmed void goes through", card(c, cid) is None
+          and c.execute("SELECT COUNT(*) FROM deals WHERE id=?", (did,)).fetchone()[0] == 0)
+    check("confirmed void reports what was lost", len(res["lost_changes"]) == 1,
+          f"{res['lost_changes']}")
+
+
+def test_edit_dropping_a_changed_card_needs_confirm(c):
+    """E4: an edit that drops an arriving line deletes the card, so its later
+    changes need the same confirmation; kept cards never count."""
+    r = save_deal(c, cards_in=[giratina_line(), CardIn(card_name="Arceus", deal_value=500.0)],
+                  cash_amount=-3500.0, occurred_at=WHEN)
+    did = r["deal_id"]
+    gid, aid = r["in_lines"][0]["card_id"], r["in_lines"][1]["card_id"]
+    v2cards.reprice(c, gid, 3400.0)
+    v2cards.reprice(c, aid, 650.0)
+    only_giratina = dict(cards_in=[giratina_line()], in_card_refs=[("graded_cards", gid)],
+                         cash_amount=-3000.0, occurred_at=WHEN)
+    e = refused(c, "edit dropping a repriced card is refused without confirm",
+                lambda: edit_deal(c, did, **only_giratina), "Arceus", exc=LaterChangesError)
+    check("only the dropped card's changes are listed",
+          e is not None and all(x.startswith("Arceus") for x in e.changes), f"{e and e.changes}")
+    prev = edit_deal(c, did, dry_run=True, **only_giratina)
+    check("the edit preview lists the loss instead of refusing",
+          prev["later_changes"] and any("Arceus" in w for w in prev["warnings"]), f"{prev}")
+    edit_deal(c, did, confirm_lose_changes=True, **only_giratina)
+    check("confirmed edit drops the card", card(c, aid) is None)
+    check("the kept card keeps its reprice", card(c, gid)["market_value"] == 3400.0)
+
+
+def test_pure_buy_take_ins_must_match_cash(c):
+    """E5: on a pure buy the cards cost exactly the cash paid."""
+    refused(c, "pure buy with typed take-ins short of the cash is refused",
+            lambda: save_deal(c, cards_in=[CardIn(card_name="P1", deal_value=100.0),
+                                           CardIn(card_name="P2", deal_value=50.0)],
+                              cash_amount=-200.0, occurred_at=WHEN),
+            "You paid $200.00 but the take-ins add up to $150.00")
+    refused(c, "pure buy with typed take-ins over the cash is refused",
+            lambda: save_deal(c, cards_in=[CardIn(card_name="P3", deal_value=250.0)],
+                              cash_amount=-200.0, occurred_at=WHEN),
+            "take-ins add up to $250.00")
+    r = save_deal(c, cards_in=[CardIn(card_name="M1", deal_value=120.0),
+                               CardIn(card_name="M2", deal_value=80.0)],
+                  cash_amount=-200.0, occurred_at=WHEN)
+    check("pure buy whose take-ins match the cash books", bool(r["deal_id"]))
+    r = save_deal(c, cards_in=[CardIn(card_name="Q1", deal_value=150.0),
+                               CardIn(card_name="Q2", deal_value=None)],
+                  cash_amount=-200.0, occurred_at=WHEN)
+    check("partly typed pure buy splits the rest to the blank",
+          abs(in_basis_of(c, "Q2") - 50.0) < 0.005, f"{in_basis_of(c, 'Q2')}")
+    refused(c, "partly typed pure buy whose typed take-ins exceed the cash is refused",
+            lambda: save_deal(c, cards_in=[CardIn(card_name="R1", deal_value=250.0),
+                                           CardIn(card_name="R2", deal_value=None)],
+                              cash_amount=-200.0, occurred_at=WHEN),
+            "You paid $200.00")
+
+
+def test_partial_split_values_refused(c):
+    """E6: per-card split values go on every outgoing card or on none."""
+    a, b = slab(c, "S1", 100, 300), slab(c, "S2", 100, 300)
+    refused(c, "split typed on some outgoing cards but not all is refused",
+            lambda: save_deal(c, cards_out=[CardOut("graded_cards", a, 300.0),
+                                            CardOut("graded_cards", b, None)],
+                              cards_in=[CardIn(card_name="T1", deal_value=500.0)],
+                              occurred_at=WHEN),
+            "Type a split value on every card going out, or on none.")
+
+
+def test_nothing_came_back(c):
+    """E7: no cash and no cards in books only as an all-zero giveaway."""
+    a, b = slab(c, "G1", 100, 300), slab(c, "G2", 100, 300)
+    refused(c, "nothing came back with a positive typed value is refused",
+            lambda: save_deal(c, cards_out=[CardOut("graded_cards", a, 0.0),
+                                            CardOut("graded_cards", b, 50.0)],
+                              occurred_at=WHEN),
+            "Nothing came back, so these cards can't book proceeds.")
+    r = save_deal(c, cards_out=[CardOut("graded_cards", a, 0.0),
+                                CardOut("graded_cards", b, 0.0)], occurred_at=WHEN)
+    check("an all-zero giveaway books at $0 with no warning",
+          proceeds_of(c, a) == 0.0 and proceeds_of(c, b) == 0.0 and not r["warnings"],
+          f"{proceeds_of(c, a)} / {proceeds_of(c, b)} / {r['warnings']}")
+
+
+def test_no_clamp_global(c):
+    """E8: the clamp amount is returned, not left in a module global that
+    threaded Flask requests could read from each other."""
+    check("no module-level _LAST_CLAMP", not hasattr(v2deals, "_LAST_CLAMP"))
+    vals, _, short = v2deals._resolve_side([300.0, None], [1.0, 1.0], 200.0)
+    check("_resolve_side returns the shortfall", short == 100.0 and vals == [300.0, 0.0],
+          f"{vals} {short}")
+
+
+def test_allocate_many_lines_exact_and_non_negative(c):
+    """E9: $1 over 200 lines. The old rounding put every line at $0.01 and
+    dumped -$1.00 on the last one."""
+    vals = _allocate(1.0, [1.0] * 200)
+    cents = [round(v * 100) for v in vals]
+    check("$1 over 200 lines never goes negative", min(vals) >= 0, f"min {min(vals)}")
+    check("$1 over 200 lines sums exactly", sum(cents) == 100, f"sum {sum(cents)} cents")
+    check("each share is within a cent of exact", all(abs(v - 0.005) <= 0.01 for v in vals))
+    w = [1, 2, 3, 1000, 0.5, 7]
+    vals = _allocate(123.45, w)
+    exact = [123.45 * x / sum(w) for x in w]
+    check("weighted shares sum exactly and stay within a cent",
+          sum(round(v * 100) for v in vals) == 12345
+          and all(abs(v - e) < 0.01 + 1e-9 for v, e in zip(vals, exact)), f"{vals}")
+
+
+def test_bad_occurred_at_refused(c):
+    """E10: a deal date is ISO or refused, and stored to the second."""
+    for bad in ("25/09/2026", "2026-09-25 12:00", "yesterday", "2026-9-5", "2026-09-25T12"):
+        refused(c, f"deal date {bad!r} is refused",
+                lambda bad=bad: save_deal(c, cards_in=[CardIn(card_name="D", deal_value=10.0)],
+                                          cash_amount=-10.0, occurred_at=bad),
+                "deal date")
+    for typed, stored in (("2026-09-25", "2026-09-25T00:00:00"),
+                          ("2026-09-25T14:30", "2026-09-25T14:30:00"),
+                          ("2026-09-25T14:30:15", "2026-09-25T14:30:15")):
+        r = save_deal(c, cards_in=[CardIn(card_name="D", deal_value=10.0)],
+                      cash_amount=-10.0, occurred_at=typed)
+        got = c.execute("SELECT occurred_at FROM deals WHERE id=?", (r["deal_id"],)).fetchone()[0]
+        check(f"deal date {typed!r} stored as {stored!r}", got == stored, got)
+    did, cid = buy_giratina(c)
+    refused(c, "edit with a bad deal date is refused",
+            lambda: edit_deal(c, did, cards_in=[giratina_line()],
+                              in_card_refs=[("graded_cards", cid)], cash_amount=-3000.0,
+                              occurred_at="Sept 20"),
+            "deal date")
+
+
+def test_replay_detects_cash_tampering(c):
+    """E11: replay compares the stored cash with what was typed."""
+    a = slab(c, "Cashy", 100, 300)
+    r = save_deal(c, cards_out=[CardOut("graded_cards", a, None)],
+                  cards_in=[CardIn(card_name="Back", deal_value=100.0)],
+                  cash_amount=200.0, occurred_at=WHEN)
+    check("an untouched deal replays", replay(c, r["deal_id"])["ok"], f"{replay(c, r['deal_id'])}")
+    c.execute("UPDATE deals SET cash_amount=250 WHERE id=?", (r["deal_id"],))
+    c.commit()
+    rep = replay(c, r["deal_id"])
+    check("replay reports a tampered cash amount",
+          not rep["ok"] and any(d.startswith("cash:") for d in rep["diffs"]), f"{rep}")
+
+
 TESTS = [test_pure_sale_scales_to_cash, test_pure_sale_scales_with_an_unvalued_line,
          test_zero_cash_is_not_scaled,
          test_unknown_basis_books_no_gain, test_cash_received_reduces_basis_flowing_in,
@@ -444,7 +755,16 @@ TESTS = [test_pure_sale_scales_to_cash, test_pure_sale_scales_with_an_unvalued_l
          test_blank_ask_with_blank_take_in_refused, test_cash_paid_over_take_in_refused,
          test_nameless_arrival_refused, test_nothing_came_back_refused,
          test_deal_lines_written, test_entry_payload_logged_in_same_transaction,
-         test_void_archives_then_restores, test_generated_columns_refuse_writes]
+         test_void_archives_then_restores, test_generated_columns_refuse_writes,
+         test_edit_keeps_later_reprice_cert_and_rename,
+         test_edit_market_change_replaces_only_the_seeded_point,
+         test_legacy_deal_edit_refused, test_edit_slab_raw_switch_refused,
+         test_edit_duplicate_refs_refused, test_later_changes_lists_a_reprice,
+         test_void_refused_without_confirm, test_edit_dropping_a_changed_card_needs_confirm,
+         test_pure_buy_take_ins_must_match_cash, test_partial_split_values_refused,
+         test_nothing_came_back, test_no_clamp_global,
+         test_allocate_many_lines_exact_and_non_negative, test_bad_occurred_at_refused,
+         test_replay_detects_cash_tampering]
 
 
 def main():

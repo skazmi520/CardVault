@@ -17,7 +17,9 @@ import sys
 
 from . import db as v2db
 
-TOLERANCE = 0.05          # 5%, matching the deal engine's own reconcile tolerance
+# trade_deals_balance's own 5% drift allowance. The engine has no tolerance (it
+# books penny-exact or refuses), so only deals booked by older engines can drift.
+TOLERANCE = 0.05
 PENNY = 0.01
 
 

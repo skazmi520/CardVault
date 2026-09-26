@@ -150,8 +150,11 @@ def confirm_price(conn, card_id: int, table: str = "graded_cards"):
 
 def promote_raw(conn, ungraded_id: int, *, grading_company: str, grade: str,
                 serial_number: str, grading_cost: float,
-                return_date: str | None = None) -> int:
-    """Promote a raw card to graded. Basis = raw purchase price + grading cost."""
+                return_date: str | None = None, _commit: bool = True) -> int:
+    """Promote a raw card to graded. Basis = raw purchase price + grading cost.
+
+    _commit=False leaves the transaction open so a caller applying many
+    promotions (a PSA order import) can commit or roll back all of them at once."""
     raw = conn.execute("SELECT * FROM ungraded_cards WHERE id=?", (ungraded_id,)).fetchone()
     if raw is None:
         raise ValueError(f"ungraded card id={ungraded_id} not found")
@@ -187,12 +190,14 @@ def promote_raw(conn, ungraded_id: int, *, grading_company: str, grade: str,
     v2db.update_card(conn, "ungraded_cards", ungraded_id,
                      {"status": "promoted", "is_converted": 1}, "you",
                      f"promote:{graded_id}")
-    conn.commit()
+    if _commit:
+        conn.commit()
     return graded_id
 
 
 def crack_to_raw(conn, graded_id: int, *, target_company: str = "PSA",
-                 grading_status: str = "Slated", note: str = "") -> int:
+                 grading_status: str = "Slated", note: str = "",
+                 _commit: bool = True) -> int:
     """Reverse of promote_raw: the slab was cracked open, so the card goes back
     to the raw section (e.g. to be resubmitted to another grader).
 
@@ -201,6 +206,9 @@ def crack_to_raw(conn, graded_id: int, *, target_company: str = "PSA",
     The graded row is preserved as history with status='cracked'; it is NOT a
     disposal (nothing sold, no proceeds, no realized gain), so it stays out of
     realized-gains reporting while dropping out of active inventory.
+
+    _commit=False leaves the transaction open for a caller that commits a
+    batch as one unit, as promote_raw does.
     """
     g = conn.execute("SELECT * FROM graded_cards WHERE id=?", (graded_id,)).fetchone()
     if g is None:
@@ -237,7 +245,8 @@ def crack_to_raw(conn, graded_id: int, *, target_company: str = "PSA",
                       "engine", f"crack:{graded_id}")
     v2db.update_card(conn, "graded_cards", graded_id, {"status": "cracked"}, "you",
                      f"crack:{raw_id}")
-    conn.commit()
+    if _commit:
+        conn.commit()
     return raw_id
 
 

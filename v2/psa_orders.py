@@ -210,61 +210,70 @@ def apply_order(conn, rows: list[dict], pairs: list[dict], *,
     the graded collection with its real grade and cert. A row with no grade is
     still at PSA: the card is marked At Grading with the cert recorded, so the
     return can be matched later without guessing.
+
+    All or nothing: the whole order is one transaction. A failure on any pair
+    rolls back every card already touched and re-raises, so a 40-card import
+    never lands half-applied with no report of where it stopped.
     """
     from . import cards as v2cards
 
     by_cert = {r["cert"]: r for r in rows}
     promoted, submitted, skipped = [], [], []
 
-    for p in pairs:
-        row = by_cert.get(str(p["cert"]))
-        cid = int(p["card_id"])
-        if row is None:
-            skipped.append({"cert": p.get("cert"), "why": "cert not in this order"})
-            continue
-        raw = conn.execute(
-            "SELECT card_name, status, psa_cert FROM ungraded_cards WHERE id=?",
-            (cid,)).fetchone()
-        if raw is None or raw["status"] not in ("active", "submitted_for_grading"):
-            skipped.append({"cert": row["cert"], "why": "card no longer active"})
-            continue
-        if raw["psa_cert"] and str(raw["psa_cert"]) != str(row["cert"]):
-            # never overwrite a cert already recorded on the card
-            skipped.append({"cert": row["cert"], "name": raw["card_name"],
-                            "why": f"card already carries cert {raw['psa_cert']}"})
-            continue
+    try:
+        for p in pairs:
+            row = by_cert.get(str(p["cert"]))
+            cid = int(p["card_id"])
+            if row is None:
+                skipped.append({"cert": p.get("cert"), "why": "cert not in this order"})
+                continue
+            raw = conn.execute(
+                "SELECT card_name, status, psa_cert FROM ungraded_cards WHERE id=?",
+                (cid,)).fetchone()
+            if raw is None or raw["status"] not in ("active", "submitted_for_grading"):
+                skipped.append({"cert": row["cert"], "why": "card no longer active"})
+                continue
+            if raw["psa_cert"] and str(raw["psa_cert"]) != str(row["cert"]):
+                # never overwrite a cert already recorded on the card
+                skipped.append({"cert": row["cert"], "name": raw["card_name"],
+                                "why": f"card already carries cert {raw['psa_cert']}"})
+                continue
 
-        if row.get("no_grade"):
-            # PSA refused to grade it. Record the outcome on the raw card
-            # rather than inventing a number; the card comes back in a holder
-            # but has no grade to promote.
-            note = f"PSA {row['grade_label']} (cert {row['cert']})"
-            cur_notes = conn.execute("SELECT notes FROM ungraded_cards WHERE id=?",
-                                     (cid,)).fetchone()["notes"] or ""
-            v2db.update_card(conn, "ungraded_cards", cid,
-                             {"grading_status": "Not Slated", "status": "active",
-                              "psa_cert": row["cert"], "psa_order": order_id,
-                              "notes": " | ".join(x for x in (cur_notes.strip(), note) if x)},
-                             "import", f"psa-order:{order_id}")
-            skipped.append({"cert": row["cert"], "name": raw["card_name"],
-                            "why": row["grade_label"]})
-            continue
-        if row["grade"]:
-            gid = v2cards.promote_raw(
-                conn, cid, grading_company="PSA", grade=row["grade"],
-                serial_number=row["cert"], grading_cost=grading_cost_each)
-            promoted.append({"cert": row["cert"], "name": raw["card_name"],
-                             "grade": row["grade"], "graded_id": gid})
-        else:
-            sub = conn.execute("SELECT submitted_at FROM ungraded_cards WHERE id=?",
-                               (cid,)).fetchone()["submitted_at"]
-            v2db.update_card(conn, "ungraded_cards", cid,
-                             {"grading_status": "At Grading",
-                              "status": "submitted_for_grading",
-                              "target_grading_company": "PSA",
-                              "submitted_at": sub or datetime.now().isoformat(timespec="seconds"),
-                              "psa_cert": row["cert"], "psa_order": order_id},
-                             "import", f"psa-order:{order_id}")
-            submitted.append({"cert": row["cert"], "name": raw["card_name"]})
+            if row.get("no_grade"):
+                # PSA refused to grade it. Record the outcome on the raw card
+                # rather than inventing a number; the card comes back in a holder
+                # but has no grade to promote.
+                note = f"PSA {row['grade_label']} (cert {row['cert']})"
+                cur_notes = conn.execute("SELECT notes FROM ungraded_cards WHERE id=?",
+                                         (cid,)).fetchone()["notes"] or ""
+                v2db.update_card(conn, "ungraded_cards", cid,
+                                 {"grading_status": "Not Slated", "status": "active",
+                                  "psa_cert": row["cert"], "psa_order": order_id,
+                                  "notes": " | ".join(x for x in (cur_notes.strip(), note) if x)},
+                                 "import", f"psa-order:{order_id}")
+                skipped.append({"cert": row["cert"], "name": raw["card_name"],
+                                "why": row["grade_label"]})
+                continue
+            if row["grade"]:
+                gid = v2cards.promote_raw(
+                    conn, cid, grading_company="PSA", grade=row["grade"],
+                    serial_number=row["cert"], grading_cost=grading_cost_each,
+                    _commit=False)
+                promoted.append({"cert": row["cert"], "name": raw["card_name"],
+                                 "grade": row["grade"], "graded_id": gid})
+            else:
+                sub = conn.execute("SELECT submitted_at FROM ungraded_cards WHERE id=?",
+                                   (cid,)).fetchone()["submitted_at"]
+                v2db.update_card(conn, "ungraded_cards", cid,
+                                 {"grading_status": "At Grading",
+                                  "status": "submitted_for_grading",
+                                  "target_grading_company": "PSA",
+                                  "submitted_at": sub or datetime.now().isoformat(timespec="seconds"),
+                                  "psa_cert": row["cert"], "psa_order": order_id},
+                                 "import", f"psa-order:{order_id}")
+                submitted.append({"cert": row["cert"], "name": raw["card_name"]})
+    except Exception:
+        conn.rollback()
+        raise
     conn.commit()
     return {"promoted": promoted, "submitted": submitted, "skipped": skipped}

@@ -513,7 +513,9 @@ async function preview() {
   }
   mk.innerHTML = parts.join(" ");
 
-  $("pv-warnings").innerHTML = (res.warnings || [])
+  const later = (res.later_changes || []).length
+    ? [`Saving will also undo later changes: ${res.later_changes.join("; ")}`] : [];
+  $("pv-warnings").innerHTML = [...(res.warnings || []), ...later]
     .map(w => `<div class="warn" style="margin-top:4px">${esc(w)}</div>`).join("");
 
   // the receipt and the centre badge, straight from the engine's plan
@@ -524,15 +526,56 @@ async function preview() {
   $("mid-pct").textContent = (res.out_lines.length && mm > 0.5) ? Math.round(100 * res.closed / mm) + "%" : "—";
 }
 
+/* ── unsaved deal: leaving with anything typed asks first ── */
+let dirty = false;
+["input", "change"].forEach(ev => document.addEventListener(ev, () => { dirty = true; }));
+window.addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
 /* ── save ── */
+const SAVE_LABEL = EDIT_OF ? "Save revision →" : "Save deal →";
+function saveReady() { $("save").disabled = false; $("save").textContent = SAVE_LABEL; }
+const times = k => (k >= 10 ? Math.round(k) : k.toFixed(1)) + "x";
+
+// Soft check, one confirm: an outgoing card booking at more than 3x its
+// market is more often a stray zero than a great sale.
+async function aboveMarketOk() {
+  let pv;
+  try { pv = await postJSON("/api/deals/preview", payload()); }
+  catch (err) { return true; }          // the save itself reports what is wrong
+  const high = (pv.out_lines || []).map(o => {
+    const l = outLines.find(x => x.table === o.table && x.id === o.card_id);
+    return l && l.mv > 0 && o.proceeds > 3 * l.mv
+      ? `${l.name}: books ${fmt(o.proceeds)}, ${times(o.proceeds / l.mv)} its market of ${fmt(l.mv)}` : null;
+  }).filter(Boolean);
+  if (!high.length) return true;
+  return confirmDialog({ title: "Book above market?",
+    body: "These cards book at more than 3x their market:\n" + high.map(x => "· " + x).join("\n"),
+    confirmText: "Save anyway" });
+}
+
 $("save").addEventListener("click", async () => {
   const msg = $("save-msg");
   if ($("save").disabled) return;
   $("save").disabled = true;            // a double-click must not book twice
   $("save").textContent = "Saving…";
   msg.innerHTML = "";
+  if (!(await aboveMarketOk())) { saveReady(); return; }
+  const url = EDIT_OF ? `/api/deals/${EDIT_OF}/edit` : "/api/deals";
+  const body = payload();
   try {
-    const res = await postJSON(EDIT_OF ? `/api/deals/${EDIT_OF}/edit` : "/api/deals", payload());
+    let res;
+    try { res = await postJSON(url, body); }
+    catch (err) {
+      // an arriving card was changed since the deal: say what the edit undoes
+      if (err.status !== 409 || !(err.data.later_changes || []).length) throw err;
+      const again = await confirmDialog({ title: "Also undo later changes?",
+        body: "Saving this revision will also undo these later changes:\n" +
+              err.data.later_changes.map(x => "· " + x).join("\n"),
+        confirmText: "Save and undo them", danger: true });
+      if (!again) { saveReady(); return; }
+      res = await postJSON(url, { ...body, confirm_lose_changes: true });
+    }
+    dirty = false;
     const warns = res.warnings || [];
     if (warns.length) {
       msg.innerHTML =
@@ -540,14 +583,15 @@ $("save").addEventListener("click", async () => {
         + warns.map(w => `<li>${esc(w)}</li>`).join("") + `</ul></div>`
         + `<a class="btn" href="/deals/${res.deal_id}">Open deal #${res.deal_id} →</a>`;
       window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-      $("save").disabled = false; $("save").textContent = "Save deal →";
+      // the deal is booked: Save stays off so a second click can't book it twice
+      $("save").textContent = "Saved";
     } else {
       toastAfterReload(`Deal #${res.deal_id} saved.`, "success");
       window.location = `/deals/${res.deal_id}`;
     }
   } catch (err) {
     msg.innerHTML = `<div class="warn">${esc(err.message)}</div>`;
-    $("save").disabled = false; $("save").textContent = "Save deal →";
+    saveReady();
   }
 });
 

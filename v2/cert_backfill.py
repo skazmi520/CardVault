@@ -51,9 +51,9 @@ def main():
         if d.get("card_number") and not (c["card_number"] or "").strip():
             updates["card_number"] = d["card_number"]
         if updates:
-            sets = ", ".join(f"{k}=?" for k in updates)
-            conn.execute(f"UPDATE graded_cards SET {sets} WHERE id=?",
-                         [*updates.values(), c["id"]])
+            # through update_card so every filled field lands in card_events
+            v2db.update_card(conn, "graded_cards", c["id"], updates,
+                             source="import", ref="cert-backfill")
             conn.commit()
             applied += 1
             print(f"  id{c['id']:<4} {c['card_name'][:34]:<34} filled {updates}")

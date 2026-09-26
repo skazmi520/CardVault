@@ -24,7 +24,12 @@ async function postJSON(url, body) {
     body: JSON.stringify(body),
   });
   const data = await r.json().catch(() => ({ ok: false, error: "bad response" }));
-  if (!r.ok || data.ok === false) throw new Error(data.error || r.statusText);
+  if (!r.ok || data.ok === false) {
+    // status and body ride along, so a caller can act on e.g. a 409's details
+    const e = new Error(data.error || r.statusText);
+    e.status = r.status; e.data = data;
+    throw e;
+  }
   return data;
 }
 

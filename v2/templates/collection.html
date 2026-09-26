@@ -163,6 +163,7 @@
         <div><label>Buyer</label><input type="text" id="e-sell-buyer" placeholder="optional"></div>
         <div><label>Method</label><select id="e-sell-method"><option>cash</option><option>venmo</option><option>zelle</option><option>paypal</option></select></div>
       </div>
+      <div class="warn" id="e-sell-check" style="font-size:12.5px;margin:0" hidden></div>
       <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost small" id="e-sell-cancel">Cancel</button><button class="btn small" id="e-sell-confirm">Book sale</button></div>
     </div>
     <div class="sell-row" id="d-lost-row" hidden>
@@ -366,6 +367,7 @@ function openDrawer(i) {
   $("col-grid").classList.add("open");
   drawer.hidden = false;
   $("d-sell-row").hidden = true; $("d-lost-row").hidden = true; $("e-msg").textContent = "";
+  disarmSell();
   syncDrawer();
   loadHistory(r);
 }
@@ -503,13 +505,44 @@ $("d-sell").addEventListener("click", () => {
   const r = view[drawerIdx]; if (!r) return;
   $("d-lost-row").hidden = true;
   const row = $("d-sell-row"); row.hidden = !row.hidden;
+  disarmSell();
   if (!row.hidden) { $("e-sell-price").value = r.market_value ?? ""; $("e-sell-price").focus(); $("e-sell-price").select(); }
 });
-$("e-sell-cancel").addEventListener("click", () => { $("d-sell-row").hidden = true; });
+$("e-sell-cancel").addEventListener("click", () => { $("d-sell-row").hidden = true; disarmSell(); });
+
+/* fat-finger guard: a price far from the card's market (or, with no market,
+   far above what was paid) asks once more before it books. The price itself
+   is sent exactly as typed either way. */
+let sellArmed = null;      // the typed price the warning was shown for
+function disarmSell() { sellArmed = null; $("e-sell-check").hidden = true; $("e-sell-confirm").textContent = "Book sale"; }
+function sellOddity(r, typed) {
+  const t = typed.replace(/[$,]/g, "");
+  if (!/^\d*\.?\d+$/.test(t)) return null;          // not a plain amount: the server says so
+  const x = parseFloat(t), times = k => (k >= 10 ? Math.round(k) : k.toFixed(1)) + "x";
+  const mv = r.market_value;
+  if (mv > 0) {
+    if (x > 3 * mv) return `${fmt(x)} is ${times(x / mv)} this card's market of ${fmt(mv)}. Book it anyway?`;
+    if (x < mv / 3) return `${fmt(x)} is ${Math.round(100 * x / mv)}% of this card's market of ${fmt(mv)}. Book it anyway?`;
+  } else if (!r.basis_unknown && r.basis > 0 && x > 3 * r.basis) {
+    return `${fmt(x)} is ${times(x / r.basis)} what you paid (${fmt(r.basis)}), and the card has no market. Book it anyway?`;
+  }
+  return null;
+}
+$("e-sell-price").addEventListener("input", disarmSell);
+$("e-sell-price").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); $("e-sell-confirm").click(); }
+});
 $("e-sell-confirm").addEventListener("click", async () => {
   const r = view[drawerIdx]; if (!r) return;
   const price = $("e-sell-price").value.trim();
   if (!price) { $("e-msg").textContent = "Enter the sale price."; return; }
+  const odd = sellOddity(r, price);
+  if (odd && sellArmed !== price) {
+    sellArmed = price;
+    $("e-sell-check").textContent = odd; $("e-sell-check").hidden = false;
+    $("e-sell-confirm").textContent = "Book anyway";
+    return;
+  }
   try {
     const res = await postJSON("/api/quick-sale", { table: r.table, card_id: r.id, price, counterparty: $("e-sell-buyer").value.trim(), payment_method: $("e-sell-method").value });
     toastAfterReload(`Sale booked as deal #${res.deal_id}.`);
