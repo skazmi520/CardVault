@@ -357,6 +357,9 @@ td.saved-flash { animation: saved-flash .9s ease-out; }
 }
 .hero .head { position: relative; z-index: 2; padding: 28px 32px 0; display: flex; align-items: flex-start; gap: 20px; }
 .hero .figure { font-size: 72px; line-height: .95; }
+/* the left column stops short of the chart, which starts at 46% */
+.hero .hero-left { max-width: calc(46% - 56px); }
+.hero .hero-notes { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; color: var(--muted); }
 .hero .chart { position: absolute; left: 46%; right: 28px; top: 36px; bottom: 122px; z-index: 1; }
 .hero .chart svg { width: 100%; height: 100%; display: block; overflow: visible; }
 .hero .strip {
@@ -452,6 +455,7 @@ td.saved-flash { animation: saved-flash .9s ease-out; }
   .hero .chart { position: relative; left: 0; right: 0; top: 0; height: 160px; margin: 12px 24px 0; }
   .hero .strip { position: relative; left: 0; right: 0; bottom: 0; margin: 16px 24px 24px; flex-wrap: wrap; gap: 20px 28px; }
   .hero .figure { font-size: 48px; }
+  .hero .hero-left { max-width: none; }
   .grid12 { grid-template-columns: 1fr; gap: 28px; }
   .span6, .span3 { grid-column: span 1; }
   .filters input[type=text] { width: 100%; }
