@@ -341,8 +341,11 @@ def _edit_prefill(c, deal_id: int) -> dict | None:
 
     def out_line(t, i, typed=""):
         x = by_id.get((t, i)) or {}
+        which = " · ".join(b for b in (x.get("set", ""),
+                                        f"#{x['number']}" if x.get("number") else "",
+                                        f"cert {x['cert']}" if x.get("cert") else f"id {i}") if b)
         return {"table": t, "id": i, "name": x.get("name", f"{t}#{i}"),
-                "is_pc": x.get("is_pc", False),
+                "is_pc": x.get("is_pc", False), "which": which,
                 "label": (f"{x.get('company', '')} {x.get('grade', '')}".strip()
                           if t == "graded_cards" else "RAW"),
                 "mv": x.get("market_value"), "basis": x.get("basis"),
