@@ -635,11 +635,11 @@ def test_pure_buy_take_ins_must_match_cash(c):
             lambda: save_deal(c, cards_in=[CardIn(card_name="P1", deal_value=100.0),
                                            CardIn(card_name="P2", deal_value=50.0)],
                               cash_amount=-200.0, occurred_at=WHEN),
-            "You paid $200.00 but the take-ins add up to $150.00")
+            "You paid $200.00 but the cards' prices add up to $150.00")
     refused(c, "pure buy with typed take-ins over the cash is refused",
             lambda: save_deal(c, cards_in=[CardIn(card_name="P3", deal_value=250.0)],
                               cash_amount=-200.0, occurred_at=WHEN),
-            "take-ins add up to $250.00")
+            "prices add up to $250.00")
     r = save_deal(c, cards_in=[CardIn(card_name="M1", deal_value=120.0),
                                CardIn(card_name="M2", deal_value=80.0)],
                   cash_amount=-200.0, occurred_at=WHEN)

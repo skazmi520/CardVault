@@ -123,7 +123,7 @@
 <div class="dn-band">
   <div class="dn-dealbar">
     <div>
-      <div class="plabel" id="price-label">My ask</div>
+      <div class="plabel" id="price-label">My cards went for</div>
       <div class="dn-ask">
         <input type="text" id="deal-price" placeholder="$">
         <div class="dn-seg" id="price-chips">
@@ -135,7 +135,7 @@
         <span class="muted" id="price-hint" style="font-size:12.5px"></span>
       </div>
     </div>
-    <span class="muted" style="font-size:12px;max-width:380px">Typed take-ins are firm and book as typed. A blank take-in is split from the ask, so the ask is required whenever one is blank. Nothing is ever filled from market.</span>
+    <span class="muted" style="font-size:12px;max-width:380px">What your cards went for after negotiating, not your sticker price. Only needed if you leave "took in at" blank on a card you're getting: that card's cost is then this amount, minus any cash you received, split across them. Nothing is ever filled from market.</span>
   </div>
 
   <div id="preview-panel">
@@ -284,9 +284,9 @@ function renderLines() {
       <input type="text" placeholder="market $" style="width:120px;text-align:right;font-family:var(--font-mono)"
              data-in="${i}" data-f="market_value" value="${esc(l.market_value)}"
              title="What the card is worth, if you know. Left blank it stays blank; it only sets split proportions and the built-in gain.">
-      <input class="val" type="text" placeholder="take-in $" data-side="in" data-i="${i}"
+      <input class="val" type="text" placeholder="took in at $" data-side="in" data-i="${i}"
              value="${esc(l.deal_value)}" style="width:120px;text-align:right;font-family:var(--font-mono)"
-             title="What you took this card in at. Typed, it is the card's basis exactly. Blank, it is split from your ask.">
+             title="What this card cost you in the deal. Typed, it is the card's cost exactly. Blank, it is split from what your cards went for.">
       <span class="dn-pill" data-pv-in="${i}"></span>
       <span class="x" data-inx="${i}">✕</span>
       ${l._certMsg ? `<div style="width:100%;font-size:11px;color:var(--${l._certOk ? "pos" : "neg"})">${esc(l._certMsg)}</div>` : ""}
@@ -413,7 +413,7 @@ function refresh() {
   const ps = pureSale();
   $("deal-price").disabled = ps;
   $("price-label").textContent = ps ? "Pure sale · price is the cash"
-    : pureBuy() ? "Pure buy · basis is the cash paid" : "My ask";
+    : pureBuy() ? "Pure buy · cost is the cash paid" : "My cards went for";
   if (ps) { $("deal-price").value = String(cashReceived()); markChip(null); }
   const m = myMarket();
   $("price-hint").textContent = m > 0 ? `my market: ${fmt(m)}` : "";
@@ -459,8 +459,8 @@ async function preview() {
     if (el) {
       el.textContent = p.typed ? `basis ${fmt(p.basis)}` : `split ${fmt(p.basis)}`;
       el.classList.toggle("derived", !p.typed);
-      el.title = p.typed ? "You typed this take-in; it is the card's basis exactly."
-                         : "Blank take-in: split from your ask by the markets you typed.";
+      el.title = p.typed ? "You typed this price; it is the card's cost exactly."
+                         : "Left blank: split from what your cards went for, by the markets you typed.";
     }
   });
 
@@ -505,7 +505,7 @@ async function preview() {
     const pct = 100 * res.closed / myMarket();
     const askTyped = num($("deal-price").value);
     if (!pureSale() && askTyped != null && Math.abs(askTyped - res.closed) > 0.5)
-      parts.push(`<span class="muted">Asked ${fmt(askTyped)}, closed at ${fmt(res.closed)} — ${pct.toFixed(0)}% of your market.</span>`);
+      parts.push(`<span class="muted">You typed ${fmt(askTyped)} for your cards; what you're getting plus cash comes to ${fmt(res.closed)}, ${pct.toFixed(0)}% of your market. The cards you're getting decide it.</span>`);
     else
       parts.push(`<span class="muted">Deal at ${pct.toFixed(0)}% of your market.</span>`);
   } else if (pureBuy() && theirMarket() > 0.5) {

@@ -216,41 +216,41 @@ def resolve(out_snaps: list[dict], out_entered: list[float | None],
         typed_sum = round(sum(v for v in in_entered if v is not None), 2)
         if not blanks and abs(typed_sum - paid) >= 0.005:
             raise ValueError(
-                f"You paid ${paid:,.2f} but the take-ins add up to ${typed_sum:,.2f}. "
+                f"You paid ${paid:,.2f} but the cards' prices add up to ${typed_sum:,.2f}. "
                 "They must match on a pure buy, or leave some blank to split the rest.")
         if blanks and in_side_total is None and typed_sum - paid >= 0.005:
             raise ValueError(
-                f"You paid ${paid:,.2f} but the typed take-ins already add up to "
+                f"You paid ${paid:,.2f} but the prices you typed already add up to "
                 f"${typed_sum:,.2f}, leaving nothing for the blank ones. Lower the "
-                "typed take-ins or the blanks can't be split.")
+                "typed prices or the blanks can't be split.")
     if blanks and in_side_total is None:
         if n_out and ask is None:
             raise ValueError(
-                f"{', '.join(blanks)}: no take-in price and no ask. Type what you "
-                "took each card in at, or type your ask so the blanks can be split "
+                f"{', '.join(blanks)}: no price typed. Type what you took each card "
+                "in at, or type what your cards went for so the blanks can be split "
                 "from it. Nothing is ever split from market.")
         # blanks split what is left of the ask after the cash (a pure buy: the
         # cash paid), weighted by the market typed for each incoming card
         pool = round((ask if ask is not None else 0.0) - cash_amount, 2)
         if pool < 0:
             raise ValueError(
-                f"The cash (${cash_amount:,.2f}) is more than the ask (${ask or 0:,.2f}), "
-                "so there is nothing left to split across the blank take-ins. "
-                "Type each take-in price.")
+                f"The cash (${cash_amount:,.2f}) is more than what your cards went for "
+                f"(${ask or 0:,.2f}), so there is nothing left to split across the "
+                "cards left blank. Type a price for each card you're getting.")
         in_vals, _, short = _resolve_side(in_entered, in_weights, pool)
     else:
         in_vals, _, short = _resolve_side(in_entered, in_weights, in_side_total)
     if short is not None:
         raise ValueError(
-            f"The typed take-ins are ${short:,.2f} more than the total they "
-            "should split from, so the blank ones would book $0. Type every take-in, "
-            "or raise the ask.")
+            f"The prices you typed are ${short:,.2f} more than the total they "
+            "split from, so the blank ones would come out at $0. Type a price for "
+            "every card you're getting, or raise what your cards went for.")
     zero = [ln.card_name for ln, e, v in zip(cards_in, in_entered, in_vals)
             if e is None and v <= 0]
     if zero:
         raise ValueError(
-            f"{', '.join(zero)} would be split a $0 take-in: the typed take-ins and "
-            "cash already use up the whole ask. Type a take-in price for each.")
+            f"{', '.join(zero)} would come out at $0: the prices you typed and the "
+            "cash already use up what your cards went for. Type a price for each.")
 
     # ── proceeds ─────────────────────────────────────────────────────────────
     out_vals: list[float] = []
@@ -261,8 +261,8 @@ def resolve(out_snaps: list[dict], out_entered: list[float | None],
                 raise ValueError(
                     f"You would pay ${-cash_amount:,.2f} cash but only take in "
                     f"${sum(in_vals):,.2f} of cards, so the cards you gave would fetch "
-                    "less than nothing. Put the cash into the take-in prices of the "
-                    "cards you received.")
+                    "less than nothing. Put the cash into the prices of the cards "
+                    "you received.")
             split = (list(out_entered) if out_all_typed and sum(out_entered) > 0
                      else out_weights)
             out_vals = _allocate(came_back, split)
@@ -287,7 +287,7 @@ def resolve(out_snaps: list[dict], out_entered: list[float | None],
         raise ValueError(
             f"{len(cards_in)} card(s) coming in, but nothing given up and no cash paid — "
             "they would all be recorded at $0 cost basis. Enter what you paid in the "
-            "Cash I pay box, or a take-in price per card.")
+            "Cash I pay box, or a price per card.")
 
     return {"ask": ask, "cash_amount": cash_amount, "warnings": warnings,
             "v_out": v_out, "v_in": v_in, "closed": v_out,
