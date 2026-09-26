@@ -136,19 +136,20 @@ def apply_to_card(conn, import_id: int, card_id: int | None, fields: dict) -> in
         cur = conn.execute(
             """INSERT INTO graded_cards
                  (serial_number, grading_company, grade, card_name, card_number,
-                  set_name, year, acquisition_type, acquisition_price,
-                  acquisition_date, notes, date_added, status, basis_unknown)
-               VALUES (?,?,?,?,?,?,?, 'Cash', 0, ?, 'Created from slab photo', ?, 'active', 1)""",
+                  set_name, year, acquisition_type,
+                  acquisition_date, notes, date_added, status)
+               VALUES (?,?,?,?,?,?,?, 'Cash', ?, 'Created from slab photo', ?, 'active')""",
             (fields.get("serial_number", ""), fields.get("grading_company", ""),
              fields.get("grade", ""), fields.get("card_name", "Unknown card"),
              fields.get("card_number", ""), fields.get("set_name", ""),
              fields.get("year", ""), datetime.now().date().isoformat(),
              datetime.now().isoformat()))
         card_id = cur.lastrowid
+        v2db.record_event(conn, "graded_cards", card_id, "created", None,
+                          f"from slab photo {import_id}", "import", f"photo:{import_id}")
     elif fields:
-        sets = ", ".join(f"{k}=?" for k in fields)
-        conn.execute(f"UPDATE graded_cards SET {sets} WHERE id=?",
-                     [*fields.values(), card_id])
+        v2db.update_card(conn, "graded_cards", card_id, fields, "import",
+                         f"photo:{import_id}")
 
     conn.execute(
         "UPDATE photo_imports SET status='applied', matched_table='graded_cards', "

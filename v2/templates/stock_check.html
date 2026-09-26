@@ -197,12 +197,12 @@ function beginPrice(i) {
   let committed = false;   // Enter + blur both fire — only the first wins
   const commit = async (moveNext) => {
     if (committed) return;
-    const raw = inp.value.trim().replace(/[$,]/g, "");
-    if (raw !== "" && isNaN(parseFloat(raw))) { inp.focus(); return; }
+    // sent exactly as typed; the server refuses anything not plainly a number
+    const raw = inp.value.trim();
     committed = true;
     try {
       const res = await postJSON("/api/reprice",
-        { card_id: r.id, market_value: raw === "" ? null : parseFloat(raw) });
+        { card_id: r.id, table: r.table || "graded_cards", market_value: raw });
       r.market_value = res.market_value;
       r.repriced = res.repriced || "";
     } catch (e) { toast("Save failed: " + e.message, "error"); }

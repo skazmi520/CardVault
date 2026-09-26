@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}New Deal{% endblock %}
+{% block title %}{% if edit_of %}Edit Deal #{{ edit_of }}{% else %}New Deal{% endif %}{% endblock %}
 {% block content %}
 <style>
 /* deal screen — composed to docs/design-system.md; every id and data-attribute
@@ -31,6 +31,7 @@
 .dn-line .adj { display: flex; align-items: center; gap: 8px; }
 .dn-pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; background: var(--input); border: 1px solid var(--border); color: var(--muted); }
 .dn-pill:empty { display: none; }
+.dn-pill.derived { border-style: dashed; font-style: italic; }
 .dn-line .x, .dn-inrow .x { color: var(--faint); cursor: pointer; padding: 2px 4px; font-size: 15px; line-height: 1; }
 .dn-line .x:hover, .dn-inrow .x:hover { color: var(--neg); }
 
@@ -71,13 +72,13 @@
 
 <div style="display:flex;align-items:flex-end;gap:14px;margin-bottom:18px">
   <div style="display:flex;flex-direction:column;gap:6px">
-    <span class="page-title" style="margin:0">New deal</span>
-    <span class="muted" style="font-size:13px">Pick what leaves, enter what arrives, and the engine books the rest.</span>
+    <span class="page-title" style="margin:0">{% if edit_of %}Edit deal #{{ edit_of }}{% else %}New deal{% endif %}</span>
+    <span class="muted" style="font-size:13px">{% if edit_of %}Change what you typed. Saving books a new revision of #{{ edit_of }}; the current one is archived, never lost.{% else %}Pick what leaves, enter what arrives, and the engine books the rest.{% endif %}</span>
   </div>
   <div style="flex:1"></div>
   <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;padding-bottom:6px">
     <input type="checkbox" id="adjust-mode" style="min-height:auto">
-    <span class="muted" style="font-size:12.5px">adjust per card</span></label>
+    <span class="muted" style="font-size:12.5px">split per card going out</span></label>
 </div>
 
 <div class="dn-meta">
@@ -134,7 +135,7 @@
         <span class="muted" id="price-hint" style="font-size:12.5px"></span>
       </div>
     </div>
-    <span class="muted" style="font-size:12px;max-width:380px">The ask only fills blank take-ins. Typed take-ins are firm and never move; what your cards fetched is the cash plus the take-ins.</span>
+    <span class="muted" style="font-size:12px;max-width:380px">Typed take-ins are firm and book as typed. A blank take-in is split from the ask, so the ask is required whenever one is blank. Nothing is ever filled from market.</span>
   </div>
 
   <div id="preview-panel">
@@ -146,7 +147,7 @@
       </div>
       <div class="dn-stat"><div class="lbl">Built in on arriving</div><div class="val" id="t-paper">—</div></div>
       <div class="dn-stat big"><div class="lbl">Realized on this deal</div><div class="val" id="t-realized">—</div></div>
-      <button class="btn" id="save" style="height:44px;padding:0 22px;font-size:14px;margin-bottom:2px">Save deal →</button>
+      <button class="btn" id="save" style="height:44px;padding:0 22px;font-size:14px;margin-bottom:2px">{% if edit_of %}Save revision →{% else %}Save deal →{% endif %}</button>
     </div>
     <div id="pv-sentence" class="empty">Add cards to see what will book.</div>
     <div id="pv-market"></div>
@@ -157,11 +158,20 @@
 
 <script>
 const INVENTORY = {{ cards|tojson }};
+const EDIT_OF = {{ edit_of|tojson if edit_of else 'null' }};
+const EDIT_PREFILL = {{ prefill|tojson if prefill else 'null' }};
 const outLines = [];   // {table,id,name,label,mv,basis,basis_unknown,deal_value(str)}
 const inLines  = [];   // {name,set,number,year,company,grade,cert,is_graded,deal_value(str),market_value(str)}
 
 const $ = id => document.getElementById(id);
-const num = s => { const v = parseFloat(String(s).replace(/[$,]/g, "")); return isNaN(v) ? null : v; };
+// Display maths only. What is sent to the server is the raw text of each box,
+// and the server refuses anything that is not plainly a number ("3.5k",
+// "1 200") instead of truncating it; the preview shows that refusal.
+const MONEY = /^\$?(\d{1,3}(,\d{3})+|\d+)?(\.\d+)?$/;
+const num = s => { const t = String(s ?? "").trim();
+  if (!t || !MONEY.test(t) || !/\d/.test(t)) return null;
+  return parseFloat(t.replace(/[$,]/g, "")); };
+const raw = s => String(s ?? "").trim();
 
 (() => {
   const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -205,8 +215,7 @@ function pickOut(i) {
   // Newest first, and NO price: a deal has one price, entered once below.
   outLines.unshift({ table: c.table, id: c.id, name: c.name, is_pc: c.is_pc,
     label: (c.kind === "slab" ? `${c.company} ${c.grade}` : "RAW"),
-    mv: c.market_value ?? c.basis,
-    basis: c.basis, basis_unknown: c.basis_unknown, deal_value: "" });
+    mv: c.market_value, basis: c.basis, basis_unknown: c.basis_unknown, deal_value: "" });
   search.value = ""; results.hidden = true; results.innerHTML = "";
   renderLines(); search.focus();
 }
@@ -241,12 +250,12 @@ function renderLines() {
         <span class="x" data-out="${i}">✕</span>
       </div>
       <div class="figs">
-        <div class="kv"><span class="l">Market</span><span class="v display">${fmt(l.mv)}</span></div>
+        <div class="kv"><span class="l">Market</span><span class="v display">${l.mv == null ? "none" : fmt(l.mv)}</span></div>
         <div class="kv"><span class="l">Basis</span><span class="v display">${l.basis_unknown ? "?" : fmt(l.basis)}</span></div>
         <div style="flex:1"></div>
         ${adjusting() ? `<div class="adj">
           <button type="button" class="btn ghost small" data-mkt="${i}" tabindex="-1" title="Use full market value for this card">=mkt</button>
-          <input class="val" data-side="out" data-i="${i}" type="text" placeholder="agreed $" value="${esc(l.deal_value)}" style="width:110px"></div>` : ""}
+          <input class="val" data-side="out" data-i="${i}" type="text" placeholder="split $" value="${esc(l.deal_value)}" style="width:110px"></div>` : ""}
         <span class="dn-pill" data-pv-out="${i}"></span>
       </div>
     </div>`).join("") || '<div class="muted" style="margin-bottom:8px;font-size:12.5px">No cards leaving — a pure buy.</div>';
@@ -274,11 +283,10 @@ function renderLines() {
       ${l.is_graded ? "" : '<span class="brk"></span>'}
       <input type="text" placeholder="market $" style="width:120px;text-align:right;font-family:var(--font-mono)"
              data-in="${i}" data-f="market_value" value="${esc(l.market_value)}"
-             title="What the card is worth — drives the basis split and the paper-gain math">
-      ${adjusting() ? `
-        <input class="val" type="text" placeholder="take-in $" data-side="in" data-i="${i}"
-               value="${esc(l.deal_value)}" style="width:120px;text-align:right;font-family:var(--font-mono)"
-               title="Pin this card's cost; the rest of the deal total splits across the others">` : ""}
+             title="What the card is worth, if you know. Left blank it stays blank; it only sets split proportions and the built-in gain.">
+      <input class="val" type="text" placeholder="take-in $" data-side="in" data-i="${i}"
+             value="${esc(l.deal_value)}" style="width:120px;text-align:right;font-family:var(--font-mono)"
+             title="What you took this card in at. Typed, it is the card's basis exactly. Blank, it is split from your ask.">
       <span class="dn-pill" data-pv-in="${i}"></span>
       <span class="x" data-inx="${i}">✕</span>
       ${l._certMsg ? `<div style="width:100%;font-size:11px;color:var(--${l._certOk ? "pos" : "neg"})">${esc(l._certMsg)}</div>` : ""}
@@ -342,7 +350,11 @@ async function certLookup(i) {
 const cashPaid     = () => num($("cash-paid").value) ?? 0;
 const cashReceived = () => num($("cash-received").value) ?? 0;
 const myMarket     = () => outLines.reduce((a, l) => a + (l.mv || 0), 0);
-const namedIn      = () => inLines.filter(l => (l.name || "").trim());
+// a row counts once anything is typed in it; a row with values but no name is
+// sent and refused, so nothing typed is ever silently dropped
+const filledIn     = () => inLines.filter(l => raw(l.name) || raw(l.deal_value) ||
+                                               raw(l.market_value) || raw(l.cert));
+const namedIn      = filledIn;
 const theirMarket  = () => namedIn().reduce((a, l) => a + (num(l.market_value) || 0), 0);
 const pureSale     = () => outLines.length && !namedIn().length && cashReceived() > 0;
 const pureBuy      = () => !outLines.length && namedIn().length;
@@ -359,7 +371,11 @@ function markChip(pct) {
     b.classList.toggle("on", pct !== null && +b.dataset.pct === pct));
 }
 $("deal-price").addEventListener("input", () => { markChip(null); refresh(); });
-$("adjust-mode").addEventListener("change", renderLines);
+$("adjust-mode").addEventListener("change", () => {
+  // switching per-card splits off clears them visibly; nothing hidden is sent
+  if (!adjusting()) outLines.forEach(l => { l.deal_value = ""; });
+  renderLines();
+});
 ["cash-paid", "cash-received"].forEach(id => $(id).addEventListener("input", refresh));
 
 function dealPrice() {
@@ -373,17 +389,19 @@ function payload() {
     payment_method: $("d-method").value,
     occurred_at: $("d-when").value ? $("d-when").value + ":00" : null,
     notes: $("d-notes").value,
-    cash_amount: cashReceived() - cashPaid(),
+    edit_of: EDIT_OF,
+    cash_received: raw($("cash-received").value),
+    cash_paid: raw($("cash-paid").value),
     // the ONE agreed number: my side's total. Typed per-card pins ride along;
     // blanks split pro rata by market on both sides, in the engine.
-    out_side_total: outLines.length ? dealPrice() : null,
+    out_side_total: outLines.length ? (pureSale() ? raw($("cash-received").value)
+                                                  : raw($("deal-price").value)) : null,
     cards_out: outLines.map(l => ({ table: l.table, id: l.id,
-      deal_value: adjusting() ? num(l.deal_value) : null })),
-    cards_in: namedIn().map(l => ({ name: l.name, set: l.set, number: l.number,
+      deal_value: adjusting() ? raw(l.deal_value) : "" })),
+    cards_in: filledIn().map(l => ({ name: l.name, set: l.set, number: l.number,
       year: l.year, company: l.company, grade: l.grade, cert: l.cert,
-      is_graded: l.is_graded,
-      deal_value: adjusting() ? num(l.deal_value) : null,
-      market_value: num(l.market_value) })),
+      is_graded: l.is_graded, ref: l.ref || null,
+      deal_value: raw(l.deal_value), market_value: raw(l.market_value) })),
   };
 }
 
@@ -415,7 +433,7 @@ async function preview() {
   try { res = await postJSON("/api/deals/preview", payload()); }
   catch (err) {
     if (seq !== pvSeq) return;
-    $("pv-sentence").textContent = "Not enough to book yet: " + err.message;
+    $("pv-sentence").textContent = "Won't book yet: " + err.message;
     $("pv-sentence").className = "empty";
     $("pv-market").textContent = ""; $("pv-warnings").innerHTML = "";
     $("t-realized").textContent = "—"; $("t-paper").textContent = "—";
@@ -437,7 +455,13 @@ async function preview() {
   (res.in_lines || []).forEach((p, k) => {
     const i = inLines.indexOf(named[k]);
     const el = document.querySelector(`[data-pv-in="${i}"]`);
-    if (el) el.textContent = `basis ${fmt(p.basis)}`;
+    // typed take-ins are the record; a split one is the engine's and says so
+    if (el) {
+      el.textContent = p.typed ? `basis ${fmt(p.basis)}` : `split ${fmt(p.basis)}`;
+      el.classList.toggle("derived", !p.typed);
+      el.title = p.typed ? "You typed this take-in; it is the card's basis exactly."
+                         : "Blank take-in: split from your ask by the markets you typed.";
+    }
   });
 
   const realized = (res.out_lines || []).reduce((a, o) => a + (o.realized_gain || 0), 0);
@@ -466,9 +490,16 @@ async function preview() {
   const mk = $("pv-market");
   const parts = [];
   parts.push(`<span class="${gainClass(realized)}">Realized ${fmtGain(realized)}${unknownN ? ` (+${unknownN} unknown-basis)` : ""}.</span>`);
-  if (res.in_lines.length && theirMarket() > 0.5) {
-    const pct = 100 * res.v_in / theirMarket();
-    parts.push(`<span class="${paper > 0.5 ? "pos" : "muted"}">Taking in ${fmt(theirMarket())} of market at ${fmt(res.v_in)} (${pct.toFixed(0)}%), ${fmtGain(paper)} built in.</span>`);
+  // % of market only over the arriving cards that have a typed market
+  const withMkt = (res.in_lines || []).filter(p => p.market_value != null);
+  if (withMkt.length) {
+    const mk = withMkt.reduce((a, p) => a + p.market_value, 0);
+    const at = withMkt.reduce((a, p) => a + p.basis, 0);
+    const of = withMkt.length < res.in_lines.length
+      ? ` ${withMkt.length} of ${res.in_lines.length} arriving cards have a market.` : "";
+    parts.push(`<span class="${paper > 0.5 ? "pos" : "muted"}">Taking in ${fmt(mk)} of market at ${fmt(at)} (${(100 * at / mk).toFixed(0)}%), ${fmtGain(paper)} built in.${of}</span>`);
+  } else if ((res.in_lines || []).length) {
+    parts.push(`<span class="muted">No market typed for the arriving cards; none will be stored.</span>`);
   }
   if (res.out_lines.length && myMarket() > 0.5) {
     const pct = 100 * res.closed / myMarket();
@@ -501,7 +532,7 @@ $("save").addEventListener("click", async () => {
   $("save").textContent = "Saving…";
   msg.innerHTML = "";
   try {
-    const res = await postJSON("/api/deals", payload());
+    const res = await postJSON(EDIT_OF ? `/api/deals/${EDIT_OF}/edit` : "/api/deals", payload());
     const warns = res.warnings || [];
     if (warns.length) {
       msg.innerHTML =
@@ -559,7 +590,28 @@ function applyPrefill() {
   }
   return true;
 }
-if (!applyPrefill()) addIn();   /* seed one blank incoming row only if not prefilled */
+/* ── Edit deal: the screen opens on exactly what was typed last time ── */
+function applyEditPrefill() {
+  const p = EDIT_PREFILL;
+  if (!p) return false;
+  $("d-counterparty").value = p.counterparty || "";
+  $("d-location").value = p.location || "";
+  $("d-method").value = p.payment_method || "cash";
+  $("d-notes").value = p.notes || "";
+  if (p.occurred_at) $("d-when").value = p.occurred_at.slice(0, 16);
+  $("cash-received").value = p.cash_received || "";
+  $("cash-paid").value = p.cash_paid || "";
+  $("deal-price").value = p.ask || "";
+  $("adjust-mode").checked = !!p.adjust;
+  (p.cards_out || []).forEach(o => outLines.push({ ...o, deal_value: o.deal_value || "" }));
+  (p.cards_in || []).forEach(i => inLines.push({ ...i,
+    deal_value: i.deal_value || "", market_value: i.market_value || "" }));
+  if (p.source === "booked") {
+    $("save-msg").innerHTML = `<div class="warn">Nothing typed was recorded for this deal (it predates the entry log), so the boxes hold what was booked. Saving records them as typed by you.</div>`;
+  }
+  return true;
+}
+if (!applyEditPrefill() && !applyPrefill()) addIn();   /* seed one blank row only if not prefilled */
 if (!inLines.length) addIn();
 renderLines();
 </script>

@@ -25,6 +25,9 @@ number and year.
 import csv
 import io
 import re
+from datetime import datetime
+
+from . import db as v2db
 
 # words that carry no identifying signal in a PSA description
 _NOISE = {
@@ -220,9 +223,15 @@ def apply_order(conn, rows: list[dict], pairs: list[dict], *,
             skipped.append({"cert": p.get("cert"), "why": "cert not in this order"})
             continue
         raw = conn.execute(
-            "SELECT card_name, status FROM ungraded_cards WHERE id=?", (cid,)).fetchone()
+            "SELECT card_name, status, psa_cert FROM ungraded_cards WHERE id=?",
+            (cid,)).fetchone()
         if raw is None or raw["status"] not in ("active", "submitted_for_grading"):
             skipped.append({"cert": row["cert"], "why": "card no longer active"})
+            continue
+        if raw["psa_cert"] and str(raw["psa_cert"]) != str(row["cert"]):
+            # never overwrite a cert already recorded on the card
+            skipped.append({"cert": row["cert"], "name": raw["card_name"],
+                            "why": f"card already carries cert {raw['psa_cert']}"})
             continue
 
         if row.get("no_grade"):
@@ -230,10 +239,13 @@ def apply_order(conn, rows: list[dict], pairs: list[dict], *,
             # rather than inventing a number; the card comes back in a holder
             # but has no grade to promote.
             note = f"PSA {row['grade_label']} (cert {row['cert']})"
-            conn.execute(
-                "UPDATE ungraded_cards SET grading_status='Not Slated', status='active', "
-                "psa_cert=?, psa_order=?, notes = TRIM(COALESCE(notes,'') || ' | ' || ?) "
-                "WHERE id=?", (row["cert"], order_id, note, cid))
+            cur_notes = conn.execute("SELECT notes FROM ungraded_cards WHERE id=?",
+                                     (cid,)).fetchone()["notes"] or ""
+            v2db.update_card(conn, "ungraded_cards", cid,
+                             {"grading_status": "Not Slated", "status": "active",
+                              "psa_cert": row["cert"], "psa_order": order_id,
+                              "notes": " | ".join(x for x in (cur_notes.strip(), note) if x)},
+                             "import", f"psa-order:{order_id}")
             skipped.append({"cert": row["cert"], "name": raw["card_name"],
                             "why": row["grade_label"]})
             continue
@@ -244,12 +256,15 @@ def apply_order(conn, rows: list[dict], pairs: list[dict], *,
             promoted.append({"cert": row["cert"], "name": raw["card_name"],
                              "grade": row["grade"], "graded_id": gid})
         else:
-            conn.execute(
-                "UPDATE ungraded_cards SET grading_status='At Grading', "
-                "status='submitted_for_grading', target_grading_company='PSA', "
-                "submitted_at=COALESCE(submitted_at, datetime('now')), "
-                "psa_cert=?, psa_order=? WHERE id=?",
-                (row["cert"], order_id, cid))
+            sub = conn.execute("SELECT submitted_at FROM ungraded_cards WHERE id=?",
+                               (cid,)).fetchone()["submitted_at"]
+            v2db.update_card(conn, "ungraded_cards", cid,
+                             {"grading_status": "At Grading",
+                              "status": "submitted_for_grading",
+                              "target_grading_company": "PSA",
+                              "submitted_at": sub or datetime.now().isoformat(timespec="seconds"),
+                              "psa_cert": row["cert"], "psa_order": order_id},
+                             "import", f"psa-order:{order_id}")
             submitted.append({"cert": row["cert"], "name": raw["card_name"]})
     conn.commit()
     return {"promoted": promoted, "submitted": submitted, "skipped": skipped}

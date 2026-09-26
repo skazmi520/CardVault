@@ -8,6 +8,17 @@ from . import db as v2db
 
 # ── listing ─────────────────────────────────────────────────────────────────────
 
+def _basis_source(r) -> str:
+    """Which column the card's basis comes from: typed | derived | legacy | unknown."""
+    if r["basis_entered"] is not None:
+        return "typed"
+    if r["basis_derived"] is not None:
+        return "derived"
+    if r["basis_legacy"] is not None:
+        return "legacy"
+    return "unknown"
+
+
 def list_cards(conn, include_disposed: bool = False,
                include_gone: bool = False) -> list[dict]:
     """Unified graded + raw card list for the collection table.
@@ -29,6 +40,8 @@ def list_cards(conn, include_disposed: bool = False,
             "cert": r["serial_number"] or "",
             "acq_cost": basis, "basis": basis,
             "basis_unknown": bool(r["basis_unknown"]),
+            "basis_source": _basis_source(r),
+            "basis_deal": r["acquired_via_deal_id"] or r["disposed_via_deal_id"],
             "market_value": mv,
             # gain is unknowable without a basis — don't invent one
             "gain": (None if r["basis_unknown"] or mv is None
@@ -51,6 +64,8 @@ def list_cards(conn, include_disposed: bool = False,
             "company": "", "grade": "", "cert": "",
             "acq_cost": basis, "basis": basis,
             "basis_unknown": bool(r["basis_unknown"]),
+            "basis_source": _basis_source(r),
+            "basis_deal": r["acquired_via_deal_id"] or r["disposed_via_deal_id"],
             "market_value": mv,
             "gain": (None if r["basis_unknown"] or mv is None
                      else round(mv - basis, 2)),
@@ -71,33 +86,41 @@ def list_cards(conn, include_disposed: bool = False,
 
 # ── repricing ───────────────────────────────────────────────────────────────────
 
+_HELD = ("active", "submitted_for_grading")
+
+
 def reprice(conn, card_id: int, market_value: float | None,
             table: str = "graded_cards"):
-    """Update a card's market value; stamps market_value_updated. For slabs it
-    also appends to price_history (which feeds Top Movers) — price_history is
-    keyed to graded_cards, so raw repricing updates the value only."""
+    """Set a card's market value (typed by the owner); stamps market_value_updated.
+    For slabs it also appends to price_history (which feeds Top Movers).
+
+    Only cards still held can be repriced: a card that left keeps the market
+    it had, because the deal page reads it as the market at the time."""
     if table not in ("graded_cards", "ungraded_cards"):
         raise ValueError(f"unknown table {table!r}")
-    now = datetime.now().isoformat(timespec="seconds")
-    prevrow = conn.execute(
-        f"SELECT market_value FROM {table} WHERE id=?", (card_id,)).fetchone()
-    prev = prevrow["market_value"] if prevrow else None
-    cur = conn.execute(
-        f"UPDATE {table} SET market_value=?, market_value_updated=? WHERE id=?",
-        (market_value, now if market_value is not None else None, card_id))
-    if cur.rowcount == 0:
-        # no such card — without this, the price_history insert below would
-        # blow up on its foreign key while holding an open write transaction
-        conn.rollback()
+    if market_value is not None and (market_value < 0 or market_value != market_value):
+        raise ValueError("market value must be a positive number")
+    row = conn.execute(f"SELECT market_value, status FROM {table} WHERE id=?",
+                       (card_id,)).fetchone()
+    if row is None:
         raise ValueError(f"card id={card_id} not found in {table}")
+    if row["status"] not in _HELD:
+        raise ValueError(f"this card is {row['status']}; only cards you still hold "
+                         "can be repriced")
+    now = datetime.now().isoformat(timespec="seconds")
+    prev = row["market_value"]
+    v2db.update_card(conn, table, card_id,
+                     {"market_value": market_value,
+                      "market_value_updated": now if market_value is not None else None},
+                     "reprice")
     # Re-entering the same number is a confirmation ("checked it, still right"),
     # not a price movement. Stamp the date but keep it out of price_history, or
     # Top Movers fills with zero-delta noise every repricing pass.
     if (market_value is not None and table == "graded_cards"
             and market_value != prev):
         conn.execute(
-            "INSERT INTO price_history (card_id, recorded_at, market_value) VALUES (?,?,?)",
-            (card_id, now, market_value))
+            "INSERT INTO price_history (card_id, recorded_at, market_value, source) "
+            "VALUES (?,?,?, 'entered')", (card_id, now, market_value))
     conn.commit()
 
 
@@ -110,13 +133,15 @@ def confirm_price(conn, card_id: int, table: str = "graded_cards"):
     back to re-check work you already did."""
     if table not in ("graded_cards", "ungraded_cards"):
         raise ValueError(f"unknown table {table!r}")
-    now = datetime.now().isoformat(timespec="seconds")
-    cur = conn.execute(
-        f"UPDATE {table} SET market_value_updated=? "
-        "WHERE id=? AND market_value IS NOT NULL", (now, card_id))
-    if cur.rowcount == 0:
-        conn.rollback()
+    row = conn.execute(f"SELECT market_value, status FROM {table} WHERE id=?",
+                       (card_id,)).fetchone()
+    if row is None or row["market_value"] is None:
         raise ValueError(f"card id={card_id} not found in {table}, or has no price to confirm")
+    if row["status"] not in _HELD:
+        raise ValueError(f"this card is {row['status']}; only held cards can be confirmed")
+    now = datetime.now().isoformat(timespec="seconds")
+    v2db.update_card(conn, table, card_id, {"market_value_updated": now}, "reprice",
+                     "confirmed unchanged")
     conn.commit()
     return {"id": card_id, "confirmed_at": now}
 
@@ -135,13 +160,16 @@ def promote_raw(conn, ungraded_id: int, *, grading_company: str, grade: str,
 
     return_date = return_date or date.today().isoformat()
     grading_cost = round(float(grading_cost or 0), 2)
-    basis = round((raw["purchase_price"] or 0.0) + grading_cost, 2)
+    # derived, never typed: raw basis + grading fee. An unknown raw basis stays
+    # unknown on the slab (the fee alone is not what the card cost).
+    basis = (None if raw["purchase_price"] is None
+             else round(raw["purchase_price"] + grading_cost, 2))
 
     cur = conn.execute(
         """INSERT INTO graded_cards
              (serial_number, grading_company, grade, card_name, card_number,
               set_name, year, photo_filename, acquisition_type,
-              acquisition_price, grading_fee, trade_value, trade_details,
+              basis_derived, grading_fee, trade_value, trade_details,
               acquisition_date, notes, date_added, status, acquired_via_deal_id,
               expected_grade, sub_type)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?, ?, ?)""",
@@ -153,10 +181,12 @@ def promote_raw(conn, ungraded_id: int, *, grading_company: str, grade: str,
          datetime.now().isoformat(), raw["acquired_via_deal_id"],
          raw["expected_grade"], raw["sub_type"]))
     graded_id = cur.lastrowid
-
-    conn.execute(
-        "UPDATE ungraded_cards SET status='promoted', is_converted=1 WHERE id=?",
-        (ungraded_id,))
+    v2db.record_event(conn, "graded_cards", graded_id, "created", None,
+                      f"promoted from raw #{ungraded_id}; basis_derived={basis}, "
+                      f"grading_fee={grading_cost}", "engine", f"promote:{ungraded_id}")
+    v2db.update_card(conn, "ungraded_cards", ungraded_id,
+                     {"status": "promoted", "is_converted": 1}, "you",
+                     f"promote:{graded_id}")
     conn.commit()
     return graded_id
 
@@ -179,7 +209,7 @@ def crack_to_raw(conn, graded_id: int, *, target_company: str = "PSA",
         raise ValueError(f"card {g['card_name']!r} has status={g['status']!r} — "
                          "only active slabs can be cracked")
 
-    basis = g["acquisition_price"] or 0.0
+    basis = g["acquisition_price"]          # None stays None: unknown carries over
     trail = (f"Cracked out of {g['grading_company']} {g['grade']} slab"
              + (f" (cert {g['serial_number']})" if (g["serial_number"] or "").strip() else "")
              + f" on {date.today().isoformat()}")
@@ -188,22 +218,25 @@ def crack_to_raw(conn, graded_id: int, *, target_company: str = "PSA",
     cur = conn.execute(
         """INSERT INTO ungraded_cards
              (card_name, card_number, set_name, year, photo_filename,
-              purchase_price, purchase_date, acquisition_type, trade_value,
+              basis_derived, purchase_date, acquisition_type, trade_value,
               trade_details, notes, grading_status, target_grading_company,
-              date_added, status, acquired_via_deal_id,
-              market_value, market_value_updated, basis_unknown)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?, ?, ?, ?, ?)""",
+              date_added, status, acquired_via_deal_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?, ?)""",
         (g["card_name"], g["card_number"], g["set_name"], g["year"] or "",
          g["photo_filename"], basis, g["acquisition_date"],
          g["acquisition_type"] or "Cash", g["trade_value"] or 0.0,
          g["trade_details"] or "", notes, grading_status, target_company,
          datetime.now().isoformat(),
          "submitted_for_grading" if grading_status == "At Grading" else "active",
-         g["acquired_via_deal_id"],
-         g["market_value"], g["market_value_updated"], g["basis_unknown"]))
+         g["acquired_via_deal_id"]))
     raw_id = cur.lastrowid
-
-    conn.execute("UPDATE graded_cards SET status='cracked' WHERE id=?", (graded_id,))
+    # the slab's market is a graded price; it says nothing about the raw card,
+    # which is marked at what was paid until the owner prices it
+    v2db.record_event(conn, "ungraded_cards", raw_id, "created", None,
+                      f"cracked from slab #{graded_id}; basis_derived={basis}",
+                      "engine", f"crack:{graded_id}")
+    v2db.update_card(conn, "graded_cards", graded_id, {"status": "cracked"}, "you",
+                     f"crack:{raw_id}")
     conn.commit()
     return raw_id
 
@@ -234,11 +267,12 @@ def set_expected_grade(conn, ungraded_id: int, expected_grade: str,
         sub_type = str(sub_type).strip().lower()
         if sub_type not in VALID_SUB_TYPES:
             raise ValueError("sub_type must be banker, casino, or empty")
-        conn.execute("UPDATE ungraded_cards SET expected_grade=?, sub_type=? WHERE id=?",
-                     (expected_grade or None, sub_type or None, ungraded_id))
+        v2db.update_card(conn, "ungraded_cards", ungraded_id,
+                         {"expected_grade": expected_grade or None,
+                          "sub_type": sub_type or None}, "you")
     else:
-        conn.execute("UPDATE ungraded_cards SET expected_grade=? WHERE id=?",
-                     (expected_grade or None, ungraded_id))
+        v2db.update_card(conn, "ungraded_cards", ungraded_id,
+                         {"expected_grade": expected_grade or None}, "you")
     conn.commit()
 
 
@@ -270,21 +304,20 @@ def bulk_grading_update(conn, ids: list[int], *, grading_status: str | None = No
         if grading_status is not None:
             status = ("submitted_for_grading" if grading_status == "At Grading"
                       else "active")
+            fields = {"grading_status": grading_status, "status": status}
             if grading_status == "At Grading":
-                conn.execute(
-                    "UPDATE ungraded_cards SET grading_status=?, status=?, "
-                    "submitted_at=COALESCE(submitted_at, ?) WHERE id=?",
-                    (grading_status, status, now, cid))
+                sub = conn.execute("SELECT submitted_at FROM ungraded_cards WHERE id=?",
+                                   (cid,)).fetchone()["submitted_at"]
+                fields["submitted_at"] = sub or now
             else:
-                conn.execute(
-                    "UPDATE ungraded_cards SET grading_status=?, status=?, "
-                    "submitted_at=NULL WHERE id=?", (grading_status, status, cid))
+                fields["submitted_at"] = None
+            v2db.update_card(conn, "ungraded_cards", cid, fields, "you", "bulk")
         if expected_back is not None:
-            conn.execute("UPDATE ungraded_cards SET expected_back=? WHERE id=?",
-                         (expected_back or None, cid))
+            v2db.update_card(conn, "ungraded_cards", cid,
+                             {"expected_back": expected_back or None}, "you", "bulk")
         if target_company is not None:
-            conn.execute("UPDATE ungraded_cards SET target_grading_company=? WHERE id=?",
-                         (target_company, cid))
+            v2db.update_card(conn, "ungraded_cards", cid,
+                             {"target_grading_company": target_company}, "you", "bulk")
         changed += 1
     conn.commit()
     return {"changed": changed, "requested": len(ids)}
@@ -295,13 +328,12 @@ def set_expected_back(conn, ungraded_id: int, expected_back: str):
     expected_back = str(expected_back or "").strip()
     if expected_back:
         date.fromisoformat(expected_back)   # validates format
-    cur = conn.execute(
-        "UPDATE ungraded_cards SET expected_back=? "
-        "WHERE id=? AND status IN ('active','submitted_for_grading')",
-        (expected_back or None, ungraded_id))
-    if cur.rowcount == 0:
-        conn.rollback()
+    row = conn.execute("SELECT status FROM ungraded_cards WHERE id=?",
+                       (ungraded_id,)).fetchone()
+    if row is None or row["status"] not in ("active", "submitted_for_grading"):
         raise ValueError(f"raw card id={ungraded_id} not found or not active")
+    v2db.update_card(conn, "ungraded_cards", ungraded_id,
+                     {"expected_back": expected_back or None}, "you")
     conn.commit()
 
 
@@ -315,15 +347,16 @@ def create_card(conn, table: str, *, card_name: str, basis=None,
     """Add a card that never came through a deal — a mystery slab, a legacy
     find, a grading return that slipped tracking. When basis is None the card
     is flagged basis_unknown rather than booked at $0, so it stays out of every
-    gain statistic instead of faking a 100%-profit sale later."""
+    gain statistic instead of faking a 100%-profit sale later. Everything
+    stored here was typed; nothing is filled in (a blank market stays blank)."""
     if table not in ("graded_cards", "ungraded_cards"):
         raise ValueError(f"unknown table {table!r}")
     card_name = (card_name or "").strip()
     if not card_name:
         raise ValueError("card_name is required")
 
-    basis_unknown = basis is None or str(basis).strip() == ""
-    basis_val = 0.0 if basis_unknown else round(float(basis), 2)
+    basis_val = (None if basis is None or str(basis).strip() == ""
+                 else round(float(basis), 2))
     # grading_fee > 0 marks a card as self-graded, which every segmented
     # performance report keys off — it must be storable at creation time
     fee = 0.0 if grading_fee in (None, "") else round(float(grading_fee), 2)
@@ -335,26 +368,27 @@ def create_card(conn, table: str, *, card_name: str, basis=None,
         cur = conn.execute(
             """INSERT INTO graded_cards
                  (serial_number, grading_company, grade, card_name, card_number,
-                  set_name, year, acquisition_type, acquisition_price,
+                  set_name, year, acquisition_type, basis_entered,
                   acquisition_date, notes, date_added, market_value,
-                  market_value_updated, status, basis_unknown, is_pc, grading_fee)
-               VALUES (?,?,?,?,?,?,?,'Cash',?,?,?,?,?,?,'active',?,?,?)""",
+                  market_value_updated, status, is_pc, grading_fee)
+               VALUES (?,?,?,?,?,?,?,'Cash',?,?,?,?,?,?,'active',?,?)""",
             (serial_number.strip(), grading_company, grade.strip(), card_name,
              card_number.strip(), set_name.strip(), year.strip(), basis_val,
              acq, notes.strip(), now, mv, now if mv is not None else None,
-             1 if basis_unknown else 0, 1 if is_pc else 0, fee))
+             1 if is_pc else 0, fee))
     else:
         cur = conn.execute(
             """INSERT INTO ungraded_cards
-                 (card_name, card_number, set_name, year, purchase_price,
+                 (card_name, card_number, set_name, year, basis_entered,
                   purchase_date, notes, grading_status, date_added,
                   acquisition_type, market_value, market_value_updated,
-                  status, basis_unknown, is_pc)
-               VALUES (?,?,?,?,?,?,?,?,?,'Cash',?,?,'active',?,?)""",
+                  status, is_pc)
+               VALUES (?,?,?,?,?,?,?,?,?,'Cash',?,?,'active',?)""",
             (card_name, card_number.strip(), set_name.strip(), year.strip(),
              basis_val, acq, notes.strip(), grading_status, now,
-             mv, now if mv is not None else None,
-             1 if basis_unknown else 0, 1 if is_pc else 0))
+             mv, now if mv is not None else None, 1 if is_pc else 0))
+    v2db.record_event(conn, table, cur.lastrowid, "created", None,
+                      f"basis_entered={basis_val}, market_value={mv}", "you")
     conn.commit()
     return cur.lastrowid
 
@@ -380,8 +414,8 @@ def remove_card(conn, table: str, card_id: int, reason: str = "") -> dict:
     stamp = f"[removed {date.today().isoformat()}"
     stamp += f": {reason.strip()}]" if reason.strip() else "]"
     notes = (row["notes"] + " " + stamp).strip() if row["notes"] else stamp
-    conn.execute(f"UPDATE {table} SET status='removed', notes=? WHERE id=?",
-                 (notes, card_id))
+    v2db.update_card(conn, table, card_id, {"status": "removed", "notes": notes}, "you",
+                     reason.strip())
     conn.commit()
     return {"id": card_id, "name": row["card_name"]}
 
@@ -416,9 +450,9 @@ def restore_card(conn, table: str, card_id: int) -> dict:
             back_to = "submitted_for_grading"
 
     notes = _GONE_STAMP.sub("", row["notes"] or "").strip()
-    conn.execute(
-        f"UPDATE {table} SET status=?, disposal_proceeds=NULL, realized_gain=NULL, "
-        f"disposed_at=NULL, notes=? WHERE id=?", (back_to, notes, card_id))
+    v2db.update_card(conn, table, card_id,
+                     {"status": back_to, "disposal_proceeds": None, "disposed_at": None,
+                      "notes": notes}, "you", "restore")
     conn.commit()
     return {"id": card_id, "name": row["card_name"],
             "was": row["status"], "now": back_to}
@@ -452,16 +486,16 @@ def mark_lost(conn, table: str, card_id: int, reason: str = "misplaced",
             "still hold can be marked lost")
 
     basis = round(row["basis"] or 0.0, 2)
-    loss = None if row["basis_unknown"] else -basis
+    loss = None if row["basis_unknown"] else -basis   # realized_gain computes the same
 
     stamp = f"[lost {date.today().isoformat()}: {reason}"
     stamp += f" — {note.strip()}]" if note.strip() else "]"
     notes = (row["notes"] + " " + stamp).strip() if row["notes"] else stamp
 
-    conn.execute(
-        f"UPDATE {table} SET status='lost', disposal_proceeds=0, realized_gain=?, "
-        f"disposed_at=?, notes=? WHERE id=?",
-        (loss, date.today().isoformat(), notes, card_id))
+    v2db.update_card(conn, table, card_id,
+                     {"status": "lost", "disposal_proceeds": 0.0,
+                      "disposed_at": date.today().isoformat(), "notes": notes},
+                     "you", f"lost: {reason}")
     conn.commit()
     return {"id": card_id, "name": row["card_name"], "basis": basis,
             "realized_loss": loss, "reason": reason}
@@ -471,11 +505,7 @@ def set_pc(conn, table: str, card_id: int, is_pc: bool):
     """Flag a card as personal collection (kept, not inventory)."""
     if table not in ("graded_cards", "ungraded_cards"):
         raise ValueError(f"unknown table {table!r}")
-    cur = conn.execute(f"UPDATE {table} SET is_pc=? WHERE id=?",
-                       (1 if is_pc else 0, card_id))
-    if cur.rowcount == 0:
-        conn.rollback()
-        raise ValueError(f"card id={card_id} not found in {table}")
+    v2db.update_card(conn, table, card_id, {"is_pc": 1 if is_pc else 0}, "you")
     conn.commit()
 
 
@@ -526,47 +556,48 @@ def prediction_stats(conn):
 
 def set_grading_status(conn, ungraded_id: int, grading_status: str):
     status = "submitted_for_grading" if grading_status == "At Grading" else "active"
-    conn.execute(
-        "UPDATE ungraded_cards SET grading_status=?, status=? "
-        "WHERE id=? AND status IN ('active','submitted_for_grading')",
-        (grading_status, status, ungraded_id))
-    if grading_status == "At Grading":
-        # stamp submission time once (kept if already set)
-        conn.execute(
-            "UPDATE ungraded_cards SET submitted_at=COALESCE(submitted_at, ?) "
-            "WHERE id=? AND status='submitted_for_grading'",
-            (datetime.now().isoformat(timespec="seconds"), ungraded_id))
-    else:
-        conn.execute(
-            "UPDATE ungraded_cards SET submitted_at=NULL "
-            "WHERE id=? AND status IN ('active','submitted_for_grading')", (ungraded_id,))
+    row = conn.execute("SELECT status, submitted_at FROM ungraded_cards WHERE id=?",
+                       (ungraded_id,)).fetchone()
+    if row is None or row["status"] not in ("active", "submitted_for_grading"):
+        return
+    # stamp submission time once (kept if already set); cleared when it comes off
+    submitted = ((row["submitted_at"] or datetime.now().isoformat(timespec="seconds"))
+                 if grading_status == "At Grading" else None)
+    v2db.update_card(conn, "ungraded_cards", ungraded_id,
+                     {"grading_status": grading_status, "status": status,
+                      "submitted_at": submitted}, "you")
     conn.commit()
 
 
 # ── dashboard ───────────────────────────────────────────────────────────────────
 
 def dashboard_stats(conn) -> dict:
-    g = conn.execute("SELECT * FROM graded_cards WHERE status='active'").fetchall()
-    r = conn.execute("SELECT * FROM ungraded_cards WHERE status IN "
-                     "('active','submitted_for_grading')").fetchall()
+    """Headline figures. Stock figures (market, basis, unrealized) cover
+    business inventory only; personal-collection cards are reported on their
+    own line, never mixed in (the owner, 2026-09-25). A card with no market typed
+    counts at its cost and is counted in at_cost, so the headline says how
+    much of it is a price and how much is a placeholder."""
+    g_all = conn.execute("SELECT * FROM graded_cards WHERE status='active'").fetchall()
+    r_all = conn.execute("SELECT * FROM ungraded_cards WHERE status IN "
+                         "('active','submitted_for_grading')").fetchall()
+    g = [c for c in g_all if not c["is_pc"]]
+    r = [c for c in r_all if not c["is_pc"]]
+    pc = [c for c in g_all if c["is_pc"]] + [c for c in r_all if c["is_pc"]]
 
-    g_market = sum((c["market_value"] if c["market_value"] is not None
-                    else c["acquisition_price"] or 0) for c in g)
-    r_basis  = sum(c["purchase_price"] or 0 for c in r)
-    # raw uses its market value where one has been entered, else carries at cost
-    r_market = sum((c["market_value"] if c["market_value"] is not None
-                    else c["purchase_price"] or 0) for c in r)
-    basis    = sum(c["acquisition_price"] or 0 for c in g) + r_basis
-    market   = g_market + r_market
+    def basis_of(c):
+        return c["acquisition_price"] if "acquisition_price" in c.keys() else c["purchase_price"]
+
+    def value_of(c):
+        return c["market_value"] if c["market_value"] is not None else (basis_of(c) or 0)
+
+    market = sum(value_of(c) for c in g + r)
+    basis = sum(basis_of(c) or 0 for c in g + r)
     # unrealized gain only over cards whose cost is actually known — a
     # basis_unknown card's market value is real portfolio worth but its
     # "gain" is unknowable, not 100%
-    unreal = sum(((c["market_value"] if c["market_value"] is not None
-                   else c["acquisition_price"] or 0) - (c["acquisition_price"] or 0))
-                 for c in g if not c["basis_unknown"]) \
-           + sum(((c["market_value"] if c["market_value"] is not None
-                   else c["purchase_price"] or 0) - (c["purchase_price"] or 0))
-                 for c in r if not c["basis_unknown"])
+    unreal = sum(value_of(c) - (basis_of(c) or 0) for c in g + r if not c["basis_unknown"])
+    at_cost = [c for c in g if c["market_value"] is None]
+    pc_value = sum(value_of(c) for c in pc)
 
     y0 = f"{date.today().year}-01-01"
     realized_ytd = (conn.execute(
@@ -586,6 +617,10 @@ def dashboard_stats(conn) -> dict:
         "cards_active": len(g) + len(r),
         "slabs": len(g), "raw": len(r),
         "market": round(market, 2),
+        "slabs_at_cost": len(at_cost),
+        "slabs_at_cost_value": round(sum(basis_of(c) or 0 for c in at_cost), 2),
+        "pc_count": len(pc), "pc_value": round(pc_value, 2),
+        "holding": round(market + pc_value, 2),
         "basis": round(basis, 2),
         "unrealized": round(unreal, 2),
         "realized_ytd": round(realized_ytd, 2),
@@ -709,6 +744,7 @@ def top_movers(conn, limit: int = 5) -> list[dict]:
     for c in cards:
         pts = conn.execute(
             "SELECT market_value, recorded_at FROM price_history WHERE card_id=? "
+            "AND source != 'copied' "          # a copied take-in was never a price
             "ORDER BY recorded_at DESC, id DESC LIMIT 2", (c["id"],)).fetchall()
         if len(pts) == 2 and pts[0]["market_value"] != pts[1]["market_value"]:
             delta = round(pts[0]["market_value"] - pts[1]["market_value"], 2)
@@ -774,17 +810,20 @@ def sell_candidates(conn) -> dict:
 
 
 def record_snapshot(conn):
-    """Upsert today's portfolio snapshot (feeds the value-over-time chart)."""
+    """Upsert today's portfolio snapshot (feeds the value-over-time chart).
+    Records the whole holding, stock plus personal collection, as it always
+    has, so the chart's history stays comparable."""
     stats = dashboard_stats(conn)
     today = date.today().isoformat()
     row = conn.execute(
         "SELECT id FROM portfolio_snapshots WHERE snapshot_date=?", (today,)).fetchone()
     if row:
         conn.execute("UPDATE portfolio_snapshots SET total_value=?, card_count=? WHERE id=?",
-                     (stats["market"], stats["cards_active"], row["id"]))
+                     (stats["holding"], stats["cards_active"] + stats["pc_count"], row["id"]))
     else:
         conn.execute("INSERT INTO portfolio_snapshots (snapshot_date, total_value, card_count) "
-                     "VALUES (?,?,?)", (today, stats["market"], stats["cards_active"]))
+                     "VALUES (?,?,?)", (today, stats["holding"],
+                                        stats["cards_active"] + stats["pc_count"]))
     conn.commit()
 
 

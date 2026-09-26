@@ -5,19 +5,18 @@ Unlike test_deals.py (which prints a worked example for eyeballing), every test
 here ASSERTS and fails loudly. Each one pins down a rule that was broken at some
 point, so the same bug cannot come back quietly.
 
-Runs against a throwaway database cloned from the live schema. The real database
-is opened read-only for its DDL and never written.
+Runs against a throwaway database built from the schema v2/db.py defines
+(v2db.scratch_database). The live database is never opened.
 
 Run:  python3 -m v2.test_engine
 """
 
+import json
 import sqlite3
 import sys
-import tempfile
-from pathlib import Path
 
 from . import db as v2db
-from .deals import CardOut, CardIn, save_deal
+from .deals import CardOut, CardIn, save_deal, void_deal
 
 FAILURES = []
 PASSES = []
@@ -29,28 +28,24 @@ def check(name, cond, detail=""):
 
 
 def fresh_db():
-    src = sqlite3.connect(f"file:{v2db.V2_DB_PATH}?mode=ro", uri=True)
-    ddl = [r[0] for r in src.execute(
-        "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'")]
-    src.close()
-    path = Path(tempfile.mkdtemp(prefix="cv_engine_")) / "t.db"
-    c = sqlite3.connect(path)
-    c.row_factory = sqlite3.Row
-    for s in ddl:
-        c.execute(s)
-    c.execute("INSERT OR REPLACE INTO v2_meta (key,value) VALUES ('is_v2','1')")
-    c.commit()
-    return c
+    """A throwaway database built from the schema this code defines (v2/db.py),
+    never copied from the live database — these tests must never touch it."""
+    return v2db.scratch_database(prefix="cv_engine_")
 
 
 def slab(c, name, basis, mv, unknown=0):
     cur = c.execute(
-        "INSERT INTO graded_cards (card_name, grading_company, grade, acquisition_price, "
-        "acquisition_date, market_value, basis_unknown, status, date_added, notes, set_name, card_number) "
-        "VALUES (?,'PSA','10',?,'2026-01-01',?,?,'active','2026-01-01','','','')",
-        (name, basis, mv, unknown))
+        "INSERT INTO graded_cards (card_name, grading_company, grade, basis_entered, "
+        "acquisition_date, market_value, status, date_added, notes, set_name, card_number) "
+        "VALUES (?,'PSA','10',?,'2026-01-01',?,'active','2026-01-01','','','')",
+        (name, None if unknown else basis, mv))
     c.commit()
     return cur.lastrowid
+
+
+def basis_cols(c, table, cid):
+    row = c.execute(f"SELECT basis_entered, basis_derived FROM {table} WHERE id=?", (cid,)).fetchone()
+    return row["basis_entered"], row["basis_derived"]
 
 
 def proceeds_of(c, cid):
@@ -273,13 +268,183 @@ def test_empty_deal_refused(c):
         check("a deal with no cards on either side is refused", True)
 
 
+# ── schema-7 regressions (typed vs derived basis, 2026-09-25) ──────────────────
+
+def test_blank_market_stays_blank(c):
+    """A take-in with no market typed must stay NULL forever — never copied from
+    the take-in price the way the old engine did."""
+    save_deal(c, cards_in=[CardIn(card_name="NoMarket", deal_value=500.0, market_value=None)],
+              cash_amount=-500.0, occurred_at="2026-09-25T00:00:00")
+    row = c.execute("SELECT id, market_value FROM graded_cards WHERE card_name='NoMarket'").fetchone()
+    check("blank market stays NULL on the new card", row["market_value"] is None,
+          f"market_value={row['market_value']}")
+    n = c.execute("SELECT COUNT(*) FROM price_history WHERE card_id=?", (row["id"],)).fetchone()[0]
+    check("no price_history row is seeded from a blank market", n == 0, f"found {n} row(s)")
+
+
+def test_typed_market_seeds_price_history_as_entered(c):
+    """A typed market on an incoming card becomes its first price point,
+    tagged source='entered' — never 'copied' from the take-in."""
+    save_deal(c, cards_in=[CardIn(card_name="WithMarket", deal_value=500.0, market_value=700.0)],
+              cash_amount=-500.0, occurred_at="2026-09-25T00:00:00")
+    cid = c.execute("SELECT id FROM graded_cards WHERE card_name='WithMarket'").fetchone()[0]
+    ph = c.execute("SELECT market_value, source FROM price_history WHERE card_id=?", (cid,)).fetchone()
+    check("typed market seeds price_history as 'entered'",
+          ph is not None and ph["market_value"] == 700.0 and ph["source"] == "entered",
+          f"{dict(ph) if ph else None}")
+
+
+def test_typed_take_in_lands_in_basis_entered(c):
+    be, bd = basis_cols(c, "graded_cards", save_deal(
+        c, cards_in=[CardIn(card_name="TypedIn", deal_value=500.0)],
+        cash_amount=-500.0, occurred_at="2026-09-25T00:00:00")["in_lines"][0]["card_id"])
+    check("typed take-in lands in basis_entered", be == 500.0, f"basis_entered={be}")
+    check("basis_derived stays NULL when the take-in was typed", bd is None, f"basis_derived={bd}")
+
+
+def test_blank_take_in_lands_in_basis_derived(c):
+    a = slab(c, "AskedOut", 1000, 1200)
+    r = save_deal(c, cards_out=[CardOut("graded_cards", a, None)], out_side_total=1000.0,
+                  cards_in=[CardIn(card_name="BlankIn", deal_value=None, market_value=500.0)],
+                  cash_amount=0.0, occurred_at="2026-09-25T00:00:00")
+    be, bd = basis_cols(c, "graded_cards", r["in_lines"][0]["card_id"])
+    check("blank take-in lands in basis_derived", bd == 1000.0, f"basis_derived={bd}")
+    check("basis_entered stays NULL when the take-in was blank", be is None, f"basis_entered={be}")
+
+
+def test_blank_ask_with_blank_take_in_refused(c):
+    """Cards go out, nothing is typed anywhere on the ask side, and one take-in
+    is blank: there is nothing to split it from, so the engine refuses rather
+    than silently defaulting to market."""
+    a = slab(c, "NoAsk", 500, 600)
+    before = c.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+    try:
+        save_deal(c, cards_out=[CardOut("graded_cards", a, None)],
+                  cards_in=[CardIn(card_name="BlankBlank", deal_value=None)],
+                  cash_amount=0.0, occurred_at="2026-09-25T00:00:00")
+        check("blank ask with a blank take-in is refused", False, "no error raised")
+    except ValueError:
+        after = c.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+        check("blank ask with a blank take-in is refused", after == before,
+              f"deals count {before} -> {after}")
+
+
+def test_cash_paid_over_take_in_refused(c):
+    a = slab(c, "CashOver", 500, 600)
+    before = c.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+    try:
+        save_deal(c, cards_out=[CardOut("graded_cards", a, 500.0)],
+                  cards_in=[CardIn(card_name="SmallIn", deal_value=100.0)],
+                  cash_amount=-1000.0, occurred_at="2026-09-25T00:00:00")
+        check("cash paid over the take-in is refused", False, "no error raised")
+    except ValueError:
+        after = c.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+        check("cash paid over the take-in is refused", after == before,
+              f"deals count {before} -> {after}")
+
+
+def test_nameless_arrival_refused(c):
+    before = c.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+    try:
+        save_deal(c, cards_in=[CardIn(card_name="   ", deal_value=100.0)],
+                  cash_amount=-100.0, occurred_at="2026-09-25T00:00:00")
+        check("an arriving card with an empty name is refused", False, "no error raised")
+    except ValueError:
+        after = c.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+        check("an arriving card with an empty name is refused", after == before,
+              f"deals count {before} -> {after}")
+
+
+def test_nothing_came_back_refused(c):
+    a = slab(c, "Stranded", 500, 600)
+    before = c.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+    try:
+        save_deal(c, cards_out=[CardOut("graded_cards", a, None)],
+                  cash_amount=0.0, occurred_at="2026-09-25T00:00:00")
+        check("nothing came back (no cash, no cards in) is refused", False, "no error raised")
+    except ValueError:
+        after = c.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+        check("nothing came back (no cash, no cards in) is refused", after == before,
+              f"deals count {before} -> {after}")
+
+
+def test_deal_lines_written(c):
+    a = slab(c, "LineOut", 800, 1000)
+    r = save_deal(c, cards_out=[CardOut("graded_cards", a, 900.0)],
+                  cards_in=[CardIn(card_name="LineIn", deal_value=400.0, market_value=450.0)],
+                  cash_amount=500.0, occurred_at="2026-09-25T00:00:00")
+    lines = c.execute("SELECT * FROM deal_lines WHERE deal_id=?", (r["deal_id"],)).fetchall()
+    check("one deal_lines row per line", len(lines) == 2, f"got {len(lines)}")
+    out_line = next((l for l in lines if l["side"] == "out"), None)
+    in_line = next((l for l in lines if l["side"] == "in"), None)
+    check("out line entered_value equals what was typed",
+          out_line is not None and out_line["entered_value"] == 900.0)
+    check("out line derived_value equals the booked proceeds",
+          out_line is not None and abs(out_line["derived_value"] - proceeds_of(c, a)) < 0.01)
+    check("out line basis_at_deal equals the card's basis before the deal",
+          out_line is not None and out_line["basis_at_deal"] == 800.0)
+    check("out line market_at_deal equals the card's market before the deal",
+          out_line is not None and out_line["market_at_deal"] == 1000.0)
+    check("in line entered_value equals what was typed",
+          in_line is not None and in_line["entered_value"] == 400.0)
+    got_basis = c.execute("SELECT basis_entered FROM graded_cards WHERE card_name='LineIn'").fetchone()[0]
+    check("in line derived_value equals the booked basis",
+          in_line is not None and abs(in_line["derived_value"] - got_basis) < 0.01)
+
+
+def test_entry_payload_logged_in_same_transaction(c):
+    payload = {"cards_out": [], "cards_in": [{"name": "PayloadIn", "deal_value": 250.0}],
+               "cash_amount": -250.0}
+    r = save_deal(c, cards_in=[CardIn(card_name="PayloadIn", deal_value=250.0)],
+                  cash_amount=-250.0, occurred_at="2026-09-25T00:00:00", entry_payload=payload)
+    row = c.execute("SELECT payload_json FROM deal_entries WHERE deal_id=?", (r["deal_id"],)).fetchone()
+    check("entry_payload is logged in the same transaction", row is not None, "no deal_entries row")
+    if row is not None:
+        check("logged payload matches what was passed", json.loads(row["payload_json"]) == payload,
+              f"{row['payload_json']}")
+
+
+def test_void_archives_then_restores(c):
+    a = slab(c, "VoidOut", 800, 1000)
+    before_a = dict(c.execute("SELECT * FROM graded_cards WHERE id=?", (a,)).fetchone())
+    r = save_deal(c, cards_out=[CardOut("graded_cards", a, 900.0)],
+                  cards_in=[CardIn(card_name="VoidIn", deal_value=400.0)],
+                  cash_amount=500.0, occurred_at="2026-09-25T00:00:00")
+    deal_id = r["deal_id"]
+    in_id = r["in_lines"][0]["card_id"]
+    void_deal(c, deal_id)
+    voided = c.execute("SELECT * FROM voided_deals WHERE deal_id=?", (deal_id,)).fetchall()
+    check("voided_deals has exactly one row", len(voided) == 1, f"got {len(voided)}")
+    check("the archived snapshot contains the deal",
+          bool(voided) and str(deal_id) in voided[0]["snapshot_json"], "deal id not found in snapshot")
+    after_a = dict(c.execute("SELECT * FROM graded_cards WHERE id=?", (a,)).fetchone())
+    check("the out card's row equals its pre-deal state", before_a == after_a,
+          f"before={before_a}\nafter={after_a}")
+    gone = c.execute("SELECT COUNT(*) FROM graded_cards WHERE id=?", (in_id,)).fetchone()[0]
+    check("the in card the deal created is removed", gone == 0, f"count={gone}")
+
+
+def test_generated_columns_refuse_writes(c):
+    try:
+        c.execute("UPDATE graded_cards SET acquisition_price=1")
+        check("UPDATE of a generated column raises OperationalError", False, "no error raised")
+    except sqlite3.OperationalError:
+        check("UPDATE of a generated column raises OperationalError", True)
+
+
 TESTS = [test_pure_sale_scales_to_cash, test_pure_sale_scales_with_an_unvalued_line,
          test_zero_cash_is_not_scaled,
          test_unknown_basis_books_no_gain, test_cash_received_reduces_basis_flowing_in,
          test_agreed_price_beats_market_everywhere,
          test_blank_in_lines_split_pro_rata_by_market, test_deal_37_books_under_stefans_model,
          test_worked_example_umbreon, test_two_cards_out_split_by_typed_values,
-         test_double_disposal_refused, test_allocation_is_penny_exact, test_empty_deal_refused]
+         test_double_disposal_refused, test_allocation_is_penny_exact, test_empty_deal_refused,
+         test_blank_market_stays_blank, test_typed_market_seeds_price_history_as_entered,
+         test_typed_take_in_lands_in_basis_entered, test_blank_take_in_lands_in_basis_derived,
+         test_blank_ask_with_blank_take_in_refused, test_cash_paid_over_take_in_refused,
+         test_nameless_arrival_refused, test_nothing_came_back_refused,
+         test_deal_lines_written, test_entry_payload_logged_in_same_transaction,
+         test_void_archives_then_restores, test_generated_columns_refuse_writes]
 
 
 def main():

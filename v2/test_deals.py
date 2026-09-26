@@ -1,40 +1,26 @@
 """
 CardVault v2 — deal engine seed tests.
 
-Creates a THROWAWAY database (schema cloned from the real v2 db, zero rows),
+Creates a THROWAWAY database (schema built fresh from v2/db.py, zero rows),
 seeds fake cards, and runs one deal of each type, printing the computed
 allocation, basis and gains so the math can be verified by hand.
 
-The real v2 database is opened read-only for its schema and never written.
+The live v2 database is never opened.
 
 Run:  python3 -m v2.test_deals
 """
 
-import sqlite3
 import sys
-import tempfile
-from pathlib import Path
 
 from . import db as v2db
 from .deals import CardOut, CardIn, save_deal, get_deal
 
 
-def make_test_db() -> sqlite3.Connection:
-    """Clone the real v2 schema (no rows) into a temp file, marked as v2."""
-    src = sqlite3.connect(f"file:{v2db.V2_DB_PATH}?mode=ro", uri=True)
-    ddl = [r[0] for r in src.execute(
-        "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL "
-        "AND name NOT LIKE 'sqlite_%'").fetchall()]
-    src.close()
-
-    path = Path(tempfile.mkdtemp(prefix="cardvault_test_")) / "test_v2.db"
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    for stmt in ddl:
-        conn.execute(stmt)
-    conn.execute("INSERT OR REPLACE INTO v2_meta (key,value) VALUES ('is_v2','1')")
-    conn.commit()
-    print(f"throwaway db: {path}\n")
+def make_test_db():
+    """A throwaway database built from the schema this code defines (v2/db.py),
+    never copied from the live database."""
+    conn = v2db.scratch_database(prefix="cardvault_test_")
+    print(f"throwaway db: {conn.execute('PRAGMA database_list').fetchone()['file']}\n")
     return conn
 
 
@@ -43,14 +29,14 @@ def seed_card(conn, name, basis, mv, graded=True):
         cur = conn.execute(
             """INSERT INTO graded_cards
                  (serial_number, grading_company, grade, card_name, card_number,
-                  set_name, acquisition_type, acquisition_price, acquisition_date,
+                  set_name, acquisition_type, basis_entered, acquisition_date,
                   notes, date_added, market_value, status)
                VALUES ('', 'PSA', '10', ?, '', '', 'Cash', ?, '2026-01-01', '',
                        '2026-01-01', ?, 'active')""", (name, basis, mv))
     else:
         cur = conn.execute(
             """INSERT INTO ungraded_cards
-                 (card_name, card_number, set_name, year, purchase_price,
+                 (card_name, card_number, set_name, year, basis_entered,
                   purchase_date, acquisition_type, notes, grading_status,
                   target_grading_company, date_added, status)
                VALUES (?, '', '', '', ?, '2026-01-01', 'Cash', '', 'Not Slated',
@@ -125,9 +111,11 @@ def main():
                    out_side_total=900, cash_amount=900,
                    payment_method="cash"))
 
-    # 6. RECONCILIATION WARNING: both sides itemized and >5% apart
+    # 6. TYPED VALUES SET THE SPLIT, NOT THE TOTAL: give F "at" 1000, receive
+    #    Z "at" 800, no cash — what F actually fetched is what came back (800),
+    #    not the typed ask. No warning: the engine never reconciles or clamps.
     f = seed_card(conn, "Card F (mv 1000)", 700, 1000)
-    show("6. Mismatch warning — give F@1000, receive Z@800, no cash (>5% gap)",
+    show("6. Give F typed 1000, receive Z@800, no cash (proceeds follow take-in)",
          save_deal(conn,
                    cards_out=[CardOut("graded_cards", f, deal_value=1000)],
                    cards_in=[CardIn("Traded-in Z", deal_value=800)],
@@ -158,7 +146,7 @@ def main():
           f"{len(detail['cards_in'])} in, cash {detail['deal']['cash_amount']:+,.2f}")
 
     conn.close()
-    print("\nDONE — real v2 database untouched.")
+    print("\nDONE — live v2 database untouched.")
 
 
 if __name__ == "__main__":

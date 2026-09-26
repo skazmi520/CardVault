@@ -201,6 +201,64 @@ def trade_deals_balance(conn):
     return bad
 
 
+def _has_schema7(conn) -> bool:
+    return "basis_entered" in {r[1] for r in conn.execute("PRAGMA table_xinfo(graded_cards)")}
+
+
+def typed_values_never_written_by_the_app(conn):
+    """basis_entered and market_value hold only what the owner typed. The engine
+    may create a card with them (the 'created' event) but must never change
+    them afterwards (2026-09-25 rule)."""
+    if not _has_schema7(conn):
+        return []
+    return [f"{r['card_table']}#{r['card_id']}: {r['field']} {r['old_value']} -> "
+            f"{r['new_value']} by {r['source']} ({r['ref']})"
+            for r in _rows(conn,
+                "SELECT * FROM card_events WHERE field IN ('basis_entered', 'market_value') "
+                "AND source NOT IN ('you', 'reprice', 'correction')")]
+
+
+def deals_carry_lines_and_entry(conn):
+    """Every deal booked by the schema-7 engine has its per-line record and the
+    request as typed, or it cannot be played back."""
+    if not _has_schema7(conn):
+        return []
+    bad = []
+    for d in _rows(conn, "SELECT id FROM deals WHERE engine_version IS NOT NULL"):
+        n_lines = _rows(conn, "SELECT COUNT(*) n FROM deal_lines WHERE deal_id=?", d["id"])[0]["n"]
+        n_entry = _rows(conn, "SELECT COUNT(*) n FROM deal_entries WHERE deal_id=?", d["id"])[0]["n"]
+        if not n_lines or not n_entry:
+            bad.append(f"deal {d['id']}: {n_lines} lines, {n_entry} entries")
+    return bad
+
+
+def deals_replay_exactly(conn):
+    """Re-running the engine on what was typed reproduces every stored number."""
+    if not _has_schema7(conn):
+        return []
+    from .deals import replay
+    bad = []
+    for d in _rows(conn, "SELECT DISTINCT deal_id FROM deal_entries"):
+        r = replay(conn, d["deal_id"])
+        if not r["ok"]:
+            bad.append(f"deal {d['deal_id']}: " + "; ".join(r["diffs"][:3]))
+    return bad
+
+
+def blank_markets_stay_blank(conn):
+    """An arriving card with no market typed gets no market and no price point."""
+    if not _has_schema7(conn):
+        return []
+    return [f"deal {r['deal_id']}: {r['card_table']}#{r['card_id']} has a deal-day market "
+            f"{r['mv']} though none was typed"
+            for r in _rows(conn, """
+                SELECT l.deal_id, l.card_table, l.card_id, p.market_value mv
+                FROM deal_lines l JOIN deals d ON d.id = l.deal_id
+                JOIN price_history p ON p.card_id = l.card_id AND p.recorded_at = d.occurred_at
+                WHERE l.side = 'in' AND l.card_table = 'graded_cards'
+                  AND l.entered_market IS NULL""")]
+
+
 CHECKS = [
     pure_sale_proceeds_match_cash,
     certs_are_unique,
@@ -211,6 +269,10 @@ CHECKS = [
     statuses_are_known,
     price_history_has_no_orphans,
     trade_deals_balance,
+    typed_values_never_written_by_the_app,
+    deals_carry_lines_and_entry,
+    deals_replay_exactly,
+    blank_markets_stay_blank,
 ]
 
 

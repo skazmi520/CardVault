@@ -12,27 +12,19 @@ Every transaction is a Deal with two sides plus cash:
 One code path handles pure buys (cards_in + negative cash), pure sales
 (cards_out + positive cash) and mixed trades.
 
-Math (per spec):
-  V_out = resolved total value of the cards-out side
-  V_in  = resolved total value of the cards-in side
-  Balance identity: V_out = V_in + cash_amount
+Math (the owner's model, 2026-09-15, tightened 2026-09-25):
+  * An outgoing card has a fixed basis and no sale price of its own. What it
+    fetched (its proceeds) is the cash plus the take-in prices of the cards
+    received, split across the outgoing cards by typed per-card values, else
+    by market.
+  * A typed take-in is firm: it is the incoming card's basis, verbatim.
+  * A blank take-in is split from the typed ask minus the cash, weighted by
+    the typed markets of the incoming cards. With no ask it is refused.
+  * Nothing booked is ever derived from market; market only sets proportions.
 
-  * Per-line deal values are used when entered.
-  * A side with only a side-total gets it allocated pro rata across its
-    unvalued lines (weights: current market value, falling back to basis,
-    falling back to equal).
-  * A side with no values at all is derived from the other side via the
-    balance identity.
-  * When BOTH sides are fully itemized they should reconcile; a mismatch
-    greater than 5% produces a warning but the deal still saves.
-
-  Cards out: disposal_proceeds = allocated value
-             realized_gain     = disposal_proceeds - full basis
-             disposed_at       = deal timestamp, status = 'disposed'
-             (rows are never deleted)
-  Cards in : basis = allocated share of (V_out - cash_amount)
-             i.e. value of cards given up plus cash paid, net of cash received
-             market_value seeded with the agreed line value
+  Typed and derived never share a column: basis_entered vs basis_derived on
+  the card, entered_* vs derived_value in deal_lines. The request as sent is
+  kept in deal_entries. resolve() is pure, so any deal can be replayed.
 """
 
 from dataclasses import dataclass
@@ -118,16 +110,12 @@ def _resolve_side(line_values: list[float | None], weights: list[float],
     return None, False
 
 
-def _fill_from_total(line_values: list[float | None], weights: list[float],
-                     implied_total: float) -> list[float]:
-    """Fill unvalued lines from an implied side total (keeps entered values)."""
-    vals, _ = _resolve_side(line_values, weights, implied_total)
-    return vals
-
-
 # ── card row access ─────────────────────────────────────────────────────────────
 
 def _load_out_card(conn, line: CardOut) -> dict:
+    """Snapshot of an outgoing card as it stands right now. Everything the
+    engine needs from the card is in here, so the same snapshot (stored in
+    deal_lines) replays the deal exactly, later."""
     if line.table not in ("graded_cards", "ungraded_cards"):
         raise ValueError(f"unknown table {line.table!r}")
     row = conn.execute(f"SELECT * FROM {line.table} WHERE id=?", (line.card_id,)).fetchone()
@@ -136,18 +124,145 @@ def _load_out_card(conn, line: CardOut) -> dict:
     if row["status"] != "active":
         raise ValueError(f"{line.table} id={line.card_id} ({row['card_name']}) "
                          f"has status={row['status']!r} — only active cards can leave in a deal")
-    if line.table == "graded_cards":
-        basis = row["acquisition_price"] or 0.0
+    col = "acquisition_price" if line.table == "graded_cards" else "purchase_price"
+    return {"name": row["card_name"], "basis": row[col],
+            "market": row["market_value"], "market_set_at": row["market_value_updated"]}
+
+
+# ── the arithmetic: pure, no database ──────────────────────────────────────────
+
+def _out_weight(snap: dict) -> float:
+    """How an outgoing card weighs in a split: its market, else its basis,
+    else 1. Only ever a proportion; never booked as a value."""
+    mv, basis = snap.get("market"), snap.get("basis")
+    if mv and mv > 0:
+        return mv
+    if basis and basis > 0:
+        return basis
+    return 1.0
+
+
+def resolve(out_snaps: list[dict], out_entered: list[float | None],
+            cards_in: list[CardIn], cash_amount: float,
+            out_side_total: float | None = None,
+            in_side_total: float | None = None) -> dict:
+    """Turn what the owner typed into what books. No database access: the deal
+    screen preview, the save and tools/replay_deal.py all run exactly this.
+
+    the owner's model (2026-09-15): an outgoing card has a fixed basis and no sale
+    price of its own; what it fetched is the cash plus the take-in prices of
+    the cards received. A typed take-in is firm and books verbatim. A blank
+    take-in is split from the ask he typed, minus the cash. Nothing is ever
+    derived from market except split proportions (2026-09-25): a blank ask
+    with a blank take-in is refused rather than defaulted to his market, a
+    blank market stays blank, and cash paid beyond the take-ins is refused
+    rather than clamped away.
+
+    Raises ValueError for anything that would book a number he did not
+    supply or cannot see. Returns the plan."""
+    global _LAST_CLAMP
+    _LAST_CLAMP = None
+    warnings: list[str] = []
+    cash_amount = round(float(cash_amount), 2)
+    n_out = len(out_snaps)
+
+    if not n_out and not cards_in:
+        raise ValueError("a deal needs at least one card on one side")
+
+    out_weights = [_out_weight(s) for s in out_snaps]
+    in_mvs = [ln.market_value for ln in cards_in if (ln.market_value or 0) > 0]
+    in_avg = (sum(in_mvs) / len(in_mvs)) if in_mvs else 1.0
+    in_weights = [(ln.market_value if (ln.market_value or 0) > 0 else in_avg)
+                  for ln in cards_in]
+    in_entered = [ln.deal_value for ln in cards_in]
+    out_all_typed = bool(n_out) and all(v is not None for v in out_entered)
+
+    # the ask: only ever something typed — the ask box, or every per-card value
+    ask = None
+    if n_out:
+        if out_side_total is not None:
+            ask = round(out_side_total, 2)
+        elif out_all_typed:
+            ask = round(sum(out_entered), 2)
+
+    # ── take-in prices ───────────────────────────────────────────────────────
+    blanks = [ln.card_name for ln, v in zip(cards_in, in_entered) if v is None]
+    if blanks and in_side_total is None:
+        if n_out and ask is None:
+            raise ValueError(
+                f"{', '.join(blanks)}: no take-in price and no ask. Type what you "
+                "took each card in at, or type your ask so the blanks can be split "
+                "from it. Nothing is ever split from market.")
+        # blanks split what is left of the ask after the cash (a pure buy: the
+        # cash paid), weighted by the market typed for each incoming card
+        pool = round((ask if ask is not None else 0.0) - cash_amount, 2)
+        if pool < 0:
+            raise ValueError(
+                f"The cash (${cash_amount:,.2f}) is more than the ask (${ask or 0:,.2f}), "
+                "so there is nothing left to split across the blank take-ins. "
+                "Type each take-in price.")
+        in_vals, _ = _resolve_side(in_entered, in_weights, pool)
     else:
-        basis = row["purchase_price"] or 0.0
-    mv = row["market_value"]
-    return {"row": row, "basis": basis,
-            "basis_unknown": bool(row["basis_unknown"]),
-            "weight": (mv if mv and mv > 0 else basis if basis > 0 else 1.0),
-            "name": row["card_name"]}
+        in_vals, _ = _resolve_side(in_entered, in_weights, in_side_total)
+    if _LAST_CLAMP is not None:
+        raise ValueError(
+            f"The typed take-ins are ${-_LAST_CLAMP:,.2f} more than the total they "
+            "should split from, so the blank ones would book $0. Type every take-in, "
+            "or raise the ask.")
+    zero = [ln.card_name for ln, e, v in zip(cards_in, in_entered, in_vals)
+            if e is None and v <= 0]
+    if zero:
+        raise ValueError(
+            f"{', '.join(zero)} would be split a $0 take-in: the typed take-ins and "
+            "cash already use up the whole ask. Type a take-in price for each.")
+
+    # ── proceeds ─────────────────────────────────────────────────────────────
+    out_vals: list[float] = []
+    if n_out:
+        came_back = round(cash_amount + sum(in_vals), 2)
+        if cards_in or cash_amount != 0:
+            if came_back < 0:
+                raise ValueError(
+                    f"You would pay ${-cash_amount:,.2f} cash but only take in "
+                    f"${sum(in_vals):,.2f} of cards, so the cards you gave would fetch "
+                    "less than nothing. Put the cash into the take-in prices of the "
+                    "cards you received.")
+            split = (list(out_entered) if out_all_typed and sum(out_entered) > 0
+                     else out_weights)
+            out_vals = _allocate(came_back, split)
+        else:
+            # nothing came back: only typed values can say what the cards fetched
+            if not out_all_typed:
+                raise ValueError(
+                    "Nothing came back (no cash, no cards in). Enter the cash you "
+                    "received, or for a giveaway type 0 on each card going out.")
+            out_vals = [round(v, 2) for v in out_entered]
+            if sum(out_vals) > 0:
+                warnings.append(
+                    f"Nothing came back but the cards going out are typed at "
+                    f"${sum(out_vals):,.2f}; that books as proceeds with no cash "
+                    "logged. For a giveaway, type 0 on each card.")
+
+    v_out, v_in = round(sum(out_vals), 2), round(sum(in_vals), 2)
+
+    # what the incoming cards cost = value given up net of cash received
+    basis_pool = round(v_out - cash_amount, 2)
+    if cards_in and basis_pool <= 0:
+        raise ValueError(
+            f"{len(cards_in)} card(s) coming in, but nothing given up and no cash paid — "
+            "they would all be recorded at $0 cost basis. Enter what you paid in the "
+            "Cash I pay box, or a take-in price per card.")
+
+    return {"ask": ask, "cash_amount": cash_amount, "warnings": warnings,
+            "v_out": v_out, "v_in": v_in, "closed": v_out,
+            "out_vals": out_vals, "out_weights": out_weights,
+            "in_vals": in_vals, "in_weights": in_weights, "basis_pool": basis_pool}
 
 
 # ── the one save path ───────────────────────────────────────────────────────────
+
+ENGINE_VERSION = "2026-09-25"
+
 
 def save_deal(conn, *,
               cards_out: list[CardOut] = (),
@@ -160,303 +275,249 @@ def save_deal(conn, *,
               notes: str = "",
               out_side_total: float | None = None,
               in_side_total: float | None = None,
-              dry_run: bool = False) -> dict:
+              entry_payload: dict | None = None,
+              dry_run: bool = False,
+              _rebook_id: int | None = None,
+              _in_card_ids: list | None = None,
+              _commit: bool = True) -> dict:
     """Save a deal atomically. Returns {deal_id, warnings, out_lines, in_lines,
     v_out, v_in, cash_amount}. Raises ValueError on invalid input; nothing is
     written when an exception is raised.
 
-    dry_run=True runs the ENTIRE resolution — allocation, scaling, basis
-    split, warnings, validation — and returns the plan without writing a row.
-    The deal screen previews through this, so what the user sees before Save
-    is the engine's own arithmetic, not a JavaScript re-implementation that
-    can drift."""
-    global _LAST_CLAMP
-    _LAST_CLAMP = None
-    cards_out, cards_in = list(cards_out), list(cards_in)
-    warnings: list[str] = []
+    What was typed and what was derived never share a column: a typed take-in
+    lands in basis_entered, a split one in basis_derived; a blank market stays
+    NULL; every line goes to deal_lines with both; entry_payload (the request
+    exactly as sent) goes to deal_entries — all in one transaction.
 
+    dry_run=True runs the same resolution and returns the plan without writing."""
+    import json
+    cards_out, cards_in = list(cards_out), list(cards_in)
     if not cards_out and not cards_in:
         raise ValueError("a deal needs at least one card on one side")
     if payment_method not in v2db.PAYMENT_METHODS:
         raise ValueError(f"payment_method must be one of {v2db.PAYMENT_METHODS}")
+    for ln in cards_in:
+        if not (ln.card_name or "").strip():
+            raise ValueError("every arriving card needs a name")
 
     occurred_at = occurred_at or datetime.now().isoformat(timespec="seconds")
     deal_date = occurred_at[:10]
-    cash_amount = round(float(cash_amount), 2)
 
-    # ── load + validate out cards ────────────────────────────────────────────
-    out_info = [_load_out_card(conn, ln) for ln in cards_out]
-    out_vals_entered = [ln.deal_value for ln in cards_out]
-    out_weights = [i["weight"] for i in out_info]
+    snaps = [_load_out_card(conn, ln) for ln in cards_out]
+    out_entered = [ln.deal_value for ln in cards_out]
+    plan = resolve(snaps, out_entered, cards_in, cash_amount,
+                   out_side_total, in_side_total)
+    cash_amount = plan["cash_amount"]
+    out_vals, in_vals = plan["out_vals"], plan["in_vals"]
+    warnings = plan["warnings"]
 
-    in_vals_entered = [ln.deal_value for ln in cards_in]
-    # An unvalued incoming line takes its share of the deal total pro rata by
-    # its market value — the owner's actual workflow: "I take in $10.5k of cards
-    # on a $9k cost basis; the $9k splits across them by their $10.5k market."
-    # The old equal split ([1.0] each) would have put the same basis on a $590
-    # Latios as a $3,500 Articuno. A line with no market entered weighs in at
-    # the average of the ones that have one (weight 1.0 next to real markets
-    # would allocate it pennies), and with no markets at all the split stays
-    # equal, as before.
-    in_mvs = [ln.market_value for ln in cards_in if (ln.market_value or 0) > 0]
-    in_avg = (sum(in_mvs) / len(in_mvs)) if in_mvs else 1.0
-    in_weights = [(ln.market_value if (ln.market_value or 0) > 0 else in_avg)
-                  for ln in cards_in]
+    def _gain(snap, proceeds):
+        return None if snap["basis"] is None else round(proceeds - snap["basis"], 2)
 
-    # ── the owner's model of a deal (2026-09-15) ────────────────────────────────
-    # "Cash plus trade take-in values compared to cost basis of the cards going
-    # out is the only way to calculate." An outgoing card has a fixed basis and
-    # NO sale price of its own. What it fetched is whatever came back — cash
-    # plus the take-in prices of the cards received — and that is its proceeds.
-    # A take-in price is firm: typed, it books verbatim. Only a blank is ever
-    # derived, and only from a total. There is no such thing as "the sides
-    # don't reconcile": taking in less than you gave is a loss you chose, and
-    # it books as one, quietly.
-    #
-    # The old engine had a separate "agreed value" on the out side (prefilled
-    # from market) and, when it disagreed with what came back, either warned or
-    # — before 08-28 — rescaled the take-in prices to make it balance. That is
-    # how deal 37 turned a $400 card into $700 of cost and a $142 loss into a
-    # $158 gain. Both behaviours are gone. The out-side number is now the ASK:
-    # the total to split across blank take-ins, and otherwise informational.
+    if dry_run:
+        plan_out = [{"table": ln.table, "card_id": ln.card_id, "name": s["name"],
+                     "basis": s["basis"] or 0.0, "basis_unknown": s["basis"] is None,
+                     "market_value": s["market"], "proceeds": p,
+                     "realized_gain": _gain(s, p)}
+                    for ln, s, p in zip(cards_out, snaps, out_vals)]
+        plan_in = [{"name": ln.card_name, "agreed_value": v, "basis": v,
+                    "typed": ln.deal_value is not None,
+                    "market_value": ln.market_value,
+                    "built_in": (round(ln.market_value - v, 2) if ln.market_value else None)}
+                   for ln, v in zip(cards_in, in_vals)]
+        return {"preview": True, "warnings": warnings, "v_out": plan["v_out"],
+                "v_in": plan["v_in"], "cash_amount": cash_amount, "ask": plan["ask"],
+                "closed": plan["closed"], "out_lines": plan_out, "in_lines": plan_in}
 
-    # the ask: what my side was put out at — out_side_total, else the typed
-    # per-card values, else the market as a last resort
-    ask = None
-    if cards_out:
-        if out_side_total is not None:
-            ask = round(out_side_total, 2)
-        elif out_vals_entered and all(v is not None for v in out_vals_entered):
-            ask = round(sum(out_vals_entered), 2)
-        else:
-            ask = round(sum(out_weights), 2)
-
-    # ── take-in prices ───────────────────────────────────────────────────────
-    in_vals, in_ok = _resolve_side(in_vals_entered, in_weights, in_side_total)
-    if not in_ok:
-        # blanks split what is left of the ask after the cash, by market
-        pool = round((ask if ask is not None else 0.0) - cash_amount, 2)
-        if pool < 0:
-            warnings.append("Derived cards-in value was negative; clamped to $0.")
-            pool = 0.0
-        in_vals = _fill_from_total(in_vals_entered, in_weights, pool)
-    if _LAST_CLAMP is not None:
-        warnings.append(
-            f"Entered line values exceed the side total by ${-_LAST_CLAMP:,.2f}; "
-            "remaining lines were allocated $0.")
-        _LAST_CLAMP = None
-
-    # ── proceeds ─────────────────────────────────────────────────────────────
-    out_vals = []
-    if cards_out:
-        came_back = round(cash_amount + sum(in_vals), 2)
-        if cards_in or cash_amount != 0:
-            # typed per-card out values only decide the split; so does market
-            if all(v is not None for v in out_vals_entered) and sum(out_vals_entered) > 0:
-                split = list(out_vals_entered)
-            else:
-                split = out_weights
-            if came_back < 0:
-                # gave cards AND more cash than the take-in covers — the cards
-                # cannot fetch less than nothing, so they book $0 and the rest
-                # of the cash is what the incoming cards really cost
-                warnings.append(
-                    f"Cash paid ${-cash_amount:,.2f} exceeds the take-in ${sum(in_vals):,.2f}; "
-                    f"the cards going out book $0 proceeds (clamped).")
-                came_back = 0.0
-            out_vals = _allocate(came_back, split)
-        else:
-            # nothing came back: a giveaway, or a sale whose cash was never
-            # logged. The engine cannot tell which, so typed values stand.
-            out_vals, ok = _resolve_side(out_vals_entered, out_weights, out_side_total)
-            if not ok:
-                out_vals = _fill_from_total(out_vals_entered, out_weights, sum(out_weights))
-            if _LAST_CLAMP is not None:
-                warnings.append(
-                    f"Entered line values exceed the side total by ${-_LAST_CLAMP:,.2f}; "
-                    "remaining lines were allocated $0.")
-                _LAST_CLAMP = None
-            if sum(out_vals) > 0:
-                warnings.append(
-                    f"Nothing came back (no cards in, no cash) but cards-out are valued "
-                    f"at ${sum(out_vals):,.2f} — that books ${sum(out_vals):,.2f} of "
-                    f"proceeds. For a giveaway, set each card's value to 0 so the loss is "
-                    f"recorded correctly. For a sale whose cash you are not logging, "
-                    f"leave the values as the sale prices and note it.")
-
-    v_out, v_in = round(sum(out_vals), 2), round(sum(in_vals), 2)
-
-    # ── basis pool for incoming cards ────────────────────────────────────────
-    # what the incoming cards cost me = value given up net of cash received
-    basis_pool = round(v_out - cash_amount, 2)
-    if cards_in and basis_pool < 0:
-        warnings.append("Cards-in basis pool was negative; clamped to $0.")
-        basis_pool = 0.0
-    # Guard: cards coming in with nothing going out and no cash means every one
-    # of them lands at $0 basis. That is nearly always a forgotten cash amount,
-    # and it used to happen silently (the old warning was skipped when cash was
-    # exactly 0, and the UI redirected before any warning could be read).
-    if cards_in and basis_pool <= 0:
-        raise ValueError(
-            f"{len(cards_in)} card(s) coming in, but nothing given up and no cash paid — "
-            "they would all be recorded at $0 cost basis. Enter the cash you paid as a "
-            "negative amount (e.g. -3000), or a per-card paid value.")
-    # the owner's rule (2026-08-28): "the basis should be the value I take it in
-    # at." An entered agreed price IS the basis — full stop. The pool
-    # reallocation below used entered prices only as weights and rescaled them
-    # to v_out - cash, which is how a $5,000 Mario acquired $6,300 of basis
-    # (deal 47): the give side was valued at market, and the pool forced that
-    # inflation onto the incoming card. in_vals already holds the entered
-    # prices verbatim, with blanks filled from the balance identity, so it is
-    # the basis. basis_pool survives only for the $0-basis guard above and the
-    # legacy cash-share split below.
-    in_basis = [round(v, 2) for v in in_vals] if cards_in else []
-
-    # ── legacy-compat acquisition_type for incoming cards ────────────────────
+    # legacy-compat acquisition_type and trade_value (the trade component of a
+    # card's basis, net of its share of cash paid) — derived, informational
     if cards_out and cash_amount < 0:
         acq_type = "Cash & Trade"
     elif cards_out:
         acq_type = "Trade"
     else:
         acq_type = "Cash"
-    # per-card trade component: basis minus this card's share of cash paid
     cash_paid_total = max(0.0, -cash_amount)
-    cash_shares = (_allocate(min(cash_paid_total, basis_pool),
+    cash_shares = (_allocate(min(cash_paid_total, plan["basis_pool"]),
                              [v if v > 0 else 1.0 for v in in_vals])
                    if cards_in else [])
-    gave_parts = [f"{i['name']}: ${val:,.2f}" for i, val in zip(out_info, out_vals)]
+    gave_parts = [f"{s['name']}: ${val:,.2f}" for s, val in zip(snaps, out_vals)]
     if cash_amount < 0:
         gave_parts.append(f"Cash: ${-cash_amount:,.2f}")
     trade_details = " | ".join(gave_parts)
-    if cash_amount > 0:
-        trade_details += f"  (+ ${cash_amount:,.2f} cash received)" if trade_details else ""
+    if cash_amount > 0 and trade_details:
+        trade_details += f"  (+ ${cash_amount:,.2f} cash received)"
 
-    if dry_run:
-        plan_out = []
-        for ln, info, proceeds in zip(cards_out, out_info, out_vals):
-            gain = None if info["basis_unknown"] else round(proceeds - info["basis"], 2)
-            plan_out.append({"table": ln.table, "card_id": ln.card_id,
-                             "name": info["name"], "basis": info["basis"],
-                             "basis_unknown": info["basis_unknown"],
-                             "market_value": info["weight"],
-                             "proceeds": proceeds, "realized_gain": gain})
-        plan_in = [{"name": ln.card_name, "agreed_value": v, "basis": b,
-                    "market_value": ln.market_value,
-                    "built_in": (round(ln.market_value - b, 2) if ln.market_value else None)}
-                   for ln, v, b in zip(cards_in, in_vals, in_basis)]
-        return {"preview": True, "warnings": warnings, "v_out": v_out,
-                "v_in": v_in, "cash_amount": cash_amount, "ask": ask, "closed": v_out,
-                "out_lines": plan_out, "in_lines": plan_in}
-
-    # ── write everything in one transaction ──────────────────────────────────
+    now = datetime.now().isoformat(timespec="seconds")
+    in_ids = list(_in_card_ids or [None] * len(cards_in))
     try:
-        cur = conn.execute(
-            """INSERT INTO deals (occurred_at, counterparty, location,
-                                  payment_method, cash_amount, notes, created_at)
-               VALUES (?,?,?,?,?,?,?)""",
-            (occurred_at, counterparty, location, payment_method,
-             cash_amount, notes, datetime.now().isoformat(timespec="seconds")))
-        deal_id = cur.lastrowid
+        if _rebook_id is None:
+            cur = conn.execute(
+                """INSERT INTO deals (occurred_at, counterparty, location, payment_method,
+                                      cash_amount, notes, created_at, ask_entered,
+                                      engine_version)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (occurred_at, counterparty, location, payment_method, cash_amount, notes,
+                 now, out_side_total, ENGINE_VERSION))
+            deal_id = cur.lastrowid
+            ref = f"deal:{deal_id}"
+        else:
+            # Edit deal: same deal number, new revision. edit_deal has already
+            # archived and unwound the previous one inside this transaction.
+            deal_id = _rebook_id
+            conn.execute(
+                """UPDATE deals SET occurred_at=?, counterparty=?, location=?,
+                     payment_method=?, cash_amount=?, notes=?, ask_entered=?,
+                     engine_version=? WHERE id=?""",
+                (occurred_at, counterparty, location, payment_method, cash_amount,
+                 notes, out_side_total, ENGINE_VERSION, deal_id))
+            ref = f"edit:{deal_id}"
 
         out_lines = []
-        for ln, info, proceeds in zip(cards_out, out_info, out_vals):
-            # no recorded cost means no knowable gain — never book proceeds-0
-            gain = None if info["basis_unknown"] else round(proceeds - info["basis"], 2)
+        for ln, s, entered, weight, proceeds in zip(
+                cards_out, snaps, out_entered, plan["out_weights"], out_vals):
             if ln.table == "graded_cards":
                 cur = conn.execute(
-                    """UPDATE graded_cards SET
-                         status='disposed', disposed_at=?, disposed_via_deal_id=?,
-                         disposal_proceeds=?, realized_gain=?,
-                         is_sold=1, sale_price=?, sale_date=?
+                    """UPDATE graded_cards SET status='disposed', disposed_at=?,
+                         disposed_via_deal_id=?, disposal_proceeds=?, is_sold=1, sale_date=?
                        WHERE id=? AND status='active'""",
-                    (occurred_at, deal_id, proceeds, gain, proceeds, deal_date, ln.card_id))
+                    (occurred_at, deal_id, proceeds, deal_date, ln.card_id))
             else:
                 cur = conn.execute(
-                    """UPDATE ungraded_cards SET
-                         status='disposed', disposed_at=?, disposed_via_deal_id=?,
-                         disposal_proceeds=?, realized_gain=?
+                    """UPDATE ungraded_cards SET status='disposed', disposed_at=?,
+                         disposed_via_deal_id=?, disposal_proceeds=?
                        WHERE id=? AND status='active'""",
-                    (occurred_at, deal_id, proceeds, gain, ln.card_id))
+                    (occurred_at, deal_id, proceeds, ln.card_id))
             if cur.rowcount != 1:
                 # raced by another submit of the same form — abort the whole deal
                 raise ValueError(
-                    f"{info['name']} was already disposed (double submit?) — deal aborted")
-            out_lines.append({"table": ln.table, "card_id": ln.card_id,
-                              "name": info["name"], "basis": info["basis"],
-                              "basis_unknown": info["basis_unknown"],
-                              "proceeds": proceeds, "realized_gain": gain})
+                    f"{s['name']} was already disposed (double submit?) — deal aborted")
+            v2db.record_event(conn, ln.table, ln.card_id, "status", "active",
+                              "disposed", "engine", ref)
+            v2db.record_event(conn, ln.table, ln.card_id, "disposal_proceeds", None,
+                              proceeds, "engine", ref)
+            conn.execute(
+                """INSERT INTO deal_lines (deal_id, side, card_table, card_id, entered_value,
+                     entered_market, derived_value, basis_at_deal, market_at_deal,
+                     market_set_at, weight_used) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (deal_id, "out", ln.table, ln.card_id, entered, None, proceeds,
+                 s["basis"], s["market"], s["market_set_at"], weight))
+            out_lines.append({"table": ln.table, "card_id": ln.card_id, "name": s["name"],
+                              "basis": s["basis"] or 0.0,
+                              "basis_unknown": s["basis"] is None,
+                              "proceeds": proceeds, "realized_gain": _gain(s, proceeds)})
 
         in_lines = []
-        for ln, agreed, basis, cash_share in zip(
-                cards_in, in_vals, in_basis,
-                cash_shares or [0.0] * len(cards_in)):
-            # Market value is whatever was stated for the card; if none was given
-            # fall back to the deal value (in a straight buy they're the same).
-            mv = ln.market_value if ln.market_value not in (None, "") else (
-                agreed if agreed > 0 else None)
-            mv_date = deal_date if mv else None
-            if ln.is_graded:
+        for ln, val, weight, cash_share, keep_id in zip(
+                cards_in, in_vals, plan["in_weights"],
+                cash_shares or [0.0] * len(cards_in), in_ids):
+            typed = ln.deal_value is not None
+            b_entered = round(ln.deal_value, 2) if typed else None
+            b_derived = None if typed else val
+            mv = ln.market_value if (ln.market_value or 0) > 0 else None
+            trade_value = (max(0.0, round(val - cash_share, 2)) if acq_type != "Cash" else 0.0)
+            if keep_id is not None:
+                # an arriving card kept across an edit: same row, so anything
+                # recorded on it since (cert, photos, notes) survives
+                table = "graded_cards" if ln.is_graded else "ungraded_cards"
+                fields = {"card_name": ln.card_name, "set_name": ln.set_name,
+                          "card_number": ln.card_number, "year": ln.year,
+                          "basis_entered": b_entered, "basis_derived": b_derived,
+                          "basis_legacy": None, "market_value": mv,
+                          "market_value_updated": deal_date if mv else None,
+                          "acquisition_type": acq_type, "trade_value": trade_value,
+                          "trade_details": trade_details}
+                if ln.is_graded:
+                    fields.update(grading_company=ln.grading_company, grade=ln.grade,
+                                  serial_number=ln.serial_number,
+                                  acquisition_date=deal_date)
+                else:
+                    fields.update(purchase_date=deal_date)
+                v2db.update_card(conn, table, keep_id, fields, "you", ref)
+                card_id = keep_id
+            elif ln.is_graded:
+                table = "graded_cards"
                 cur = conn.execute(
                     """INSERT INTO graded_cards
-                         (serial_number, grading_company, grade, card_name,
-                          card_number, set_name, year, photo_filename,
-                          acquisition_type, acquisition_price, grading_fee,
-                          trade_value, trade_details, acquisition_date, notes,
-                          date_added, market_value, market_value_updated,
-                          status, acquired_via_deal_id)
-                       VALUES (?,?,?,?,?,?,?,NULL,?,?,0,?,?,?,?,?,?,?, 'active', ?)""",
+                         (serial_number, grading_company, grade, card_name, card_number,
+                          set_name, year, photo_filename, acquisition_type, basis_entered,
+                          basis_derived, grading_fee, trade_value, trade_details,
+                          acquisition_date, notes, date_added, market_value,
+                          market_value_updated, status, acquired_via_deal_id)
+                       VALUES (?,?,?,?,?,?,?,NULL,?,?,?,0,?,?,?,?,?,?,?,'active',?)""",
                     (ln.serial_number, ln.grading_company, ln.grade, ln.card_name,
-                     ln.card_number, ln.set_name, ln.year,
-                     acq_type, basis,
-                     (max(0.0, round(basis - cash_share, 2))
-                      if acq_type != "Cash" else 0.0), trade_details,
-                     deal_date, ln.notes, datetime.now().isoformat(),
-                     mv, mv_date, deal_id))
+                     ln.card_number, ln.set_name, ln.year, acq_type, b_entered, b_derived,
+                     trade_value, trade_details, deal_date, ln.notes, now, mv,
+                     deal_date if mv else None, deal_id))
             else:
+                table = "ungraded_cards"
                 cur = conn.execute(
                     """INSERT INTO ungraded_cards
                          (card_name, card_number, set_name, year, photo_filename,
-                          purchase_price, purchase_date, acquisition_type,
+                          basis_entered, basis_derived, purchase_date, acquisition_type,
                           trade_value, trade_details, notes, grading_status,
                           target_grading_company, date_added, market_value,
                           market_value_updated, status, acquired_via_deal_id)
-                       VALUES (?,?,?,?,NULL,?,?,?,?,?,?, 'Not Slated', '', ?,?,?, 'active', ?)""",
-                    (ln.card_name, ln.card_number, ln.set_name, ln.year,
-                     basis, deal_date, acq_type,
-                     (max(0.0, round(basis - cash_share, 2))
-                      if acq_type != "Cash" else 0.0), trade_details,
-                     ln.notes, datetime.now().isoformat(), mv, mv_date, deal_id))
+                       VALUES (?,?,?,?,NULL,?,?,?,?,?,?,?,'Not Slated','',?,?,?,'active',?)""",
+                    (ln.card_name, ln.card_number, ln.set_name, ln.year, b_entered,
+                     b_derived, deal_date, acq_type, trade_value, trade_details,
+                     ln.notes, now, mv, deal_date if mv else None, deal_id))
+            if keep_id is None:
+                card_id = cur.lastrowid
+                v2db.record_event(conn, table, card_id, "created", None,
+                                  json.dumps({"basis_entered": b_entered,
+                                              "basis_derived": b_derived,
+                                              "market_value": mv}), "engine", ref)
             if ln.is_graded and mv:
-                # seed price history so movers/repricing have a baseline
+                # only a market the owner typed ever becomes a price point
                 conn.execute(
-                    "INSERT INTO price_history (card_id, recorded_at, market_value) "
-                    "VALUES (?,?,?)", (cur.lastrowid, occurred_at, mv))
-            in_lines.append({"table": "graded_cards" if ln.is_graded else "ungraded_cards",
-                             "card_id": cur.lastrowid, "name": ln.card_name,
-                             "agreed_value": agreed, "basis": basis})
+                    "INSERT INTO price_history (card_id, recorded_at, market_value, source) "
+                    "VALUES (?,?,?, 'entered')", (card_id, occurred_at, mv))
+            conn.execute(
+                """INSERT INTO deal_lines (deal_id, side, card_table, card_id, entered_value,
+                     entered_market, derived_value, weight_used) VALUES (?,?,?,?,?,?,?,?)""",
+                (deal_id, "in", table, card_id, b_entered, mv, val, weight))
+            in_lines.append({"table": table, "card_id": card_id, "name": ln.card_name,
+                             "agreed_value": val, "basis": val, "typed": typed})
 
-        conn.commit()
+        # every deal keeps what it was given, so it can always be played back:
+        # the screen's request verbatim, or for a direct call the arguments
+        if entry_payload is None:
+            entry_payload = {
+                "source": "direct call", "cash_amount": cash_amount,
+                "out_side_total": out_side_total, "in_side_total": in_side_total,
+                "cards_out": [{"table": ln.table, "id": ln.card_id,
+                               "deal_value": ln.deal_value} for ln in cards_out],
+                "cards_in": [{"name": ln.card_name, "is_graded": ln.is_graded,
+                              "set": ln.set_name, "number": ln.card_number,
+                              "year": ln.year, "company": ln.grading_company,
+                              "grade": ln.grade, "cert": ln.serial_number,
+                              "deal_value": ln.deal_value,
+                              "market_value": ln.market_value} for ln in cards_in]}
+        conn.execute(
+            "INSERT INTO deal_entries (deal_id, entered_at, payload_json) VALUES (?,?,?)",
+            (deal_id, now, json.dumps(entry_payload)))
+        if _commit:
+            conn.commit()
     except Exception:
-        conn.rollback()
+        if _commit:
+            conn.rollback()
         raise
 
-    return {"deal_id": deal_id, "warnings": warnings, "ask": ask, "closed": v_out,
-            "v_out": v_out, "v_in": v_in, "cash_amount": cash_amount,
-            "out_lines": out_lines, "in_lines": in_lines}
+    return {"deal_id": deal_id, "warnings": warnings, "ask": plan["ask"],
+            "closed": plan["closed"], "v_out": plan["v_out"], "v_in": plan["v_in"],
+            "cash_amount": cash_amount, "out_lines": out_lines, "in_lines": in_lines}
 
 
-def void_deal(conn, deal_id: int) -> dict:
-    """Undo a mistakenly-entered deal.
-
-    The one sanctioned exception to "nothing is ever deleted": a deal entered
-    in error is corrected by putting the world back exactly as it was —
-    cards that left come back (disposal fields cleared), cards the deal
-    created are removed, and the deal row goes away.
+def _unbook(conn, deal_id: int, reason: str, keep_in: frozenset = frozenset()) -> dict:
+    """Archive a deal in voided_deals, then put the world back as it was before
+    it: outgoing cards return to active, arriving cards are deleted (except
+    those in keep_in, which an edit updates in place), and their deal-day price
+    points go. Never commits: void_deal and edit_deal own the transaction.
 
     Refused unless it is fully safe: every card the deal created must still be
-    untouched (status 'active', never disposed / promoted / cracked, no
-    photo-import applied to it), so the void cannot orphan later history.
-    """
+    held, so the undo cannot orphan later history."""
+    import json
     deal = conn.execute("SELECT * FROM deals WHERE id=?", (deal_id,)).fetchone()
     if deal is None:
         raise ValueError(f"deal {deal_id} not found")
@@ -464,47 +525,183 @@ def void_deal(conn, deal_id: int) -> dict:
     ins, outs = [], []
     for table in ("graded_cards", "ungraded_cards"):
         ins += [dict(r, _table=table) for r in conn.execute(
-            f"SELECT * FROM {table} WHERE acquired_via_deal_id=?", (deal_id,))]
+            f"SELECT * FROM {table} WHERE acquired_via_deal_id=? "
+            f"AND status NOT IN ('promoted', 'cracked')", (deal_id,))]
         outs += [dict(r, _table=table) for r in conn.execute(
             f"SELECT * FROM {table} WHERE disposed_via_deal_id=?", (deal_id,))]
-
+    superseded = [r["card_name"] for t in ("graded_cards", "ungraded_cards")
+                  for r in conn.execute(
+                      f"SELECT card_name FROM {t} WHERE acquired_via_deal_id=? "
+                      f"AND status IN ('promoted', 'cracked')", (deal_id,))]
     blockers = [f"{c['card_name']} (came in via this deal, now {c['status']})"
-                for c in ins if c["status"] != "active"]
+                for c in ins if c["status"] not in ("active", "submitted_for_grading")]
+    blockers += [f"{n} (came in via this deal, since graded or cracked)" for n in superseded]
     if blockers:
         raise ValueError(
-            "cannot void — cards from this deal have moved on: "
+            "cannot change this deal — cards from it have moved on: "
             + "; ".join(blockers)
             + ". Correct those first (their history would be orphaned).")
 
+    def rows(sql, *args):
+        return [dict(r) for r in conn.execute(sql, args)]
+
+    snapshot = {
+        "deal": dict(deal),
+        "lines": rows("SELECT * FROM deal_lines WHERE deal_id=?", deal_id),
+        "entries": rows("SELECT * FROM deal_entries WHERE deal_id=?", deal_id),
+        "photos": rows("SELECT * FROM deal_photos WHERE deal_id=?", deal_id),
+        "cards_in": ins, "cards_out": outs,
+        "price_history": [p for c in ins if c["_table"] == "graded_cards"
+                          for p in rows("SELECT * FROM price_history WHERE card_id=?",
+                                        c["id"])],
+    }
+    ref = f"{reason}:{deal_id}"
+    conn.execute(
+        "INSERT INTO voided_deals (deal_id, voided_at, reason, snapshot_json) VALUES (?,?,?,?)",
+        (deal_id, datetime.now().isoformat(timespec="seconds"), reason,
+         json.dumps(snapshot, default=str)))
+    for c in ins:
+        if (c["_table"], c["id"]) in keep_in:
+            if c["_table"] == "graded_cards":
+                # the deal-day price point; the rebook seeds a new one if a
+                # market is typed. Later reprices stay.
+                conn.execute("DELETE FROM price_history WHERE card_id=? AND recorded_at=?",
+                             (c["id"], deal["occurred_at"]))
+            continue
+        if c["_table"] == "graded_cards":
+            conn.execute("DELETE FROM price_history WHERE card_id=?", (c["id"],))
+        conn.execute(f"DELETE FROM {c['_table']} WHERE id=?", (c["id"],))
+        v2db.record_event(conn, c["_table"], c["id"], "deleted", c["status"], None,
+                          "you", ref)
+    for c in outs:
+        fields = {"status": "active", "disposed_at": None, "disposed_via_deal_id": None,
+                  "disposal_proceeds": None}
+        if c["_table"] == "graded_cards":
+            fields.update(is_sold=0, sale_price=None, sale_date=None)
+        v2db.update_card(conn, c["_table"], c["id"], fields, "you", ref)
+    conn.execute("DELETE FROM deal_lines WHERE deal_id=?", (deal_id,))
+    return {"deal": deal, "ins": ins, "outs": outs}
+
+
+def void_deal(conn, deal_id: int) -> dict:
+    """Undo a mistakenly-entered deal: the full record is archived in
+    voided_deals, cards that left come back, cards it created are removed, and
+    the deal row goes away."""
     try:
-        for c in ins:
-            if c["_table"] == "graded_cards":
-                conn.execute("DELETE FROM price_history WHERE card_id=?", (c["id"],))
-            conn.execute(f"DELETE FROM {c['_table']} WHERE id=?", (c["id"],))
-        for c in outs:
-            if c["_table"] == "graded_cards":
-                conn.execute(
-                    """UPDATE graded_cards SET status='active', disposed_at=NULL,
-                         disposed_via_deal_id=NULL, disposal_proceeds=NULL,
-                         realized_gain=NULL, is_sold=0, sale_price=NULL, sale_date=NULL
-                       WHERE id=?""", (c["id"],))
-            else:
-                conn.execute(
-                    """UPDATE ungraded_cards SET status='active', disposed_at=NULL,
-                         disposed_via_deal_id=NULL, disposal_proceeds=NULL,
-                         realized_gain=NULL
-                       WHERE id=?""", (c["id"],))
+        res = _unbook(conn, deal_id, "void")
         conn.execute("DELETE FROM deal_photos WHERE deal_id=?", (deal_id,))
         conn.execute("DELETE FROM deals WHERE id=?", (deal_id,))
         conn.commit()
     except Exception:
         conn.rollback()
         raise
-
     return {"deal_id": deal_id,
-            "restored": [c["card_name"] for c in outs],
-            "removed": [c["card_name"] for c in ins],
-            "cash_reversed": deal["cash_amount"]}
+            "restored": [c["card_name"] for c in res["outs"]],
+            "removed": [c["card_name"] for c in res["ins"]],
+            "cash_reversed": res["deal"]["cash_amount"]}
+
+
+def edit_deal(conn, deal_id: int, *, cards_out: list[CardOut] = (),
+              cards_in: list[CardIn] = (), in_card_refs: list | None = None,
+              dry_run: bool = False, **kw) -> dict:
+    """Edit deal: the only way a booked deal changes. In one transaction the
+    current version is archived (voided_deals, reason 'edited'), unwound, and
+    the new version booked under the same deal number, with what was typed
+    appended to deal_entries. in_card_refs pairs each arriving line with the
+    (table, id) of the card it already created, or None for a new card; kept
+    cards are updated in place so their later history survives.
+
+    dry_run previews the edit and rolls everything back."""
+    cards_in = list(cards_in)
+    refs = list(in_card_refs or [None] * len(cards_in))
+    if len(refs) != len(cards_in):
+        raise ValueError("in_card_refs must pair with cards_in")
+    existing = set()
+    for t in ("graded_cards", "ungraded_cards"):
+        existing |= {(t, r["id"]) for r in conn.execute(
+            f"SELECT id FROM {t} WHERE acquired_via_deal_id=?", (deal_id,))}
+    keep_ids = []
+    for ln, ref in zip(cards_in, refs):
+        want = "graded_cards" if ln.is_graded else "ungraded_cards"
+        if ref is not None and tuple(ref) in existing and ref[0] == want:
+            keep_ids.append(tuple(ref))
+        else:
+            keep_ids.append(None)        # new card (or slab/raw switched: replaced)
+    try:
+        _unbook(conn, deal_id, "edited", frozenset(k for k in keep_ids if k))
+        res = save_deal(conn, cards_out=cards_out, cards_in=cards_in,
+                        dry_run=dry_run, _rebook_id=None if dry_run else deal_id,
+                        _in_card_ids=[k[1] if k else None for k in keep_ids],
+                        _commit=False, **kw)
+        if dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return res
+
+
+def replay(conn, deal_id: int) -> dict:
+    """Play a deal back: re-run resolve() on exactly what was typed (the last
+    deal_entries row) with the outgoing cards as they stood that day (the
+    deal_lines snapshot), and compare every derived number with what is
+    stored. Returns {"ok": bool, "diffs": [...], "skipped": reason|None}."""
+    import json
+    from .app import _parse_deal_payload
+    entry = conn.execute("SELECT payload_json FROM deal_entries WHERE deal_id=? "
+                         "ORDER BY id DESC LIMIT 1", (deal_id,)).fetchone()
+    lines = [dict(r) for r in conn.execute(
+        "SELECT * FROM deal_lines WHERE deal_id=? ORDER BY id", (deal_id,))]
+    if entry is None or not lines:
+        return {"ok": True, "diffs": [], "skipped": "no entry log or lines (pre-2026-09-25)"}
+    p = json.loads(entry["payload_json"])
+    outs, ins, cash, out_total, in_total = _parse_deal_payload(p)
+    out_lines = [l for l in lines if l["side"] == "out"]
+    in_lines = [l for l in lines if l["side"] == "in"]
+    diffs = []
+    if len(out_lines) != len(outs) or len(in_lines) != len(ins):
+        return {"ok": False, "skipped": None, "diffs": [
+            f"line count: typed {len(outs)} out / {len(ins)} in, stored "
+            f"{len(out_lines)} / {len(in_lines)}"]}
+    snaps = [{"name": f"{l['card_table']}#{l['card_id']}", "basis": l["basis_at_deal"],
+              "market": l["market_at_deal"], "market_set_at": l["market_set_at"]}
+             for l in out_lines]
+    plan = resolve(snaps, [o.deal_value for o in outs], ins, cash, out_total, in_total)
+
+    def near(a, b):
+        return a is not None and b is not None and abs(a - b) < 0.005
+
+    for o, l, v in zip(outs, out_lines, plan["out_vals"]):
+        if (o.table, o.card_id) != (l["card_table"], l["card_id"]):
+            diffs.append(f"out card order: typed {o.table}#{o.card_id}, stored "
+                         f"{l['card_table']}#{l['card_id']}")
+        if not near(v, l["derived_value"]):
+            diffs.append(f"out {l['card_table']}#{l['card_id']}: replay {v}, line {l['derived_value']}")
+        row = conn.execute(f"SELECT disposal_proceeds FROM {l['card_table']} WHERE id=?",
+                           (l["card_id"],)).fetchone()
+        if row is None or not near(v, row["disposal_proceeds"]):
+            diffs.append(f"out {l['card_table']}#{l['card_id']}: replay {v}, card "
+                         f"{row['disposal_proceeds'] if row else 'missing'}")
+    for ln, l, v in zip(ins, in_lines, plan["in_vals"]):
+        if not near(v, l["derived_value"]):
+            diffs.append(f"in {ln.card_name}: replay {v}, line {l['derived_value']}")
+        typed = ln.deal_value
+        if (typed is None) != (l["entered_value"] is None) or (
+                typed is not None and not near(typed, l["entered_value"])):
+            diffs.append(f"in {ln.card_name}: typed {typed}, line entered {l['entered_value']}")
+        row = conn.execute(f"SELECT basis_entered, basis_derived, market_value FROM "
+                           f"{l['card_table']} WHERE id=?", (l["card_id"],)).fetchone()
+        if row is None:
+            diffs.append(f"in {ln.card_name}: card {l['card_table']}#{l['card_id']} missing")
+            continue
+        want_e, want_d = (typed, None) if typed is not None else (None, v)
+        if not ((want_e is None and row["basis_entered"] is None) or near(want_e, row["basis_entered"])):
+            diffs.append(f"in {ln.card_name}: basis_entered {row['basis_entered']}, typed {want_e}")
+        if not ((want_d is None and row["basis_derived"] is None) or near(want_d, row["basis_derived"])):
+            diffs.append(f"in {ln.card_name}: basis_derived {row['basis_derived']}, replay {want_d}")
+    return {"ok": not diffs, "diffs": diffs, "skipped": None}
 
 
 # ── photos ──────────────────────────────────────────────────────────────────────
@@ -544,30 +741,57 @@ def get_deal(conn, deal_id: int) -> dict | None:
         inn += [dict(r, _table=table) for r in conn.execute(
             f"SELECT * FROM {table} WHERE acquired_via_deal_id=? "
             f"AND status NOT IN ('promoted','cracked')", (deal_id,))]
-    # The deal page is a record of that day, not of today. An arriving slab
-    # gets a price_history row stamped at the deal time when it is booked, so
-    # that is its market then; a card that left is never repriced afterwards,
-    # so its stored market is the market at disposal. Raw take-ins are marked
-    # at what was paid, which says nothing about market, so they get None.
+    # The deal page is a record of that day, not of today. Deals booked since
+    # schema 7 carry deal_lines: what was typed and derived per line, and the
+    # outgoing card's market as it stood when it left. Older deals fall back
+    # to what survives, and say "unknown" rather than guess: a price_history
+    # row the old engine copied from the take-in is not a market, and a stored
+    # market set after the card left is not the market then.
+    lines = {(r["side"], r["card_table"], r["card_id"]): dict(r) for r in conn.execute(
+        "SELECT * FROM deal_lines WHERE deal_id=?", (deal_id,))}
     occurred = deal["occurred_at"]
     for c in inn:
+        ln = lines.get(("in", c["_table"], c["id"]))
+        c["line"] = ln
         c["market_then"] = None
-        if c["_table"] == "graded_cards":
+        c["market_note"] = ""
+        if ln is not None:
+            c["market_then"] = ln["entered_market"]
+            if ln["entered_market"] is None:
+                c["market_note"] = "unknown: no market was typed"
+        elif c["_table"] == "graded_cards":
             row = conn.execute(
-                "SELECT market_value FROM price_history WHERE card_id=? "
-                "AND recorded_at=? ORDER BY id LIMIT 1", (c["id"], occurred)).fetchone()
-            if row is None:
-                row = conn.execute(
-                    "SELECT market_value FROM price_history WHERE card_id=? "
-                    "AND substr(recorded_at,1,10)=? ORDER BY recorded_at, id LIMIT 1",
-                    (c["id"], (occurred or "")[:10])).fetchone()
-            c["market_then"] = row["market_value"] if row else None
+                "SELECT market_value, source FROM price_history WHERE card_id=? "
+                "AND substr(recorded_at,1,10)=? ORDER BY recorded_at, id LIMIT 1",
+                (c["id"], (occurred or "")[:10])).fetchone()
+            if row is not None and row["source"] == "copied":
+                c["market_note"] = "unknown: the old app copied the take-in here"
+            elif row is not None:
+                c["market_then"] = row["market_value"]
     for c in out:
-        c["market_then"] = c["market_value"] if c["_table"] == "graded_cards" else None
+        ln = lines.get(("out", c["_table"], c["id"]))
+        c["line"] = ln
+        c["market_then"] = None
+        c["market_note"] = ""
+        if ln is not None:
+            c["market_then"] = ln["market_at_deal"]
+            c["market_set_at"] = ln["market_set_at"]
+            if ln["market_at_deal"] is None:
+                c["market_note"] = "unknown: no market on record when it left"
+        elif c["_table"] == "graded_cards" and c["market_value"] is not None:
+            upd, left = (c["market_value_updated"] or ""), (c["disposed_at"] or "")
+            if upd and left and upd[:10] > left[:10]:
+                c["market_note"] = "unknown: repriced after it left"
+            else:
+                c["market_then"] = c["market_value"]
+                c["market_set_at"] = c["market_value_updated"]
     photos = conn.execute(
         "SELECT * FROM deal_photos WHERE deal_id=?", (deal_id,)).fetchall()
+    revisions = conn.execute(
+        "SELECT COUNT(*) FROM voided_deals WHERE deal_id=? AND reason='edited'",
+        (deal_id,)).fetchone()[0]
     return {"deal": deal, "cards_out": out, "cards_in": inn, "photos": photos,
-            "entered": deal_as_entered(conn, deal_id)}
+            "entered": deal_as_entered(conn, deal_id), "revisions": revisions}
 
 
 def deal_as_entered(conn, deal_id: int) -> dict | None:
@@ -596,8 +820,24 @@ def deal_as_entered(conn, deal_id: int) -> dict | None:
         if t in ("graded_cards", "ungraded_cards") and i is not None:
             r = conn.execute(f"SELECT card_name FROM {t} WHERE id=?", (i,)).fetchone()
             name = r["card_name"] if r else f"{t}#{i}"
-        out.append({"name": name, "typed": x.get("deal_value")})
-    inn = [{"name": x.get("name", ""), "typed": x.get("deal_value"),
-            "market": x.get("market_value")} for x in p.get("cards_in", [])]
-    return {"entered_at": row["entered_at"], "ask": p.get("out_side_total"),
-            "cash": p.get("cash_amount"), "out": out, "in": inn}
+        out.append({"name": name, "typed": _num(x.get("deal_value"))})
+    inn = [{"name": x.get("name", ""), "typed": _num(x.get("deal_value")),
+            "market": _num(x.get("market_value"))} for x in p.get("cards_in", [])
+           if any(str(x.get(k) or "").strip()
+                  for k in ("name", "deal_value", "market_value", "cert"))]
+    if "cash_received" in p or "cash_paid" in p:
+        cash = round((_num(p.get("cash_received")) or 0) - (_num(p.get("cash_paid")) or 0), 2)
+    else:
+        cash = _num(p.get("cash_amount"))
+    return {"entered_at": row["entered_at"], "ask": _num(p.get("out_side_total")),
+            "cash": cash, "out": out, "in": inn}
+
+
+def _num(v):
+    """A typed box from a stored payload as a number for display (None if blank)."""
+    if v in (None, ""):
+        return None
+    try:
+        return float(str(v).replace("$", "").replace(",", ""))
+    except ValueError:
+        return None

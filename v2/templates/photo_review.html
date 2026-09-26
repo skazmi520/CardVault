@@ -38,7 +38,7 @@
     </div>
 
     <div class="panel">
-      <h2>Fields <span class="muted">(check = write this value)</span></h2>
+      <h2>Fields <span class="muted">(tick each value to write; nothing is ticked for you)</span></h2>
       <div class="table-wrap"><table>
         <thead><tr><th></th><th>Field</th><th>Extracted</th><th>Cert</th>
           <th>Current</th><th>Proposed</th></tr></thead>
@@ -46,7 +46,7 @@
           {% for r in rows %}
           <tr {% if r.low_conf %}style="outline:1px solid #b98a3f;outline-offset:-1px"{% endif %}>
             <td><input type="checkbox" data-field="{{ r.key }}" data-value="{{ r.proposed }}"
-                       {{ 'checked' if r.changed and not r.low_conf }}></td>
+                       ></td>
             <td class="muted">{{ r.label }}{% if r.low_conf %} <span style="color:#b98a3f">⚠ low conf.</span>{% endif %}</td>
             <td>{{ r.extracted or '—' }}</td>
             <td class="{{ 'pos' if r.cert }}">{{ r.cert or '—' }}</td>
@@ -78,7 +78,8 @@ document.getElementById("apply").addEventListener("click", async () => {
   }
   try {
     const res = await postJSON("/api/photos/{{ imp.id }}/apply", {
-      card_id: target.value === "new" ? null : +target.value, fields });
+      card_id: target.value === "new" ? null : +target.value,
+      create: target.value === "new", fields });
     location.href = "/photos";
   } catch (e) { document.getElementById("msg").textContent = e.message; }
 });

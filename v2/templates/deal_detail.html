@@ -50,10 +50,11 @@
 <div class="dd-head">
   <div>
     <span class="page-title" style="margin:0">{% if cards_out and cards_in %}Trade{% elif cards_out %}Sale{% elif cards_in %}Purchase{% else %}Deal{% endif %} <span class="muted" style="font-family:var(--font-mono);font-size:16px;letter-spacing:0">#{{ d.id }}</span></span>
-    <div class="sub">{{ d.occurred_at|mdy }} {{ d.occurred_at[:4] }} · {{ d.occurred_at[11:16] }}{% if d.counterparty %} · {{ d.counterparty }}{% endif %}{% if d.location %} · {{ d.location }}{% endif %} · {{ d.payment_method }}</div>
+    <div class="sub">{{ d.occurred_at|mdy }} {{ d.occurred_at[:4] }} · {{ d.occurred_at[11:16] }}{% if d.counterparty %} · {{ d.counterparty }}{% endif %}{% if d.location %} · {{ d.location }}{% endif %} · {{ d.payment_method }}{% if revisions %} · revision {{ revisions + 1 }}, earlier versions archived{% endif %}</div>
   </div>
   <div style="flex:1"></div>
   <a class="btn ghost" href="/deals">All deals</a>
+  <a class="btn ghost" href="/deals/{{ d.id }}/edit">Edit deal</a>
   <button class="btn danger-ghost" id="void-deal">Void deal…</button>
 </div>
 <div id="void-msg"></div>
@@ -69,6 +70,7 @@
 
 {% if d.notes %}<div class="dd-note">{{ d.notes }}</div>{% endif %}
 
+<style>.dd-line .v.derived { font-style: italic; }</style>
 <div class="dd-cols">
   <div>
     <div class="sec-h"><span class="t">Left</span><span class="s">{{ cards_out|length }} card{{ 's' if cards_out|length != 1 }} · cost, market that day, and what each fetched</span></div>
@@ -81,7 +83,7 @@
       </div>
       <div class="figs">
         <div class="kv"><span class="l">basis</span><span class="v muted">{{ (c.acquisition_price if c._table == 'graded_cards' else c.purchase_price)|money }}</span></div>
-        <div class="kv"><span class="l">market then</span><span class="v muted">{{ c.market_then|money if c.market_then is not none else '—' }}</span></div>
+        <div class="kv"><span class="l">market then</span><span class="v muted" {% if c.market_note %}title="{{ c.market_note }}"{% elif c.market_set_at %}title="market last set {{ c.market_set_at[:10] }}"{% endif %}>{{ c.market_then|money if c.market_then is not none else ('unknown' if c.market_note else '—') }}</span></div>
         <div class="kv"><span class="l">fetched{% if c.market_then %} · {{ (c.disposal_proceeds / c.market_then * 100)|round|int }}%{% endif %}</span><span class="v">{{ c.disposal_proceeds|money }}</span></div>
         <div class="kv g"><span class="l">&nbsp;</span><span class="v">{% if c.realized_gain is none %}<span class="muted">—</span>{% elif c.realized_gain > 0 %}<span class="pill pos">{{ c.realized_gain|gain }}</span>{% elif c.realized_gain < 0 %}<span class="pill neg">{{ c.realized_gain|gain }}</span>{% else %}<span class="pill mutedbg">even</span>{% endif %}</span></div>
       </div>
@@ -89,6 +91,8 @@
     {% else %}
     <div class="muted" style="padding:14px 4px;font-size:13px">Nothing left inventory.</div>
     {% endfor %}
+    {% set notes_out = cards_out|map(attribute='market_note')|select|unique|list %}
+    {% for n in notes_out %}<div class="muted" style="font-size:12px;padding:8px 4px 0">Market then {{ n }}.</div>{% endfor %}
     {% if cards_out|length > 1 %}<div class="dd-sum"><span>basis <span class="mono">{{ out_basis|money }}</span></span>{% if out_mkt_then %}<span>market then <span class="mono">{{ out_mkt_then|money }}</span></span>{% endif %}<span>fetched <span class="mono">{{ out_proceeds|money }}</span></span></div>{% endif %}
   </div>
   <div>
@@ -102,14 +106,17 @@
       </div>
       <div class="figs">
         {% set b = c.acquisition_price if c._table == 'graded_cards' else c.purchase_price %}
-        <div class="kv"><span class="l">market then</span><span class="v muted">{{ c.market_then|money if c.market_then is not none else '—' }}</span></div>
-        <div class="kv"><span class="l">took in at{% if c.market_then %} · {{ ((b or 0) / c.market_then * 100)|round|int }}%{% endif %}</span><span class="v">{{ b|money }}</span></div>
+        {% set src = 'typed' if c.basis_entered is not none else ('split from ask' if c.basis_derived is not none else ('legacy · source unknown' if c.basis_legacy is not none else 'unknown')) %}
+        <div class="kv"><span class="l">market then</span><span class="v muted" {% if c.market_note %}title="{{ c.market_note }}"{% endif %}>{{ c.market_then|money if c.market_then is not none else ('unknown' if c.market_note else '—') }}</span></div>
+        <div class="kv"><span class="l">took in at · {{ src }}{% if c.market_then %} · {{ ((b or 0) / c.market_then * 100)|round|int }}%{% endif %}</span><span class="v{{ ' derived' if c.basis_entered is none }}">{{ b|money if b is not none else 'unknown' }}</span></div>
       </div>
     </div>
     {% else %}
     <div class="muted" style="padding:14px 4px;font-size:13px">Nothing arrived.</div>
     {% endfor %}
     {% if cards_in|length > 1 %}<div class="dd-sum"><span>basis <span class="mono">{{ in_basis|money }}</span></span>{% if in_mkt_then %}<span>market then <span class="mono">{{ in_mkt_then|money }}</span></span>{% endif %}</div>{% endif %}
+    {% set notes_in = cards_in|map(attribute='market_note')|select|unique|list %}
+    {% for n in notes_in %}<div class="muted" style="font-size:12px;padding:8px 4px 0">Market then {{ n }}.</div>{% endfor %}
   </div>
 </div>
 
@@ -156,7 +163,7 @@ document.getElementById("void-deal").addEventListener("click", async () => {
   const sure = await confirmDialog({
     title: "Void deal #{{ d.id }}?",
     body: "Cards that left will return to inventory, cards this deal created will be " +
-          "removed, and the cash flow is reversed. This cannot itself be undone.",
+          "removed, and the cash flow is reversed. The full deal is archived first, so nothing is lost.",
     confirmText: "Void deal", danger: true,
   });
   if (!sure) return;

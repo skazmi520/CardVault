@@ -16,11 +16,8 @@ Run:  python3 -m v2.fuzz_lifecycle
 
 import argparse
 import random
-import sqlite3
 import sys
-import tempfile
 import traceback
-from pathlib import Path
 
 from . import cards as v2cards
 from . import checks as v2checks
@@ -47,39 +44,31 @@ READERS = [
 
 
 def fresh_db():
-    src = sqlite3.connect(f"file:{v2db.V2_DB_PATH}?mode=ro", uri=True)
-    ddl = [r[0] for r in src.execute(
-        "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'")]
-    src.close()
-    p = Path(tempfile.mkdtemp(prefix="cv_life_")) / "t.db"
-    c = sqlite3.connect(p)
-    c.row_factory = sqlite3.Row
-    for s in ddl:
-        c.execute(s)
-    c.execute("INSERT OR REPLACE INTO v2_meta (key,value) VALUES ('is_v2','1')")
-    c.commit()
-    return c
+    """A throwaway database built from the schema this code defines (v2/db.py),
+    never copied from the live database — the fuzzer must never touch it."""
+    return v2db.scratch_database(prefix="cv_life_")
 
 
 def seed(c, rng, n=25):
     for i in range(n):
-        unknown = 1 if rng.random() < 0.15 else 0
-        basis = 0.0 if unknown else round(rng.choice([0, 5, 250, 3000, 15000]) * rng.uniform(0.4, 1.6), 2)
-        mv = None if rng.random() < 0.15 else round(max(1.0, basis * rng.uniform(0.2, 4.0)), 2)
+        unknown = rng.random() < 0.15
+        basis = None if unknown else round(
+            rng.choice([0, 5, 250, 3000, 15000]) * rng.uniform(0.4, 1.6), 2)
+        mv = None if rng.random() < 0.15 else round(max(1.0, (basis or 1.0) * rng.uniform(0.2, 4.0)), 2)
         if rng.random() < 0.5:
-            c.execute("INSERT INTO ungraded_cards (card_name, purchase_price, purchase_date, "
-                      "market_value, basis_unknown, status, date_added, grading_status, notes, "
-                      "set_name, card_number, year) VALUES (?,?,'2026-01-01',?,?,?,'2026-01-01',?,'','','','')",
-                      (f"raw{i}", basis, mv, unknown,
+            c.execute("INSERT INTO ungraded_cards (card_name, basis_entered, purchase_date, "
+                      "market_value, status, date_added, grading_status, notes, "
+                      "set_name, card_number, year) VALUES (?,?,'2026-01-01',?,?,'2026-01-01',?,'','','','')",
+                      (f"raw{i}", basis, mv,
                        rng.choice(["active", "submitted_for_grading"]),
                        rng.choice(["Not Slated", "Slated", "At Grading"])))
         else:
             c.execute("INSERT INTO graded_cards (card_name, grading_company, grade, "
-                      "acquisition_price, acquisition_date, market_value, basis_unknown, status, "
+                      "basis_entered, acquisition_date, market_value, status, "
                       "date_added, notes, set_name, card_number, grading_fee) "
-                      "VALUES (?,?,?,?,'2026-01-01',?,?, 'active','2026-01-01','','','',?)",
+                      "VALUES (?,?,?,?,'2026-01-01',?, 'active','2026-01-01','','','',?)",
                       (f"slab{i}", rng.choice(v2db.GRADING_COMPANIES),
-                       rng.choice(["10", "9", "8.5", "5"]), basis, mv, unknown,
+                       rng.choice(["10", "9", "8.5", "5"]), basis, mv,
                        round(rng.choice([0, 20, 80, 350]), 2)))
     c.commit()
 
@@ -197,15 +186,24 @@ def props(c, before_counts, lineage):
         if n < n0:
             bad.append(f"L1 {t}: row count fell {n0} -> {n}; cards must never be deleted")
 
-    # L2 — promotion carries basis exactly: graded basis = raw basis + grading fee
+    # L2 — promotion carries basis exactly: graded basis = raw basis + grading
+    # fee, but only when the raw basis was known — an unknown raw basis must
+    # yield an unknown slab basis (the fee alone is not what the card cost),
+    # never 0 + fee.
     for raw_id, gid in lineage["promoted"].items():
-        r = c.execute("SELECT purchase_price b, status FROM ungraded_cards WHERE id=?", (raw_id,)).fetchone()
+        r = c.execute("SELECT purchase_price b, basis_unknown u, status FROM ungraded_cards WHERE id=?",
+                      (raw_id,)).fetchone()
         g = c.execute("SELECT acquisition_price ap, grading_fee f FROM graded_cards WHERE id=?", (gid,)).fetchone()
         if g is None:
             bad.append(f"L2 raw#{raw_id} promoted to graded#{gid} which does not exist")
             continue
-        if r["status"] == "promoted" and abs(float(g["ap"] or 0) - (float(r["b"] or 0) + float(g["f"] or 0))) > PENNY:
-            bad.append(f"L2 raw#{raw_id}->graded#{gid}: basis {g['ap']} != raw {r['b']} + fee {g['f']}")
+        if r["status"] == "promoted":
+            if r["u"]:
+                if g["ap"] is not None:
+                    bad.append(f"L2 raw#{raw_id}->graded#{gid}: raw basis unknown "
+                               f"but slab basis {g['ap']} (should be unknown)")
+            elif abs(float(g["ap"] or 0) - (float(r["b"] or 0) + float(g["f"] or 0))) > PENNY:
+                bad.append(f"L2 raw#{raw_id}->graded#{gid}: basis {g['ap']} != raw {r['b']} + fee {g['f']}")
 
     # L3 — cracking carries basis intact and leaves the slab as history, not a sale
     for gid, raw_id in lineage["cracked"].items():

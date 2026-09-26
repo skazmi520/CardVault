@@ -19,11 +19,8 @@ Run:  python3 -m v2.fuzz                 500 deals, random seed
 
 import argparse
 import random
-import sqlite3
 import sys
-import tempfile
 import traceback
-from pathlib import Path
 
 from . import checks as v2checks
 from . import db as v2db
@@ -35,18 +32,9 @@ PENNY = 0.011          # allow a cent of float noise before calling it a violati
 # ── world building ─────────────────────────────────────────────────────────────
 
 def fresh_db():
-    src = sqlite3.connect(f"file:{v2db.V2_DB_PATH}?mode=ro", uri=True)
-    ddl = [r[0] for r in src.execute(
-        "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'")]
-    src.close()
-    path = Path(tempfile.mkdtemp(prefix="cv_fuzz_")) / "t.db"
-    c = sqlite3.connect(path)
-    c.row_factory = sqlite3.Row
-    for s in ddl:
-        c.execute(s)
-    c.execute("INSERT OR REPLACE INTO v2_meta (key,value) VALUES ('is_v2','1')")
-    c.commit()
-    return c
+    """A throwaway database built from the schema this code defines (v2/db.py),
+    never copied from the live database — the fuzzer must never touch it."""
+    return v2db.scratch_database(prefix="cv_fuzz_")
 
 
 def seed_cards(c, rng, n=40):
@@ -54,22 +42,23 @@ def seed_cards(c, rng, n=40):
     zero basis, unknown basis, no market value, and a raw card or two."""
     ids = []
     for i in range(n):
-        unknown = 1 if rng.random() < 0.15 else 0
-        basis = 0.0 if unknown else round(rng.choice([0, 1, 25, 300, 2500, 18000]) * rng.uniform(0.5, 1.5), 2)
-        mv = None if rng.random() < 0.12 else round(max(1.0, basis * rng.uniform(0.3, 3.0)), 2)
+        unknown = rng.random() < 0.15
+        basis = None if unknown else round(
+            rng.choice([0, 1, 25, 300, 2500, 18000]) * rng.uniform(0.5, 1.5), 2)
+        mv = None if rng.random() < 0.12 else round(max(1.0, (basis or 1.0) * rng.uniform(0.3, 3.0)), 2)
         if rng.random() < 0.25:
             cur = c.execute(
-                "INSERT INTO ungraded_cards (card_name, purchase_price, purchase_date, market_value, "
-                "basis_unknown, status, date_added, grading_status, notes, set_name, card_number, year) "
-                "VALUES (?,?,'2026-01-01',?,?,'active','2026-01-01','Not Slated','','','','')",
-                (f"raw{i}", basis, mv, unknown))
+                "INSERT INTO ungraded_cards (card_name, basis_entered, purchase_date, market_value, "
+                "status, date_added, grading_status, notes, set_name, card_number, year) "
+                "VALUES (?,?,'2026-01-01',?,'active','2026-01-01','Not Slated','','','','')",
+                (f"raw{i}", basis, mv))
             ids.append(("ungraded_cards", cur.lastrowid))
         else:
             cur = c.execute(
-                "INSERT INTO graded_cards (card_name, grading_company, grade, acquisition_price, "
-                "acquisition_date, market_value, basis_unknown, status, date_added, notes, set_name, card_number) "
-                "VALUES (?,'PSA','10',?,'2026-01-01',?,?,'active','2026-01-01','','','')",
-                (f"slab{i}", basis, mv, unknown))
+                "INSERT INTO graded_cards (card_name, grading_company, grade, basis_entered, "
+                "acquisition_date, market_value, status, date_added, notes, set_name, card_number) "
+                "VALUES (?,'PSA','10',?,'2026-01-01',?,'active','2026-01-01','','','')",
+                (f"slab{i}", basis, mv))
             ids.append(("graded_cards", cur.lastrowid))
     c.commit()
     return ids
@@ -87,7 +76,14 @@ def live(c):
 
 def gen_deal(rng, pool):
     """A random legal-ish deal. Deliberately reaches for the awkward shapes:
-    zero cash, cash on both sides, unvalued lines, one-sided deals."""
+    zero cash, cash on both sides, unvalued lines, one-sided deals.
+
+    2026-09-25: the engine got stricter — a blank take-in with cards going out
+    needs either an ask (out_side_total) or every out card typed, or it is
+    refused rather than defaulted to market. Most of the time this generator
+    now supplies one of those so a plain trade still saves; sometimes it
+    doesn't, to keep exercising the refusal path (run_sequence treats a
+    ValueError as a legal, no-op outcome)."""
     shape = rng.choice(["pure_sale", "pure_buy", "trade", "trade_cash", "giveaway", "odd"])
     n_out = 0 if shape in ("pure_buy",) else rng.randint(1, min(4, max(1, len(pool))))
     n_out = min(n_out, len(pool))
@@ -95,12 +91,12 @@ def gen_deal(rng, pool):
     cards_out, cards_in, cash = [], [], 0.0
 
     for t, cid in picks:
-        v = None if rng.random() < 0.2 else round(rng.uniform(0, 5000), 2)
+        v = None if rng.random() < 0.15 else round(rng.uniform(0, 5000), 2)
         cards_out.append(CardOut(t, cid, v))
 
     if shape in ("pure_buy", "trade", "trade_cash", "odd"):
         for k in range(rng.randint(1, 3)):
-            v = None if rng.random() < 0.2 else round(rng.uniform(0, 5000), 2)
+            v = None if rng.random() < 0.15 else round(rng.uniform(0, 5000), 2)
             mv = None if rng.random() < 0.4 else round(rng.uniform(1, 6000), 2)
             cards_in.append(CardIn(card_name=f"in{rng.randrange(10**6)}",
                                    is_graded=rng.random() < 0.7, deal_value=v,
@@ -122,7 +118,21 @@ def gen_deal(rng, pool):
     # at least one side must have a card, or save_deal rightly refuses
     if not cards_out and not cards_in:
         cards_in = [CardIn(card_name="in_fallback", deal_value=100.0)]
-    return dict(cards_out=cards_out, cards_in=cards_in, cash_amount=cash)
+
+    out_entered = [ln.deal_value for ln in cards_out]
+    blanks_in = any(ln.deal_value is None for ln in cards_in)
+    out_side_total = None
+    if cards_out and blanks_in and not all(v is not None for v in out_entered) and rng.random() < 0.75:
+        # a comfortable ask: covers the typed take-ins, cash and a healthy
+        # per-blank share, so blank take-ins split to something positive
+        # instead of tripping the "would book $0" / "cash exceeds ask" refusals
+        typed_in_sum = sum(v for v in (ln.deal_value for ln in cards_in) if v is not None)
+        n_blank_in = sum(1 for ln in cards_in if ln.deal_value is None)
+        pool_target = typed_in_sum + n_blank_in * rng.uniform(200, 3000)
+        out_side_total = round(cash + pool_target + rng.uniform(0, 500), 2)
+
+    return dict(cards_out=cards_out, cards_in=cards_in, cash_amount=cash,
+                out_side_total=out_side_total)
 
 
 # ── properties that must always hold ───────────────────────────────────────────
@@ -189,11 +199,11 @@ def props_after_deal(c, spec, result):
     # P7 — the owner's model: what the outgoing cards fetched is exactly what came
     # back, cash plus take-in. Whenever anything came back (cards in, or cash
     # either way) the identity holds, no tolerance, no "reconcile" escape
-    # hatch. The only exception the engine is allowed is a negative came-back
-    # (more cash paid than take-in), which it clamps to $0 and warns about.
+    # hatch. 2026-09-25: there is no clamp exception any more — a came-back
+    # that would go negative (more cash paid than take-in) is refused outright
+    # by resolve(), so if a deal saved at all the identity holds unconditionally.
     came_back = spec["cards_in"] or cash != 0
-    clamped = any("clamped" in w for w in result["warnings"])
-    if out_rows and came_back and not clamped:
+    if out_rows and came_back:
         slack = PENNY * (len(out_rows) + len(spec["cards_in"]) + 1)
         if abs(out_total - (in_total + cash)) > slack:
             bad.append(f"P7 proceeds {out_total:.2f} != cash {cash:.2f} + take-in {in_total:.2f}")
@@ -201,7 +211,7 @@ def props_after_deal(c, spec, result):
     # P8 — typed per-card out values set the SPLIT of the proceeds, never the
     # total: proceeds must be in the same proportion as the typed values.
     typed = [ln.deal_value for ln in spec["cards_out"]]
-    if out_rows and came_back and not clamped and len(typed) > 1 \
+    if out_rows and came_back and len(typed) > 1 \
             and all(v is not None for v in typed) and sum(typed) > 0 and out_total > 0:
         by_id = {(t, r["id"]): r for t, r in out_rows}
         for ln in spec["cards_out"]:
@@ -212,6 +222,40 @@ def props_after_deal(c, spec, result):
             if abs(float(r["p"]) - want) > PENNY * 2:
                 bad.append(f"P8 {ln.table}#{ln.card_id}: typed {ln.deal_value} of {sum(typed):.2f} "
                            f"should take {want:.2f} of {out_total:.2f}, booked {r['p']}")
+
+    # P9 — typed and derived never share a column: an in-card's basis_entered
+    # is exactly the typed deal_value (or NULL when it was blank), market_value
+    # is exactly the typed market (or NULL), and its deal_lines row agrees.
+    for ln in spec["cards_in"]:
+        row = c.execute(
+            "SELECT id, basis_entered, market_value FROM graded_cards "
+            "WHERE card_name=? AND acquired_via_deal_id=? "
+            "UNION ALL SELECT id, basis_entered, market_value FROM ungraded_cards "
+            "WHERE card_name=? AND acquired_via_deal_id=?",
+            (ln.card_name, did, ln.card_name, did)).fetchone()
+        if row is None:
+            continue
+        want_entered = round(ln.deal_value, 2) if ln.deal_value is not None else None
+        got_entered = row["basis_entered"]
+        if (got_entered is None) != (want_entered is None) or (
+                want_entered is not None and abs(float(got_entered) - want_entered) > PENNY):
+            bad.append(f"P9 in-card {ln.card_name}: typed {ln.deal_value} "
+                       f"but basis_entered {got_entered}")
+        want_mv = round(ln.market_value, 2) if (ln.market_value or 0) > 0 else None
+        got_mv = row["market_value"]
+        if (got_mv is None) != (want_mv is None) or (
+                want_mv is not None and abs(float(got_mv) - want_mv) > PENNY):
+            bad.append(f"P9 in-card {ln.card_name}: typed market {ln.market_value} "
+                       f"but stored market_value {got_mv}")
+        line = c.execute(
+            "SELECT entered_value FROM deal_lines WHERE deal_id=? AND side='in' AND card_id=?",
+            (did, row["id"])).fetchone()
+        if line is not None:
+            le = line["entered_value"]
+            if (le is None) != (want_entered is None) or (
+                    want_entered is not None and abs(float(le) - want_entered) > PENNY):
+                bad.append(f"P9 in-card {ln.card_name}: deal_lines entered_value {le} "
+                           f"!= typed {want_entered}")
 
     return bad
 

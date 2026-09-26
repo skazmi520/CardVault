@@ -20,9 +20,50 @@ from . import db as v2db
 from . import photos as v2photos
 from . import psa_api
 from . import psa_orders
-from .deals import CardIn, CardOut, add_deal_photo, get_deal, list_deals, save_deal
+from .deals import (CardIn, CardOut, add_deal_photo, edit_deal, get_deal, list_deals,
+                    save_deal)
 
 app = Flask(__name__)
+
+_MONEY_RE = __import__("re").compile(r"^-?\$?(\d{1,3}(,\d{3})+|\d+)?(\.\d+)?$")
+
+
+def _parse_money(v, field: str, *, allow_negative: bool = False):
+    """A money value exactly as typed, or None when left blank. Anything that is
+    not plainly a number ("3.5k", "1 200", "35O0", inf, nan) is refused rather
+    than truncated: a value the owner typed is either stored as typed or rejected
+    so he can see it."""
+    if v is None or (isinstance(v, str) and v.strip() == ""):
+        return None
+    if isinstance(v, bool):
+        raise ValueError(f"{field} must be a number")
+    if isinstance(v, (int, float)):
+        x = float(v)
+    else:
+        t = str(v).strip()
+        if not _MONEY_RE.match(t) or not any(ch.isdigit() for ch in t):
+            raise ValueError(f"{field}: {v!r} is not a plain amount")
+        x = float(t.replace("$", "").replace(",", ""))
+    if x != x or x in (float("inf"), float("-inf")) or abs(x) > 1e9:
+        raise ValueError(f"{field} must be a real amount")
+    if x < 0 and not allow_negative:
+        raise ValueError(f"{field} cannot be negative")
+    return round(x, 2)
+
+
+def _card_ref(p: dict, id_key: str = "id"):
+    """(table, id) from a request, both required and well-formed. No defaults:
+    a request that doesn't say which card it means changes nothing."""
+    table = p.get("table")
+    if table not in ("graded_cards", "ungraded_cards"):
+        raise ValueError("table must be graded_cards or ungraded_cards")
+    cid = p.get(id_key)
+    if isinstance(cid, bool) or not isinstance(cid, (int, str)):
+        raise ValueError(f"{id_key} must be an integer")
+    cid = int(cid)
+    if cid <= 0:
+        raise ValueError(f"{id_key} must be positive")
+    return table, cid
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024   # 32 MB uploads
 
 
@@ -239,6 +280,100 @@ def deal_new():
                            cards=cards, methods=v2db.PAYMENT_METHODS)
 
 
+def _edit_prefill(c, deal_id: int) -> dict | None:
+    """What the Edit deal screen opens on: the last thing typed for this deal
+    (deal_entries), paired with the cards it created (deal_lines). A deal
+    from before the entry log opens on what was booked, and says so."""
+    det = get_deal(c, deal_id)
+    if det is None:
+        return None
+    d = det["deal"]
+    by_id = {(x["table"], x["id"]): x for x in v2cards.list_cards(c, include_disposed=True)}
+
+    def out_line(t, i, typed=""):
+        x = by_id.get((t, i)) or {}
+        return {"table": t, "id": i, "name": x.get("name", f"{t}#{i}"),
+                "is_pc": x.get("is_pc", False),
+                "label": (f"{x.get('company', '')} {x.get('grade', '')}".strip()
+                          if t == "graded_cards" else "RAW"),
+                "mv": x.get("market_value"), "basis": x.get("basis"),
+                "basis_unknown": x.get("basis_unknown", False),
+                "deal_value": "" if typed in (None, "") else str(typed)}
+
+    def s(v):
+        if v in (None, ""):
+            return ""
+        if isinstance(v, float):
+            return f"{v:.2f}".rstrip("0").rstrip(".")
+        return str(v)
+
+    row = c.execute("SELECT payload_json FROM deal_entries WHERE deal_id=? "
+                    "ORDER BY id DESC LIMIT 1", (deal_id,)).fetchone()
+    in_refs = [(r["card_table"], r["card_id"]) for r in c.execute(
+        "SELECT card_table, card_id FROM deal_lines WHERE deal_id=? AND side='in' "
+        "ORDER BY id", (deal_id,))]
+    base = {"counterparty": d["counterparty"], "location": d["location"],
+            "payment_method": d["payment_method"], "notes": d["notes"],
+            "occurred_at": d["occurred_at"]}
+    if row is not None:
+        p = json.loads(row["payload_json"])
+        if "cash_received" in p or "cash_paid" in p:
+            got, paid = s(p.get("cash_received")), s(p.get("cash_paid"))
+        else:
+            cash = float(p.get("cash_amount") or 0)
+            got, paid = (s(cash) if cash > 0 else ""), (s(-cash) if cash < 0 else "")
+        outs = [out_line(x.get("table"), x.get("id"), x.get("deal_value"))
+                for x in p.get("cards_out") or []]
+        filled = [x for x in p.get("cards_in") or []
+                  if any(s(x.get(k)).strip() for k in ("name", "deal_value",
+                                                       "market_value", "cert"))]
+        ins = []
+        for k, x in enumerate(filled):
+            ins.append({"ref": list(in_refs[k]) if k < len(in_refs) else x.get("ref"),
+                        "name": x.get("name", ""), "set": x.get("set", ""),
+                        "number": x.get("number", ""), "year": x.get("year", ""),
+                        "company": x.get("company", "PSA"), "grade": x.get("grade", ""),
+                        "cert": x.get("cert", ""), "is_graded": bool(x.get("is_graded", True)),
+                        "deal_value": s(x.get("deal_value")),
+                        "market_value": s(x.get("market_value"))})
+        return {**base, "source": "entered", "cash_received": got, "cash_paid": paid,
+                "ask": s(p.get("out_side_total")),
+                "adjust": any(o["deal_value"] for o in outs),
+                "cards_out": outs, "cards_in": ins}
+    # no typing on record: open on what was booked, clearly labelled
+    cash = d["cash_amount"] or 0
+    # each outgoing card prefilled with what it booked, so saving unchanged
+    # reproduces the deal exactly instead of re-splitting by today's markets
+    outs = [out_line(x["_table"], x["id"], s(x.get("disposal_proceeds")))
+            for x in det["cards_out"]]
+    ins = [{"ref": [x["_table"], x["id"]], "name": x["card_name"],
+            "set": x.get("set_name") or "", "number": x.get("card_number") or "",
+            "year": x.get("year") or "",
+            "company": x.get("grading_company") or "PSA", "grade": x.get("grade") or "",
+            "cert": x.get("serial_number") or "", "is_graded": x["_table"] == "graded_cards",
+            "deal_value": s(x.get("acquisition_price") if x["_table"] == "graded_cards"
+                            else x.get("purchase_price")),
+            "market_value": s(x.get("market_then"))}
+           for x in det["cards_in"]]
+    return {**base, "source": "booked", "cash_received": s(cash) if cash > 0 else "",
+            "cash_paid": s(-cash) if cash < 0 else "", "ask": "",
+            "adjust": bool(outs) and bool(cash or det["cards_in"]),
+            "cards_out": outs, "cards_in": ins}
+
+
+@app.get("/deals/<int:deal_id>/edit")
+def deal_edit(deal_id):
+    c = conn()
+    prefill = _edit_prefill(c, deal_id)
+    if prefill is None:
+        c.close()
+        abort(404)
+    cards = [x for x in v2cards.list_cards(c) if x["status"] == "active"]
+    c.close()
+    return render_template("deal_new.html", active="deals", cards=cards,
+                           methods=v2db.PAYMENT_METHODS, edit_of=deal_id, prefill=prefill)
+
+
 @app.get("/deals/<int:deal_id>")
 def deal_detail(deal_id):
     c = conn()
@@ -248,7 +383,8 @@ def deal_detail(deal_id):
         abort(404)
     return render_template("deal_detail.html", active="deals", d=det["deal"],
                            cards_out=det["cards_out"], cards_in=det["cards_in"],
-                           photos=det["photos"])
+                           photos=det["photos"], entered=det["entered"],
+                           revisions=det["revisions"])
 
 
 @app.get("/raw")
@@ -272,7 +408,7 @@ def api_psa_order_preview():
     text = request.get_json(force=True).get("csv", "")
     rows = psa_orders.read_order(text)
     if not rows:
-        return jsonify({"ok": False, "error": "No cert rows found — is this a PSA order CSV?"}), 200
+        return jsonify({"ok": False, "error": "No cert rows found — is this a PSA order CSV?"}), 400
     c = conn()
     res = psa_orders.match_order(c, rows)
     c.close()
@@ -285,10 +421,19 @@ def api_psa_order_preview():
 def api_psa_order_apply():
     p = request.get_json(force=True)
     rows = psa_orders.read_order(p.get("csv", ""))
+    if not rows:
+        return jsonify({"ok": False, "error": "No cert rows found — is this a PSA order CSV?"}), 400
+    pairs = p.get("pairs")
+    if (not isinstance(pairs, list) or not pairs
+            or not all(isinstance(x, dict) and str(x.get("cert") or "").strip()
+                       and isinstance(x.get("card_id"), int)
+                       and not isinstance(x.get("card_id"), bool) for x in pairs)):
+        return jsonify({"ok": False, "error": "pairs must be a non-empty list of "
+                        "{cert, card_id} you ticked"}), 400
+    fee = _parse_money(p.get("grading_cost_each"), "grading cost") or 0.0
     c = conn()
-    res = psa_orders.apply_order(c, rows, p.get("pairs", []),
-                                 order_id=p.get("order_id", ""),
-                                 grading_cost_each=float(p.get("grading_cost_each") or 0))
+    res = psa_orders.apply_order(c, rows, pairs, order_id=str(p.get("order_id", "")),
+                                 grading_cost_each=fee)
     c.close()
     return jsonify({"ok": True, **res})
 
@@ -423,12 +568,24 @@ def api_photo_extract_all():
 @app.post("/api/photos/<int:import_id>/apply")
 def api_photo_apply(import_id):
     p = request.get_json(force=True)
+    fields = p.get("fields")
+    if not isinstance(fields, dict):
+        return jsonify({"ok": False, "error": "fields must be the values you ticked"}), 400
+    if p.get("create") is True:
+        target = None
+    else:
+        target = p.get("card_id")
+        if isinstance(target, bool) or not isinstance(target, int):
+            return jsonify({"ok": False, "error": "pick a card, or create a new one"}), 400
+        if not fields:
+            return jsonify({"ok": False, "error": "no fields ticked"}), 400
     c = conn()
+    imp = c.execute("SELECT status FROM photo_imports WHERE id=?", (import_id,)).fetchone()
+    if imp is None or imp["status"] in ("applied", "rejected"):
+        c.close()
+        return jsonify({"ok": False, "error": "photo not found or already handled"}), 400
     try:
-        card_id = v2photos.apply_to_card(
-            c, import_id,
-            int(p["card_id"]) if p.get("card_id") else None,
-            p.get("fields") or {})
+        card_id = v2photos.apply_to_card(c, import_id, target, fields)
     except (ValueError, KeyError) as e:
         c.close()
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -439,6 +596,10 @@ def api_photo_apply(import_id):
 @app.post("/api/photos/<int:import_id>/reject")
 def api_photo_reject(import_id):
     c = conn()
+    imp = c.execute("SELECT status FROM photo_imports WHERE id=?", (import_id,)).fetchone()
+    if imp is None or imp["status"] in ("applied", "rejected"):
+        c.close()
+        return jsonify({"ok": False, "error": "photo not found or already handled"}), 400
     v2photos.reject(c, import_id)
     c.close()
     return jsonify({"ok": True})
@@ -450,14 +611,11 @@ def api_quick_sale():
     deal underneath, so cash pool, Show Day and reports all stay coherent."""
     p = request.get_json(force=True)
     try:
-        table = p["table"]
-        card_id = int(p["card_id"])
-        price = float(str(p["price"]).replace("$", "").replace(",", ""))
-    except (ValueError, TypeError, KeyError):
-        return jsonify({"ok": False, "error": "table, card_id and a numeric price are required"}), 400
-    if table not in ("graded_cards", "ungraded_cards"):
-        return jsonify({"ok": False, "error": "bad table"}), 400
-    if price <= 0:
+        table, card_id = _card_ref(p, "card_id")
+        price = _parse_money(p.get("price"), "price")
+    except (ValueError, TypeError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not price or price <= 0:
         return jsonify({"ok": False, "error": "price must be positive"}), 400
     c = conn()
     try:
@@ -466,7 +624,8 @@ def api_quick_sale():
             cash_amount=price,
             counterparty=p.get("counterparty", ""),
             payment_method=p.get("payment_method", "cash"),
-            notes=p.get("notes", "Quick sale"))
+            notes=p.get("notes", "Quick sale"),
+            entry_payload={"quick_sale": True, **p})
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     return jsonify({"ok": True, "deal_id": res["deal_id"],
@@ -871,17 +1030,18 @@ def api_reprice():
     if table not in ("graded_cards", "ungraded_cards"):
         return jsonify({"ok": False, "error": "bad table"}), 400
     basis_col = "acquisition_price" if table == "graded_cards" else "purchase_price"
+    if "market_value" not in p:
+        return jsonify({"ok": False, "error": "market_value is required (blank clears it)"}), 400
     try:
-        card_id = int(p["card_id"])
-        mv = float(val) if val not in (None, "") else None
-    except (ValueError, TypeError, KeyError):
-        return jsonify({"ok": False, "error": "card_id must be an integer and "
-                        "market_value a number"}), 400
+        _, card_id = _card_ref({**p, "table": table}, "card_id")
+        mv = _parse_money(val, "market value")
+    except (ValueError, TypeError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     c = conn()
     try:
         v2cards.reprice(c, card_id, mv, table=table)
     except ValueError as e:
-        return jsonify({"ok": False, "error": str(e)}), 404
+        return jsonify({"ok": False, "error": str(e)}), 400
     row = c.execute(f"SELECT market_value, market_value_updated, basis_unknown, "
                     f"{basis_col} AS basis FROM {table} WHERE id=?",
                     (card_id,)).fetchone()
@@ -915,24 +1075,26 @@ def api_card_update():
         card_id = int(p["id"])
     except (ValueError, TypeError, KeyError):
         return jsonify({"ok": False, "error": "id must be an integer"}), 400
-    for money_col in ("acquisition_price", "purchase_price"):
-        if money_col in fields:
-            try:
-                fields[money_col] = float(str(fields[money_col]).replace("$", "").replace(",", "") or 0)
-            except ValueError:
-                return jsonify({"ok": False, "error": f"{money_col} must be a number"}), 400
     money_col = "acquisition_price" if table == "graded_cards" else "purchase_price"
     c = conn()
-    sets = ", ".join(f"{k}=?" for k in fields)
-    c.execute(f"UPDATE {table} SET {sets} WHERE id=?", [*fields.values(), card_id])
-    # supplying a real cost resolves "basis unknown" — and a disposed card's
-    # stored realized_gain must follow the corrected basis
-    if fields.get(money_col):
-        c.execute(f"UPDATE {table} SET basis_unknown=0 WHERE id=?", (card_id,))
-        c.execute(f"""UPDATE {table} SET realized_gain =
-                        ROUND(COALESCE(disposal_proceeds,{('sale_price' if table=='graded_cards' else 'NULL')})
-                              - {money_col}, 2)
-                      WHERE id=? AND status='disposed'""", (card_id,))
+    cur = c.execute(f"SELECT * FROM {table} WHERE id=?", (card_id,)).fetchone()
+    if cur is None:
+        return jsonify({"ok": False, "error": "card not found"}), 404
+    if money_col in fields:
+        # A card that came in or left through a deal takes its numbers from
+        # that deal; they change only through Edit deal, never from here.
+        deal_ref = cur["acquired_via_deal_id"] or cur["disposed_via_deal_id"]
+        if deal_ref:
+            return jsonify({"ok": False, "error":
+                            f"This card's cost comes from deal #{deal_ref}. "
+                            "Change it with Edit deal on that deal's page."}), 400
+        try:
+            typed = _parse_money(fields.pop(money_col), "cost")
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+        # blank clears what was typed; it never becomes $0
+        fields["basis_entered"] = typed
+    v2db.update_card(c, table, card_id, fields, "you", "drawer")
     c.commit()
     row = c.execute(f"SELECT * FROM {table} WHERE id=?", (card_id,)).fetchone()
     if row is None:
@@ -947,6 +1109,8 @@ def api_card_update():
         "grade": row["grade"] if table == "graded_cards" else "",
         "cert": row["serial_number"] if table == "graded_cards" else "",
         "acq_cost": basis, "basis": basis, "basis_unknown": unknown,
+        "basis_source": v2cards._basis_source(row),
+        "basis_deal": row["acquired_via_deal_id"] or row["disposed_via_deal_id"],
         "market_value": mv,
         "gain": (round(mv - basis, 2) if mv is not None and not unknown else None),
         "acq_date": (row["acquisition_date"] if table == "graded_cards"
@@ -984,25 +1148,53 @@ def api_psa_lookup():
 
 
 def _parse_deal_payload(p):
-    outs = [CardOut(x["table"], int(x["id"]),
-                    float(x["deal_value"]) if x.get("deal_value") not in (None, "") else None)
-            for x in p.get("cards_out", [])]
-    ins = [CardIn(card_name=x.get("name", "").strip(),
-                  is_graded=bool(x.get("is_graded", True)),
-                  set_name=x.get("set", ""), card_number=x.get("number", ""),
-                  year=x.get("year", ""), grading_company=x.get("company", ""),
-                  grade=x.get("grade", ""), serial_number=x.get("cert", ""),
-                  deal_value=(float(x["deal_value"])
-                              if x.get("deal_value") not in (None, "") else None),
-                  market_value=(float(x["market_value"])
-                                if x.get("market_value") not in (None, "") else None))
-           for x in p.get("cards_in", []) if x.get("name", "").strip()]
-    cash_amount = float(p.get("cash_amount") or 0)
-    out_total = (float(p["out_side_total"])
-                 if p.get("out_side_total") not in (None, "") else None)
-    in_total = (float(p["in_side_total"])
-                if p.get("in_side_total") not in (None, "") else None)
+    """The deal request, parsed strictly. Every money field is stored as typed
+    or refused. An arriving line with nothing typed at all is the empty row the
+    screen always offers and is skipped; a line with anything typed but no
+    name is kept, so the engine refuses it instead of silently dropping it."""
+    outs = []
+    for x in p.get("cards_out") or []:
+        table, cid = _card_ref({"table": x.get("table"), "id": x.get("id")})
+        outs.append(CardOut(table, cid, _parse_money(x.get("deal_value"), "per-card value")))
+    ins = []
+    for x in p.get("cards_in") or []:
+        name = str(x.get("name") or "").strip()
+        dv = _parse_money(x.get("deal_value"), f"take-in for {name or 'an unnamed card'}")
+        mv = _parse_money(x.get("market_value"), f"market for {name or 'an unnamed card'}")
+        if not name and dv is None and mv is None and not str(x.get("cert") or "").strip():
+            continue
+        ins.append(CardIn(card_name=name, is_graded=bool(x.get("is_graded", True)),
+                          set_name=x.get("set", ""), card_number=x.get("number", ""),
+                          year=x.get("year", ""), grading_company=x.get("company", ""),
+                          grade=x.get("grade", ""), serial_number=x.get("cert", ""),
+                          deal_value=dv, market_value=mv))
+    if "cash_received" in p or "cash_paid" in p:
+        # the two boxes on the deal screen, each a plain non-negative amount
+        got = _parse_money(p.get("cash_received"), "Cash I receive") or 0.0
+        paid = _parse_money(p.get("cash_paid"), "Cash I pay") or 0.0
+        cash_amount = round(got - paid, 2)
+    else:
+        cash_amount = _parse_money(p.get("cash_amount"), "cash", allow_negative=True) or 0.0
+    out_total = _parse_money(p.get("out_side_total"), "ask")
+    in_total = _parse_money(p.get("in_side_total"), "take-in total")
     return outs, ins, cash_amount, out_total, in_total
+
+
+def _in_refs(p):
+    """(table, id) of the card each arriving line already created, for Edit
+    deal; None for a new line. Same filtering as _parse_deal_payload."""
+    refs = []
+    for x in p.get("cards_in") or []:
+        if not (str(x.get("name") or "").strip() or str(x.get("deal_value") or "").strip()
+                or str(x.get("market_value") or "").strip()
+                or str(x.get("cert") or "").strip()):
+            continue
+        r = x.get("ref")
+        ok = (isinstance(r, list) and len(r) == 2
+              and r[0] in ("graded_cards", "ungraded_cards")
+              and isinstance(r[1], int) and not isinstance(r[1], bool))
+        refs.append((r[0], r[1]) if ok else None)
+    return refs
 
 
 @app.post("/api/deals/preview")
@@ -1013,12 +1205,19 @@ def api_deal_preview():
     try:
         outs, ins, cash_amount, out_total, in_total = _parse_deal_payload(p)
     except (ValueError, TypeError, KeyError) as e:
-        return jsonify({"ok": False, "error": f"invalid deal payload: {e}"}), 400
+        return jsonify({"ok": False, "error": str(e)}), 400
     c = conn()
     try:
-        res = save_deal(c, cards_out=outs, cards_in=ins, cash_amount=cash_amount,
-                        out_side_total=out_total, in_side_total=in_total,
-                        dry_run=True)
+        edit_of = p.get("edit_of")
+        if isinstance(edit_of, int) and not isinstance(edit_of, bool):
+            res = edit_deal(c, edit_of, cards_out=outs, cards_in=ins,
+                            in_card_refs=_in_refs(p), cash_amount=cash_amount,
+                            out_side_total=out_total, in_side_total=in_total,
+                            dry_run=True)
+        else:
+            res = save_deal(c, cards_out=outs, cards_in=ins, cash_amount=cash_amount,
+                            out_side_total=out_total, in_side_total=in_total,
+                            dry_run=True)
     except ValueError as e:
         c.close()
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -1033,7 +1232,7 @@ def api_save_deal():
         outs, ins, cash_amount, out_total, in_total = _parse_deal_payload(p)
     except (ValueError, TypeError, KeyError) as e:
         return jsonify({"ok": False,
-                        "error": f"invalid deal payload: {e}"}), 400
+                        "error": str(e)}), 400
     c = conn()
     try:
         res = save_deal(
@@ -1042,15 +1241,35 @@ def api_save_deal():
             occurred_at=p.get("occurred_at") or None,
             counterparty=p.get("counterparty", ""), location=p.get("location", ""),
             payment_method=p.get("payment_method", "cash"), notes=p.get("notes", ""),
-            out_side_total=out_total, in_side_total=in_total)
+            out_side_total=out_total, in_side_total=in_total,
+            entry_payload=p)            # what was typed, verbatim, same transaction
     except ValueError as e:
         c.close()
         return jsonify({"ok": False, "error": str(e)}), 400
-    # keep what was typed, verbatim, next to what was booked
-    import json
-    c.execute("INSERT INTO deal_entries (deal_id, entered_at, payload_json) VALUES (?,?,?)",
-              (res["deal_id"], datetime.now().isoformat(timespec="seconds"), json.dumps(p)))
-    c.commit()
+    c.close()
+    return jsonify({"ok": True, **res})
+
+
+@app.post("/api/deals/<int:deal_id>/edit")
+def api_edit_deal(deal_id):
+    """Save a new revision of a booked deal. The previous revision is archived
+    in voided_deals and what was typed is appended to deal_entries."""
+    p = request.get_json(force=True)
+    try:
+        outs, ins, cash_amount, out_total, in_total = _parse_deal_payload(p)
+    except (ValueError, TypeError, KeyError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    c = conn()
+    try:
+        res = edit_deal(
+            c, deal_id, cards_out=outs, cards_in=ins, in_card_refs=_in_refs(p),
+            cash_amount=cash_amount, occurred_at=p.get("occurred_at") or None,
+            counterparty=p.get("counterparty", ""), location=p.get("location", ""),
+            payment_method=p.get("payment_method", "cash"), notes=p.get("notes", ""),
+            out_side_total=out_total, in_side_total=in_total, entry_payload=p)
+    except ValueError as e:
+        c.close()
+        return jsonify({"ok": False, "error": str(e)}), 400
     c.close()
     return jsonify({"ok": True, **res})
 
@@ -1134,12 +1353,15 @@ def api_expected_back():
 def api_card_create():
     p = request.get_json(force=True)
     table = "graded_cards" if p.get("is_graded", True) else "ungraded_cards"
+    basis = _parse_money(p.get("basis"), "cost basis")
+    mv = _parse_money(p.get("market_value"), "market value")
+    fee = _parse_money(p.get("grading_fee"), "grading fee")
     c = conn()
     new_id = v2cards.create_card(
         c, table,
         card_name=p.get("card_name", ""),
-        basis=p.get("basis"),
-        market_value=p.get("market_value"),
+        basis=basis,
+        market_value=mv,
         acquisition_date=p.get("acquisition_date", ""),
         grading_company=p.get("grading_company", "PSA"),
         grade=p.get("grade", ""),
@@ -1148,7 +1370,7 @@ def api_card_create():
         set_name=p.get("set_name", ""),
         year=p.get("year", ""),
         notes=p.get("notes", ""),
-        grading_fee=p.get("grading_fee"),
+        grading_fee=fee,
         is_pc=bool(p.get("is_pc")))
     c.close()
     return jsonify({"ok": True, "id": new_id, "table": table})
@@ -1158,7 +1380,8 @@ def api_card_create():
 def api_confirm_price():
     p = request.get_json(force=True)
     c = conn()
-    res = v2cards.confirm_price(c, int(p["card_id"]), p.get("table", "graded_cards"))
+    table, cid = _card_ref({**p, "table": p.get("table", "graded_cards")}, "card_id")
+    res = v2cards.confirm_price(c, cid, table)
     c.close()
     return jsonify({"ok": True, **res})
 
@@ -1167,8 +1390,8 @@ def api_confirm_price():
 def api_card_remove():
     p = request.get_json(force=True)
     c = conn()
-    res = v2cards.remove_card(c, p.get("table", "graded_cards"),
-                              int(p["id"]), p.get("reason", ""))
+    table, cid = _card_ref(p)
+    res = v2cards.remove_card(c, table, cid, str(p.get("reason", ""))[:500])
     c.close()
     return jsonify({"ok": True, **res})
 
@@ -1178,8 +1401,10 @@ def api_card_lost():
     p = request.get_json(force=True)
     c = conn()
     try:
-        res = v2cards.mark_lost(c, p.get("table", "graded_cards"), int(p["id"]),
-                                p.get("reason", "misplaced"), p.get("note", ""))
+        table, cid = _card_ref(p)
+        if p.get("reason") not in v2db.LOST_REASONS:
+            raise ValueError(f"reason must be one of {v2db.LOST_REASONS}")
+        res = v2cards.mark_lost(c, table, cid, p["reason"], str(p.get("note", ""))[:500])
     except ValueError as e:
         c.close()
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -1192,7 +1417,7 @@ def api_card_restore():
     p = request.get_json(force=True)
     c = conn()
     try:
-        res = v2cards.restore_card(c, p.get("table", "graded_cards"), int(p["id"]))
+        res = v2cards.restore_card(c, *_card_ref(p))
     except ValueError as e:
         c.close()
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -1225,11 +1450,15 @@ def api_card_history():
                     "cash": d["cash_amount"]}
     prices = []
     if table == "graded_cards":
-        prices = [{"date": r["recorded_at"][:10], "value": r["market_value"]} for r in c.execute(
-            "SELECT recorded_at, market_value FROM price_history WHERE card_id=? ORDER BY recorded_at, id",
-            (card_id,))]
+        prices = [{"date": r["recorded_at"][:10], "value": r["market_value"],
+                   "source": r["source"]} for r in c.execute(
+            "SELECT recorded_at, market_value, source FROM price_history WHERE card_id=? "
+            "ORDER BY recorded_at, id", (card_id,))]
+    events = [dict(r) for r in c.execute(
+        "SELECT at, field, old_value, new_value, source, ref FROM card_events "
+        "WHERE card_table=? AND card_id=? ORDER BY id DESC", (table, card_id))]
     c.close()
-    return jsonify({"ok": True, "deal": deal, "prices": prices,
+    return jsonify({"ok": True, "deal": deal, "prices": prices, "events": events,
                     "notes": row["notes"] or "", "status": row["status"],
                     "disposed_at": row["disposed_at"], "proceeds": row["disposal_proceeds"],
                     "realized_gain": row["realized_gain"]})
@@ -1239,7 +1468,10 @@ def api_card_history():
 def api_pc():
     p = request.get_json(force=True)
     c = conn()
-    v2cards.set_pc(c, p.get("table", "graded_cards"), int(p["id"]), bool(p.get("is_pc")))
+    table, cid = _card_ref(p)
+    if not isinstance(p.get("is_pc"), bool):
+        raise ValueError("is_pc must be true or false")
+    v2cards.set_pc(c, table, cid, p["is_pc"])
     c.close()
     return jsonify({"ok": True})
 
@@ -1271,9 +1503,11 @@ def _inject_integrity():
 
 def main():
     guard = v2db.get_connection()   # startup guard: refuse to boot against v1
+    guard.close()
+    v2db.backup_v2()                # daily snapshot BEFORE any migration touches the db
+    guard = v2db.get_connection()
     v2db.migrate_schema(guard)      # idempotent — applies any new v2 tables
     guard.close()
-    v2db.backup_v2()                # daily local + iCloud snapshot of the v2 db
     app.config["INTEGRITY"] = _integrity_report()
     if app.config["INTEGRITY"]:
         print(f"  DATA INTEGRITY: {len(app.config['INTEGRITY'])} check(s) failing — see the banner in the app")

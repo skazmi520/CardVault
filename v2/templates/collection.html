@@ -138,7 +138,7 @@
     </div>
     <div class="figs">
       <div class="kv"><span class="l">Market</span><span class="v display"><span class="ed mono" data-f="market_value" id="d-market"></span></span></div>
-      <div class="kv small" style="padding-bottom:4px"><span class="l">Basis</span><span class="v display"><span class="ed mono" data-f="basis" id="d-basis"></span></span></div>
+      <div class="kv small" style="padding-bottom:4px"><span class="l">Basis · <span id="d-basis-src"></span></span><span class="v display"><span class="ed mono" data-f="basis" id="d-basis"></span></span></div>
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-top:-6px"><span class="pill" id="d-gain"></span><span class="hint-line" id="d-gain-note">unrealized · a paper gain until it sells</span></div>
     <div class="acts">
@@ -329,10 +329,9 @@ function beginEdit(i) {
   let committed = false;
   const commit = async (moveNext) => {
     if (committed) return;
-    const raw = inp.value.trim().replace(/[$,]/g, "");
-    if (raw !== "" && isNaN(parseFloat(raw))) { inp.focus(); return; }
+    const raw = inp.value.trim();        // sent as typed; the server refuses non-numbers
     committed = true;
-    await saveMarket(r, raw === "" ? null : parseFloat(raw));
+    await saveMarket(r, raw);
     render(); syncDrawer();
     const saved = tbody.querySelector(`td.mv-cell[data-i="${i}"]`);
     if (saved) { saved.classList.add("saved-flash"); setTimeout(() => saved.classList.remove("saved-flash"), 900); }
@@ -350,13 +349,14 @@ async function saveMarket(r, value) {
   try {
     const res = await postJSON("/api/reprice", { card_id: r.id, table: r.table, market_value: value });
     r.market_value = res.market_value; r.gain = res.gain; r.repriced = res.repriced || "";
-    toast("Repriced " + r.name + " to " + (value == null ? "—" : fmt(value)) + ".");
+    toast("Repriced " + r.name + " to " + (res.market_value == null ? "—" : fmt(res.market_value)) + ".");
   } catch (e) { toast("Save failed: " + e.message, "error"); }
 }
 
 /* ── the drawer ── */
 let drawerIdx = -1;
 const drawer = $("drawer");
+const BASIS_SOURCE = { typed: "typed", derived: "derived by the app", legacy: "legacy, source unknown", unknown: "unknown" };
 const FIELD_LABELS = { set: "Set", number: "Number", year: "Year", company: "Grader", grade: "Grade", cert: "Cert", acq_date: "Acquired", notes: "Notes", grading_status: "Grading", target_company: "Target" };
 
 function openDrawer(i) {
@@ -386,6 +386,10 @@ function syncDrawer() {
   $("d-meta").textContent = [r.cert ? "cert " + r.cert : "", since].filter(Boolean).join(" · ");
   $("d-market").textContent = r.market_value == null ? "—" : fmt(r.market_value);
   $("d-basis").textContent = r.basis_unknown ? "unknown" : fmt(r.basis);
+  $("d-basis").classList.toggle("locked", !!r.basis_deal);
+  $("d-basis").title = r.basis_deal ? `Set by deal #${r.basis_deal}; change it with Edit deal`
+                                    : "Click to change the cost you paid";
+  $("d-basis-src").textContent = BASIS_SOURCE[r.basis_source] + (r.basis_deal ? ` · deal #${r.basis_deal}` : "");
   const g = $("d-gain");
   if (r.gain == null) { g.className = "pill mutedbg"; g.textContent = "gain unknown"; }
   else { g.className = "pill " + (r.gain > 0 ? "pos" : "mutedbg"); g.textContent = fmtGain(r.gain) + (r.basis ? " · " + (100 * r.gain / r.basis).toFixed(1) + "%" : ""); }
@@ -423,7 +427,18 @@ async function loadHistory(r) {
     else if (r.acq_date) items.push(`<div class="it"><span class="dot"></span><div>Entered directly<div class="when">${esc(r.acq_date.slice(0, 10))}</div></div></div>`);
     (res.prices || []).slice(-6).reverse().forEach((p, k, arr) => {
       const prev = arr[k + 1];
+      if (p.source === "copied") {
+        items.push(`<div class="it"><span class="dot"></span><div><span class="muted">Not a market: the old app copied the take-in price (${fmt(p.value)}) here</span><div class="when">${esc(p.date)}</div></div></div>`);
+        return;
+      }
       items.push(`<div class="it"><span class="dot"></span><div>Repriced to <span class="mono">${fmt(p.value)}</span>${prev ? ` <span class="muted">from ${fmt(prev.value)}</span>` : ""}<div class="when">${esc(p.date)}</div></div></div>`);
+    });
+    // every recorded change to this card, newest first: what, from, to, who
+    (res.events || []).slice(0, 12).forEach(ev => {
+      const who = { you: "you", engine: "the app", reprice: "reprice", import: "import", correction: "correction" }[ev.source] || ev.source;
+      const what = ev.field === "created" ? "Created" : ev.field === "deleted" ? "Deleted"
+        : `${esc(ev.field)}: ${esc(ev.old_value ?? "blank")} → ${esc(ev.new_value ?? "blank")}`;
+      items.push(`<div class="it"><span class="dot"></span><div>${what} <span class="muted">· by ${esc(who)}${ev.ref ? " · " + esc(ev.ref) : ""}</span><div class="when">${esc(ev.at.slice(0, 16).replace("T", " "))}</div></div></div>`);
     });
     (res.notes || "").split(" | ").map(s => s.trim()).filter(s => /Cracked out of|Promoted|PSA returned|Restated|Delivered/i.test(s)).forEach(s =>
       items.push(`<div class="it"><span class="dot"></span><div>${esc(s)}</div></div>`));
@@ -441,6 +456,7 @@ drawer.addEventListener("click", e => {
   if (!ed || ed.querySelector("input, select")) return;
   const r = view[drawerIdx]; if (!r) return;
   const f = ed.dataset.f;
+  if (f === "basis" && r.basis_deal) { location.href = `/deals/${r.basis_deal}`; return; }
   const raw = f === "market_value" ? (r.market_value ?? "") : f === "basis" ? (r.basis_unknown ? "" : r.basis) : (f === "acq_date" ? (r.acq_date || "").slice(0, 10) : (r[f] ?? ""));
   let inp;
   if (ed.dataset.select) {
@@ -469,15 +485,11 @@ drawer.addEventListener("click", e => {
 });
 async function saveField(r, f, value) {
   value = String(value).trim();
-  if (f === "market_value") {
-    const v = value.replace(/[$,]/g, "");
-    if (v !== "" && isNaN(parseFloat(v))) { toast("Market must be a number.", "error"); return; }
-    await saveMarket(r, v === "" ? null : parseFloat(v)); return;
-  }
+  if (f === "market_value") { await saveMarket(r, value); return; }
   const key = FIELD_MAP[r.kind][f];
   if (!key) return;
   if (f === "name" && !value) { toast("Name is required.", "error"); return; }
-  if (f === "basis") { value = value.replace(/[$,]/g, ""); if (value !== "" && isNaN(parseFloat(value))) { toast("Basis must be a number.", "error"); return; } }
+  if (f === "basis" && r.basis_deal) { toast(`This cost comes from deal #${r.basis_deal}. Change it with Edit deal there.`, "error"); return; }
   try {
     const res = await postJSON("/api/card/update", { table: r.table, id: r.id, fields: { [key]: value } });
     Object.assign(r, res.card);
@@ -515,7 +527,7 @@ $("m-pc").addEventListener("click", async () => {
 $("m-crack").addEventListener("click", async () => {
   const r = view[drawerIdx]; if (!r || r.kind !== "slab") return;
   const ok = await confirmDialog({ title: `Crack "${r.name}" out of its ${r.company} ${r.grade} slab?`,
-    body: "It moves to the raw section (Slated for regrading); basis and market value carry over; the slab row is kept as history.",
+    body: "It moves to the raw section (Slated for regrading). The basis carries over; the raw card has no market until you price it. The slab row is kept as history.",
     confirmText: "Crack to raw", danger: true });
   if (!ok) return;
   try { await postJSON("/api/crack", { graded_id: r.id }); toastAfterReload(`Cracked "${r.name}" — it's now in Raw & Grading.`); location.reload(); }
@@ -570,17 +582,16 @@ E("a-save").addEventListener("click", async () => {
   const name = E("a-name").value.trim();
   if (!name) { E("a-msg").textContent = "Name is required."; return; }
   const isGraded = E("a-kind").value === "slab";
-  const basisRaw = E("a-basis").value.trim().replace(/[$,]/g, "");
-  const mvRaw = E("a-mv").value.trim().replace(/[$,]/g, "");
-  if (basisRaw && isNaN(parseFloat(basisRaw))) { E("a-msg").textContent = "Basis must be a number or blank."; return; }
-  if (mvRaw && isNaN(parseFloat(mvRaw))) { E("a-msg").textContent = "Market value must be a number or blank."; return; }
+  // sent exactly as typed; the server refuses anything that isn't plainly a number
+  const basisRaw = E("a-basis").value.trim();
+  const mvRaw = E("a-mv").value.trim();
   try {
     await postJSON("/api/card/create", {
       is_graded: isGraded, card_name: name,
       set_name: E("a-set").value.trim(), card_number: E("a-number").value.trim(), year: E("a-year").value.trim(),
       grading_company: isGraded ? E("a-company").value : "", grade: isGraded ? E("a-grade").value.trim() : "",
       serial_number: isGraded ? E("a-cert").value.trim() : "",
-      basis: basisRaw === "" ? null : parseFloat(basisRaw), market_value: mvRaw === "" ? null : parseFloat(mvRaw),
+      basis: basisRaw, market_value: mvRaw,
       acquisition_date: E("a-date").value, notes: E("a-notes").value.trim(), is_pc: E("a-pc").checked,
     });
     toastAfterReload(`Added ${name}${basisRaw === "" ? " (basis unknown)" : ""}.`);

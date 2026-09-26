@@ -19,9 +19,7 @@ Run:  python3 -m v2.fuzz_http
 
 import argparse
 import random
-import sqlite3
 import sys
-import tempfile
 import traceback
 from pathlib import Path
 
@@ -46,34 +44,31 @@ JUNK = [
 
 
 def build_db(rng):
-    """Throwaway database with the awkward shapes deliberately present."""
-    src = sqlite3.connect(f"file:{v2db.V2_DB_PATH}?mode=ro", uri=True)
-    ddl = [r[0] for r in src.execute(
-        "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'")]
-    src.close()
-    path = Path(tempfile.mkdtemp(prefix="cv_http_")) / "t.db"
-    c = sqlite3.connect(path)
-    for s in ddl:
-        c.execute(s)
-    c.execute("INSERT OR REPLACE INTO v2_meta (key,value) VALUES ('is_v2','1')")
+    """Throwaway database with the awkward shapes deliberately present, built
+    from the schema this code defines (v2/db.py) rather than copied from the
+    live database. Returns the file path so the Flask app can be pointed at it."""
+    c = v2db.scratch_database(prefix="cv_http_")
+    path = Path(c.execute("PRAGMA database_list").fetchone()["file"])
     for i in range(12):
-        unknown = 1 if i % 4 == 0 else 0
+        unknown = i % 4 == 0
         mv = None if i % 5 == 0 else round(rng.uniform(0, 9000), 2)
-        c.execute("INSERT INTO graded_cards (card_name, grading_company, grade, acquisition_price, "
-                  "acquisition_date, market_value, basis_unknown, status, date_added, notes, "
+        c.execute("INSERT INTO graded_cards (card_name, grading_company, grade, basis_entered, "
+                  "acquisition_date, market_value, status, date_added, notes, "
                   "set_name, card_number, is_pc, grading_fee) "
-                  "VALUES (?,'PSA','10',?, '2026-01-01',?,?,?, '2026-01-01','','','',?,?)",
-                  (f"slab{i}", 0 if unknown else round(rng.uniform(0, 9000), 2), mv, unknown,
+                  "VALUES (?,'PSA','10',?, '2026-01-01',?,?, '2026-01-01','','','',?,?)",
+                  (f"slab{i}", None if unknown else round(rng.uniform(0, 9000), 2), mv,
                    ["active", "active", "disposed", "cracked", "removed", "lost"][i % 6],
                    1 if i % 7 == 0 else 0, 20.0))
-        c.execute("INSERT INTO ungraded_cards (card_name, purchase_price, purchase_date, market_value, "
-                  "basis_unknown, status, date_added, grading_status, notes, set_name, card_number, year) "
-                  "VALUES (?,?, '2026-01-01',?,?,?, '2026-01-01',?,'','','','')",
-                  (f"raw{i}", round(rng.uniform(0, 3000), 2), mv, unknown,
+        c.execute("INSERT INTO ungraded_cards (card_name, basis_entered, purchase_date, market_value, "
+                  "status, date_added, grading_status, notes, set_name, card_number, year) "
+                  "VALUES (?,?, '2026-01-01',?,?, '2026-01-01',?,'','','','')",
+                  (f"raw{i}", None if unknown else round(rng.uniform(0, 3000), 2), mv,
                    ["active", "submitted_for_grading", "promoted", "disposed", "removed", "lost"][i % 6],
                    ["Not Slated", "Slated", "At Grading"][i % 3]))
-    c.execute("UPDATE graded_cards SET disposal_proceeds=100, realized_gain=10 WHERE status='disposed'")
-    c.execute("UPDATE ungraded_cards SET disposal_proceeds=50, realized_gain=5 WHERE status='disposed'")
+    # realized_gain is generated (schema 7): setting disposal_proceeds and a
+    # 'disposed' status is enough for the gain to follow automatically.
+    c.execute("UPDATE graded_cards SET disposal_proceeds=100 WHERE status='disposed'")
+    c.execute("UPDATE ungraded_cards SET disposal_proceeds=50 WHERE status='disposed'")
     c.commit()
     c.close()
     return path

@@ -5,15 +5,17 @@
 <section class="hero reveal">
   <div class="head">
     <div style="display:flex;flex-direction:column;gap:10px">
-      <span class="eyebrow">Portfolio value · {{ today_label }}</span>
+      <span class="eyebrow">Stock value · {{ today_label }}</span>
       <span class="display figure">{{ stats.market|money0 }}</span>
       <div style="display:flex;align-items:center;gap:10px;margin-top:4px;flex-wrap:wrap">
         {% if extras.delta %}
         <span class="pill {{ 'pos' if extras.delta.amount > 0 else 'mutedbg' }}">{{ extras.delta.amount|gain0 }}{% if extras.delta.pct %} · {{ extras.delta.pct }}%{% endif %}</span>
-        <span class="muted" style="font-size:12.5px">since {{ extras.delta.since|mdy }}</span>
+        <span class="muted" style="font-size:12.5px">whole holding since {{ extras.delta.since|mdy }}</span>
         <span class="faint">·</span>
         {% endif %}
         <span class="muted" style="font-size:12.5px"><span class="mono" style="color:var(--text)">{{ stats.slabs }}</span> slabs, <span class="mono" style="color:var(--text)">{{ stats.raw }}</span> raw, <span class="mono" style="color:var(--text)">{{ extras.at_grading }}</span> at PSA</span>
+        {% if stats.slabs_at_cost %}<span class="faint">·</span><span class="muted" style="font-size:12.5px" title="No market typed for these slabs, so they count at what you paid">{{ stats.slabs_at_cost }} slab{{ 's' if stats.slabs_at_cost != 1 }} at cost ({{ stats.slabs_at_cost_value|money0 }})</span>{% endif %}
+        {% if stats.pc_count %}<span class="faint">·</span><span class="muted" style="font-size:12.5px">plus <span class="mono" style="color:var(--text)">{{ stats.pc_value|money0 }}</span> personal collection ({{ stats.pc_count }}), not in these figures</span>{% endif %}
       </div>
     </div>
   </div>
