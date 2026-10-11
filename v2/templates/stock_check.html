@@ -31,6 +31,7 @@ tr.done .tick { background: var(--text); border-color: var(--text); }
 tr.done .tick svg { display: block; }
 .ok { width: 28px; height: 28px; border-radius: 50%; border: 1px solid transparent; background: none; color: var(--muted); font: inherit; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .ok svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.meta .cert { user-select: all; cursor: text; }
 .ok:hover { background: var(--input); border-color: var(--border); color: var(--text); }
 .ok.did { color: var(--pos); }
 .age { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
@@ -165,7 +166,7 @@ function render() {
       <td><span class="chip ${esc(r.company)}">${esc(r.company)} ${esc(r.grade)}</span></td>
       <td class="name" style="white-space:normal;min-width:180px">
         <div class="nm">${esc(r.name)}</div>
-        <div class="meta">${esc(r.set || "")}${r.cert ? `${r.set ? " · " : ""}cert ${esc(r.cert)}` : ""}</div></td>
+        <div class="meta">${esc(r.set || "")}${r.cert ? `${r.set ? " · " : ""}cert <span class="cert" title="Select to copy">${esc(r.cert)}</span>` : ""}</div></td>
       <td class="muted c-num">${r.number ? "#" + esc(r.number) : ""}</td>
       <td class="num mv-cell" data-i="${i}" title="Click to reprice">${fmt(r.market_value)}</td>
       <td class="c-ok" style="text-align:center">${r.market_value != null
@@ -238,6 +239,9 @@ tbody.addEventListener("click", e => {
       .catch(err => toast(err.message, "error"));
     return;
   }
+  // selecting text (a cert to copy) is not a check-off: toggling re-renders
+  // the row and throws the selection away
+  if (e.target.closest(".cert") || String(window.getSelection())) return;
   const priceCell = e.target.closest("td.mv-cell");
   if (priceCell) { beginPrice(+priceCell.dataset.i); return; }   // price edit, not a check-off
   const tr = e.target.closest("tr");
