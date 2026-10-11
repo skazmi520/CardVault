@@ -28,7 +28,6 @@
     <div class="kv"><span class="l">Cost basis</span><span class="v display">{{ stats.basis|money }}</span></div>
     <div class="kv"><span class="l">Unrealized</span><span class="v display {{ 'pos' if stats.unrealized >= 0 else '' }}">{{ stats.unrealized|gain }}</span></div>
     <div class="kv"><span class="l">Realized in {{ year }}</span><span class="v display {{ 'pos' if stats.realized_ytd >= 0 else 'neg' }}">{{ stats.realized_ytd|gain }}</span></div>
-    <div class="kv"><span class="l">Cash on hand</span><span class="v display">{{ cash.balance|money0 }}</span></div>
     <div class="kv"><span class="l">Win rate</span><span class="v display">{{ tstats.win_rate ~ '%' if tstats.win_rate is not none else '—' }}<span class="muted" style="font-family:var(--font-ui);font-size:12px;font-weight:400;margin-left:8px">{{ tstats.decided }} decided</span></span></div>
   </div>
 </section>
@@ -80,18 +79,6 @@
         <div class="grader-bar">{% for c in extras.companies %}<div class="{{ c.company }}" style="width:{{ c.share }}%"></div>{% endfor %}</div>
         <div style="display:flex;gap:14px;font-size:12px;flex-wrap:wrap" class="muted">{% for c in extras.companies %}<span><span class="chip tiny {{ c.company }}">{{ c.company }}</span> {{ c.count }}</span>{% endfor %}</div>
       </div>
-      <details style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
-        <summary class="muted" style="font-size:12.5px;cursor:pointer;list-style:none">Cash ledger · {{ cash.days }}d <span class="mono">+{{ cash.flow_in|money0 }}</span> in / <span class="mono">{{ cash.flow_out|money0 }}</span> out</summary>
-        <div class="row" style="margin:10px 0">
-          <div><label>Adjust (+ / −)</label><input type="text" id="cash-amt" placeholder="500 or -200" style="width:130px"></div>
-          <div style="flex:1"><label>Memo</label><input type="text" id="cash-memo" placeholder="starting pool, ATM, show float" style="width:100%"></div>
-          <div><button class="btn ghost" id="cash-add">Add</button></div>
-        </div>
-        <div class="muted" id="cash-msg" style="font-size:12px">{% if not cash.has_ledger %}Set your starting pool with a first deposit entry.{% endif %}</div>
-        {% for e in cash.recent %}
-        <div class="list-row"><span class="muted mono" style="width:54px;font-size:12px">{{ e.occurred_at|mdy }}</span><span class="grow" style="font-size:13px">{{ e.memo or '—' }}</span><span class="mono {{ 'pos' if e.amount >= 0 else '' }}" style="font-size:13px">{{ e.amount|gain0 }}</span><span class="faint" data-cash-del="{{ e.id }}" title="Delete this entry" style="cursor:pointer">✕</span></div>
-        {% endfor %}
-      </details>
     </div>
   </div>
 
@@ -114,19 +101,5 @@
 
 <script>
   lineChart(document.getElementById("chart"), {{ snaps|tojson }});
-  document.querySelectorAll("[data-cash-del]").forEach(x =>
-    x.addEventListener("click", async () => {
-      const ok = await confirmDialog({ title: "Delete this cash entry?", body: "The cash balance adjusts immediately.", confirmText: "Delete", danger: true });
-      if (!ok) return;
-      try { await postJSON(`/api/cash/${x.dataset.cashDel}/delete`, {}); toastAfterReload("Cash entry deleted."); location.reload(); }
-      catch (e) { toast(e.message, "error"); }
-    }));
-  document.getElementById("cash-add").addEventListener("click", async () => {
-    const msg = document.getElementById("cash-msg");
-    try {
-      await postJSON("/api/cash", { amount: document.getElementById("cash-amt").value, memo: document.getElementById("cash-memo").value });
-      toastAfterReload("Cash entry added."); location.reload();
-    } catch (e) { msg.textContent = e.message; msg.className = "neg"; }
-  });
 </script>
 {% endblock %}

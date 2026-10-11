@@ -253,7 +253,6 @@ def dashboard():
     snaps = v2cards.snapshots(c)
     recent = [_deal_row(c, d) for d in list_deals(c)[:6]]
     tstats = v2cards.trade_stats(c)
-    cash = v2cards.cash_summary(c)
     movers = v2cards.top_movers(c)
     grading = v2cards.at_grading(c)
     sell = v2cards.sell_candidates(c)
@@ -266,7 +265,7 @@ def dashboard():
     days_out = [g["days"] for g in grading if g["days"] is not None]
     return render_template("dashboard.html", active="dashboard",
                            stats=stats, extras=extras, tstats=tstats,
-                           cash=cash, movers=movers, grading=grading, sell=sell,
+                           movers=movers, grading=grading, sell=sell,
                            psa=psa, snaps=snaps, recent=recent,
                            today_label=date.today().strftime("%A, %B %-d"),
                            year=date.today().year,
