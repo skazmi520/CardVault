@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Import cards{% endblock %}
+{% block content %}
+<div class="page-title">Import cards <span class="sub">bring in cards you track somewhere else</span></div>
+
+<div class="panel">
+  <p class="hint" style="margin-bottom:12px">
+    Export or copy your list as a CSV with the columns below, preview it, and fix anything flagged.
+    Nothing is saved until you press Import, and then every card goes in together or none do.
+    A blank cost is fine: the card is counted in your inventory but left out of profit numbers.
+    A blank market value stays blank.
+  </p>
+  <div class="row">
+    <div>
+      <label>What are you importing?</label>
+      <div class="seg" id="kind-seg">
+        <span class="on" data-kind="slabs">Slabs</span>
+        <span data-kind="raw">Raw cards</span>
+      </div>
+    </div>
+    <div style="align-self:flex-end">
+      <a class="btn ghost" id="tpl" href="/import/template/slabs.csv" style="height:34px">Download slab template</a>
+    </div>
+  </div>
+
+  <div class="table-wrap" style="margin-top:14px">
+    <table>
+      <thead><tr><th>Column</th><th>Required?</th><th>What to put</th><th>Example</th></tr></thead>
+      <tbody id="guide"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <div><label>CSV file</label><input type="file" id="f" accept=".csv,text/csv"></div>
+    <div><button class="btn" id="preview">Preview</button></div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <div style="flex:1"><label>...or paste the CSV</label>
+      <textarea id="paste" rows="4" style="width:100%" placeholder="Card name,Set,Card number,..."></textarea></div>
+  </div>
+  <div id="msg" style="margin-top:10px"></div>
+</div>
+
+<div id="result"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let KIND = "slabs";
+let CSV = "";
+
+const GUIDE = {
+  slabs: [
+    ["Card name", "Yes", "The card's name", "Charizard"],
+    ["Set", "No", "Set name", "Base Set"],
+    ["Card number", "No", "Number printed on the card", "4"],
+    ["Year", "No", "Print year", "1999"],
+    ["Grader", "Yes", "PSA, BGS, CGC or TAG", "PSA"],
+    ["Grade", "Yes", "Any grade text", "9.5 or BL 10"],
+    ["Cert", "No", "Slab cert number. A cert already in your collection is skipped", "12345678"],
+    ["Cost", "No", "What you paid, plain number. Blank means unknown", "250"],
+    ["Market value", "No", "Current value. Blank stays blank", "400"],
+    ["Date acquired", "No", "YYYY-MM-DD or M/D/YYYY. Blank means today", "2025-03-14"],
+    ["Personal collection", "No", "yes or no. Blank means no", "yes"],
+    ["Notes", "No", "Anything you want to remember", "bought at a show"],
+  ],
+  raw: [
+    ["Card name", "Yes", "The card's name", "Pikachu"],
+    ["Set", "No", "Set name", "Jungle"],
+    ["Card number", "No", "Number printed on the card", "60"],
+    ["Year", "No", "Print year", "1999"],
+    ["Cost", "No", "What you paid, plain number. Blank means unknown", "30"],
+    ["Market value", "No", "Current value. Blank stays blank", "45"],
+    ["Grading status", "No", "Not Slated, Slated or At Grading. Blank means Not Slated", "Slated"],
+    ["Date acquired", "No", "YYYY-MM-DD or M/D/YYYY. Blank means today", "3/14/2025"],
+    ["Personal collection", "No", "yes or no. Blank means no", "no"],
+    ["Notes", "No", "Anything you want to remember", "light edge wear"],
+  ],
+};
+
+function drawGuide() {
+  $("guide").innerHTML = GUIDE[KIND].map(r =>
+    `<tr><td><strong>${esc(r[0])}</strong></td><td class="${r[1] === "Yes" ? "" : "muted"}">${r[1]}</td>
+     <td>${esc(r[2])}</td><td class="muted">${esc(r[3])}</td></tr>`).join("");
+  $("tpl").href = `/import/template/${KIND}.csv`;
+  $("tpl").textContent = KIND === "slabs" ? "Download slab template" : "Download raw template";
+}
+
+document.querySelectorAll("#kind-seg span").forEach(s => s.addEventListener("click", () => {
+  KIND = s.dataset.kind;
+  document.querySelectorAll("#kind-seg span").forEach(x => x.classList.toggle("on", x === s));
+  drawGuide();
+  $("result").innerHTML = ""; $("msg").innerHTML = "";
+}));
+
+$("f").addEventListener("change", () => {
+  const file = $("f").files[0];
+  if (!file) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    CSV = String(rd.result || "");
+    $("paste").value = CSV.split("\n").slice(0, 3).join("\n") + (CSV.split("\n").length > 3 ? "\n..." : "");
+  };
+  rd.readAsText(file);
+});
+
+$("paste").addEventListener("input", () => { CSV = ""; });
+
+$("preview").addEventListener("click", async () => {
+  const text = CSV || $("paste").value;
+  if (!text.trim()) { toast("Choose a file or paste the CSV first.", "info"); return; }
+  CSV = text;
+  $("msg").innerHTML = "";
+  try {
+    const r = await postJSON("/api/import/preview", { kind: KIND, csv: text });
+    render(r);
+  } catch (e) { $("result").innerHTML = ""; $("msg").innerHTML = `<div class="warn">${esc(e.message)}</div>`; }
+});
+
+const money = v => v === null || v === undefined ? "" : "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function render(r) {
+  const c = r.counts;
+  let h = "";
+  if (r.file_errors.length) {
+    h += `<div class="panel">${r.file_errors.map(e => `<div class="warn">${esc(e)}</div>`).join("")}</div>`;
+    $("result").innerHTML = h;
+    return;
+  }
+  h += `<div class="panel"><h2>${r.rows.length} row${r.rows.length === 1 ? "" : "s"} read</h2>
+    <div class="tiles compact" style="margin-top:0">
+      <div class="tile"><div class="v">${c.ok}</div><div class="l">Ready</div></div>
+      <div class="tile"><div class="v ${c.error ? "neg" : ""}">${c.error}</div><div class="l">Problems</div></div>
+      <div class="tile"><div class="v">${c.duplicate}</div><div class="l">Already in collection</div></div>
+    </div>`;
+  if (r.notes.length) h += r.notes.map(n => `<p class="hint" style="margin-top:8px">${esc(n)}</p>`).join("");
+  if (c.error) h += `<div class="warn" style="margin-top:10px">Fix the ${c.error} row${c.error === 1 ? "" : "s"} marked in red in your file, then preview again. Nothing is imported until every row is clean.</div>`;
+
+  const rawKind = r.kind === "raw";
+  h += `<div class="table-wrap" style="margin-top:12px"><table><thead><tr>
+    <th class="num">Row</th><th>Card</th><th>${rawKind ? "Grading status" : "Grade"}</th>
+    <th class="num">Cost</th><th class="num">Market</th><th>Problems and notes</th></tr></thead><tbody>`;
+  for (const x of r.rows) {
+    const mid = rawKind ? esc(x.grading_status) : `${esc(x.grader)} ${esc(x.grade)}`;
+    const msgs = x.errors.map(e => `<div class="neg">${esc(e)}</div>`).join("")
+      + x.notes.map(n => `<div class="muted">${esc(n)}</div>`).join("");
+    h += `<tr${x.status === "duplicate" ? ' style="opacity:.6"' : ""}>
+      <td class="num muted">${x.line}</td>
+      <td><strong>${esc(x.name)}</strong> <span class="muted">${esc(x.set)}</span>
+        <div class="sub-line">${x.number ? "#" + esc(x.number) : ""} ${esc(x.year)}${x.cert ? " cert " + esc(x.cert) : ""}</div></td>
+      <td>${mid}</td>
+      <td class="num">${money(x.cost)}</td><td class="num">${money(x.market)}</td>
+      <td class="sub-line">${msgs}</td></tr>`;
+  }
+  h += `</tbody></table></div>
+    <div class="row" style="margin-top:14px"><div>
+      ${c.error || !c.ok
+        ? `<button class="btn" id="apply" disabled style="opacity:.45;cursor:not-allowed">${c.error ? "Fix the problems above to import" : "Nothing to import"}</button>`
+        : `<button class="btn" id="apply">Import ${c.ok} card${c.ok === 1 ? "" : "s"}</button>`}
+    </div></div></div>`;
+  $("result").innerHTML = h;
+  $("apply").addEventListener("click", () => apply(c.ok));
+}
+
+async function apply(n) {
+  const ok = await confirmDialog({
+    title: `Import ${n} card${n === 1 ? "" : "s"}?`,
+    body: "They are added to your collection together. Cards already in your collection are skipped.",
+    confirmText: "Import",
+  });
+  if (!ok) return;
+  try {
+    const r = await postJSON("/api/import/apply", { kind: KIND, csv: CSV });
+    toastAfterReload(`Imported ${r.created} card${r.created === 1 ? "" : "s"}.`);
+    location.href = "/collection";
+  } catch (e) { toast(e.message, "error"); }
+}
+
+drawGuide();
+</script>
+{% endblock %}

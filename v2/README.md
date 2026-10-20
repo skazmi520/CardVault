@@ -21,7 +21,6 @@ Either way: **http://127.0.0.1:5177**. The launcher reuses a running server.
 |---|---|---|
 | **v2 database** | `~/.cardvaultmac/cardvault_v2.db` | all v2 reads/writes |
 | v1 database | `~/.cardvaultmac/cardvault.db` | **never written by v2** — verified byte-identical after the build (sha `d216b34d…`) |
-| API keys | `~/.cardvaultmac/v2.env` | `PSA_API_TOKEN`; outside the repo |
 | Deal photos | `~/.cardvaultmac/deal_photos/` | documentation attachments |
 | Server log | `~/.cardvaultmac/v2_server.log` | when launched from the Dock app |
 
@@ -55,8 +54,8 @@ so it physically cannot run against v1. The only v1 access in the codebase is
   grading fee, stored as derived); an unknown raw basis stays unknown on the
   slab. Cracking carries the basis back as derived and leaves market blank.
   PSA order CSV import applies all-or-nothing in one transaction.
-- **PSA cert lookups**: permanently cached, 90/day budget, auto-resume
-  (`python3 -m v2.cert_backfill`).
+- **CSV import**: slabs and raw cards from a template (Collection, Import);
+  previewed, strict money parsing, all-or-nothing, certs never duplicated.
 - **Reports**: realized gains by year + CSV, full deal-history CSV.
 
 ## Schema (version 7)
@@ -88,7 +87,7 @@ v2 never touches v1, so rollback is simply:
 2. Launch the old app (`CardVault.app` or `python3 main.py`) — it reads
    `cardvault.db`, which is exactly as it was.
 3. Optionally delete `~/.cardvaultmac/cardvault_v2.db*`, `slab_photos/`,
-   `deal_photos/`, `v2.env` to remove v2 entirely.
+   `deal_photos/` to remove v2 entirely.
 
 Anything entered **into v2** (deals, cash ledger, repricings after the
 migration date) lives only in the v2 database and would need re-entry or a

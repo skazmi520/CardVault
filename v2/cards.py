@@ -352,12 +352,16 @@ def create_card(conn, table: str, *, card_name: str, basis=None,
                 serial_number: str = "", card_number: str = "",
                 set_name: str = "", year: str = "", notes: str = "",
                 is_pc: bool = False, grading_status: str = "Not Slated",
-                grading_fee=None) -> int:
+                grading_fee=None, source: str = "you",
+                _commit: bool = True) -> int:
     """Add a card that never came through a deal — a mystery slab, a legacy
     find, a grading return that slipped tracking. When basis is None the card
     is flagged basis_unknown rather than booked at $0, so it stays out of every
     gain statistic instead of faking a 100%-profit sale later. Everything
-    stored here was typed; nothing is filled in (a blank market stays blank)."""
+    stored here was typed; nothing is filled in (a blank market stays blank).
+
+    _commit=False leaves the transaction open so a caller adding many cards (the
+    CSV import) can commit or roll back all of them at once."""
     if table not in ("graded_cards", "ungraded_cards"):
         raise ValueError(f"unknown table {table!r}")
     card_name = (card_name or "").strip()
@@ -397,8 +401,9 @@ def create_card(conn, table: str, *, card_name: str, basis=None,
              basis_val, acq, notes.strip(), grading_status, now,
              mv, now if mv is not None else None, 1 if is_pc else 0))
     v2db.record_event(conn, table, cur.lastrowid, "created", None,
-                      f"basis_entered={basis_val}, market_value={mv}", "you")
-    conn.commit()
+                      f"basis_entered={basis_val}, market_value={mv}", source)
+    if _commit:
+        conn.commit()
     return cur.lastrowid
 
 

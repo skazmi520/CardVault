@@ -20,6 +20,7 @@ else python3 -m compileall -q v2; echo "  FAIL   compile error"; fail=1; fi
 line "2. deal engine regressions"
 python3 -m v2.test_engine || fail=1
 python3 -m v2.test_cards || fail=1
+python3 -m v2.test_import || fail=1
 
 line "3. fuzz — deal engine"
 python3 -m v2.fuzz --runs "${FUZZ_RUNS:-8}" -n "${FUZZ_N:-150}" || fail=1

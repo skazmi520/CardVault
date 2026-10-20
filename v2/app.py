@@ -17,39 +17,15 @@ from flask import (Flask, abort, g, jsonify, redirect, render_template,
                    request, send_from_directory, url_for)
 
 from . import cards as v2cards
-from . import config
 from . import db as v2db
-from . import psa_api
-from . import psa_orders
+from . import importer, psa_orders
+from .money import parse_money
 from .deals import (CardIn, CardOut, LaterChangesError, add_deal_photo, edit_deal,
                     get_deal, list_deals, save_deal)
 
 app = Flask(__name__)
 
-_MONEY_RE = __import__("re").compile(r"^-?\$?(\d{1,3}(,\d{3})+|\d+)?(\.\d+)?$")
-
-
-def _parse_money(v, field: str, *, allow_negative: bool = False):
-    """A money value exactly as typed, or None when left blank. Anything that is
-    not plainly a number ("3.5k", "1 200", "35O0", inf, nan) is refused rather
-    than truncated: a value the user typed is either stored as typed or rejected
-    so he can see it."""
-    if v is None or (isinstance(v, str) and v.strip() == ""):
-        return None
-    if isinstance(v, bool):
-        raise ValueError(f"{field} must be a number")
-    if isinstance(v, (int, float)):
-        x = float(v)
-    else:
-        t = str(v).strip()
-        if not _MONEY_RE.match(t) or not any(ch.isdigit() for ch in t):
-            raise ValueError(f"{field}: {v!r} is not a plain amount")
-        x = float(t.replace("$", "").replace(",", ""))
-    if x != x or x in (float("inf"), float("-inf")) or abs(x) > 1e9:
-        raise ValueError(f"{field} must be a real amount")
-    if x < 0 and not allow_negative:
-        raise ValueError(f"{field} cannot be negative")
-    return round(x, 2)
+_parse_money = parse_money   # alias: the parser lives in money.py so the CSV importer shares it
 
 
 def _card_ref(p: dict, id_key: str = "id"):
@@ -457,6 +433,45 @@ def raw_page():
     return render_template("raw.html", active="raw", cards=rows,
                            companies=v2db.GRADING_COMPANIES,
                            predictions=predictions)
+
+
+@app.get("/import")
+def import_page():
+    return render_template("import.html", active="collection")
+
+
+@app.get("/import/template/<kind>.csv")
+def import_template(kind):
+    if kind not in importer.COLUMNS:
+        abort(404)
+    return app.response_class(
+        importer.header_line(kind), mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="cardvault-{kind}-template.csv"'})
+
+
+def _import_args():
+    p = request.get_json(force=True)
+    if not isinstance(p, dict) or not isinstance(p.get("csv"), str):
+        raise ValueError("send the file text as csv")
+    return p.get("kind"), p["csv"]
+
+
+@app.post("/api/import/preview")
+def api_import_preview():
+    try:
+        kind, text = _import_args()
+        return jsonify({"ok": True, **importer.preview(conn(), kind, text)})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.post("/api/import/apply")
+def api_import_apply():
+    try:
+        kind, text = _import_args()
+        return jsonify({"ok": True, **importer.apply(conn(), kind, text)})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
 
 
 @app.get("/psa-import")
@@ -1033,32 +1048,38 @@ def api_card_update():
     }})
 
 
-@app.post("/api/psa/lookup")
-def api_psa_lookup():
-    """Look up a PSA cert on demand (e.g. from the New Deal 'cards in' row).
-    Cache-first and budget-aware."""
+@app.post("/api/deals/preview")
+def api_deal_preview():
+    """The full resolver, no write. The deal screen shows this on every edit,
+    so the numbers on screen before Save are the engine's own."""
     p = request.get_json(force=True)
-    cert = str(p.get("cert", "")).strip()
-    if not cert:
-        return jsonify({"ok": False, "error": "Enter a cert number first."}), 400
-
+    try:
+        outs, ins, cash_amount, out_total, in_total = _parse_deal_payload(p)
+    except (ValueError, TypeError, KeyError) as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     c = conn()
-    token = config.get_keys()["psa_api_token"]
-    res = psa_api.lookup_cert(c, cert, token)
+    try:
+        edit_of = p.get("edit_of")
+        if isinstance(edit_of, int) and not isinstance(edit_of, bool):
+            args = dict(cards_out=outs, cards_in=ins, in_card_refs=_in_refs(p),
+                        cash_amount=cash_amount, out_side_total=out_total,
+                        in_side_total=in_total, dry_run=True)
+            try:
+                res = edit_deal(c, edit_of, **args)
+            except LaterChangesError as e:
+                # a preview writes nothing, so show what would book and name
+                # the later changes Save will ask about
+                res = edit_deal(c, edit_of, confirm_lose_changes=True, **args)
+                res = {**res, "later_changes": list(e.changes or [])}
+        else:
+            res = save_deal(c, cards_out=outs, cards_in=ins, cash_amount=cash_amount,
+                            out_side_total=out_total, in_side_total=in_total,
+                            dry_run=True)
+    except ValueError as e:
+        c.close()
+        return jsonify({"ok": False, "error": str(e)}), 400
     c.close()
-
-    if res["status"] in ("cached", "fetched"):
-        return jsonify({"ok": True, "status": res["status"], "data": res["data"]})
-
-    messages = {
-        "not_found": "No PSA record found for that cert number.",
-        "no_token": "No PSA_API_TOKEN configured — add one in ~/.cardvaultmac/v2.env.",
-        "rate_limited": res.get("error") or "PSA refused the call (429).",
-        "queued": res.get("error") or "Today's PSA lookup budget is used up — resumes tomorrow.",
-        "error": res.get("error") or "PSA lookup failed.",
-    }
-    return jsonify({"ok": False, "status": res["status"],
-                    "error": messages.get(res["status"], res["status"])}), 200
+    return jsonify({"ok": True, **res})
 
 
 def _parse_deal_payload(p):
@@ -1109,40 +1130,6 @@ def _in_refs(p):
               and isinstance(r[1], int) and not isinstance(r[1], bool))
         refs.append((r[0], r[1]) if ok else None)
     return refs
-
-
-@app.post("/api/deals/preview")
-def api_deal_preview():
-    """The full resolver, no write. The deal screen shows this on every edit,
-    so the numbers on screen before Save are the engine's own."""
-    p = request.get_json(force=True)
-    try:
-        outs, ins, cash_amount, out_total, in_total = _parse_deal_payload(p)
-    except (ValueError, TypeError, KeyError) as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
-    c = conn()
-    try:
-        edit_of = p.get("edit_of")
-        if isinstance(edit_of, int) and not isinstance(edit_of, bool):
-            args = dict(cards_out=outs, cards_in=ins, in_card_refs=_in_refs(p),
-                        cash_amount=cash_amount, out_side_total=out_total,
-                        in_side_total=in_total, dry_run=True)
-            try:
-                res = edit_deal(c, edit_of, **args)
-            except LaterChangesError as e:
-                # a preview writes nothing, so show what would book and name
-                # the later changes Save will ask about
-                res = edit_deal(c, edit_of, confirm_lose_changes=True, **args)
-                res = {**res, "later_changes": list(e.changes or [])}
-        else:
-            res = save_deal(c, cards_out=outs, cards_in=ins, cash_amount=cash_amount,
-                            out_side_total=out_total, in_side_total=in_total,
-                            dry_run=True)
-    except ValueError as e:
-        c.close()
-        return jsonify({"ok": False, "error": str(e)}), 400
-    c.close()
-    return jsonify({"ok": True, **res})
 
 
 @app.post("/api/deals")
@@ -1436,12 +1423,8 @@ def main():
     app.config["INTEGRITY"] = _integrity_report()
     if app.config["INTEGRITY"]:
         print(f"  DATA INTEGRITY: {len(app.config['INTEGRITY'])} check(s) failing — see the banner in the app")
-    config.ensure_env_file()        # create ~/.cardvaultmac/v2.env template
-    host = config.get_host()
-    print(f"CardVault v2 — http://{'127.0.0.1' if host == '127.0.0.1' else host}:5177  (Ctrl+C to stop)")
-    if host != "127.0.0.1":
-        print("  bound to all interfaces — reachable from your tailnet/LAN devices")
-    app.run(host=host, port=5177, debug=False)
+    print("CardVault v2 — http://127.0.0.1:5177  (Ctrl+C to stop)")
+    app.run(host="127.0.0.1", port=5177, debug=False)    # this computer only
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ multi-card trades with cash), raw-card grading workflow,
 repricing, and realized-gains reporting.
 
 **CardVault v2** is a local web app (Flask + a dark, Collectr-style UI) that runs
-on your Mac and is usable from your phone over Tailscale. The original desktop
+privately on your Mac. The original desktop
 app (**v1**, CustomTkinter) remains in the repo as legacy.
 
 ---
@@ -54,25 +54,15 @@ python3 -m v2.app          # → http://127.0.0.1:5177
   value-over-time chart, grader breakdown, top holdings,
   top movers, sell-list candidates, at-grading tracker
 - **Collection** — dense sortable table over slabs + raw, search/filters,
-  inline market-value repricing with keyboard flow, per-card edit modal
+  inline market-value repricing with keyboard flow, per-card edit modal,
+  CSV import of slabs and raw cards from a template
 - **Deals** — every transaction is one deal: cards out, cards in, signed cash;
-  pro-rata allocation, reconcile warnings, per-card realized gains; Show Day
+  typed values are stored exactly, blanks split from a total you typed,
+  per-card realized gains, edit and void with full history; Show Day
   running totals for shows
 - **Raw & Grading** — grading pipeline; promotion rolls grading cost into basis
-- **PSA** — order CSV import, cert lookups via PSA's free public API
-  (permanently cached)
+- **PSA order import** — turn a PSA order CSV into slabs in one step
 - **Reports** — realized gains by year, sold-card search, CSV exports
-
-### Optional API keys
-
-Put keys in `~/.cardvaultmac/v2.env` (created on first run, never committed):
-
-```
-PSA_API_TOKEN=       # free — register at psacard.com/publicapi
-CARDVAULT_HOST=      # set to 0.0.0.0 to use from your phone via Tailscale
-```
-
-Without a PSA token, cert lookups are skipped; everything else works.
 
 ### Data locations
 
@@ -80,7 +70,6 @@ Without a PSA token, cert lookups are skipped; everything else works.
 ~/.cardvaultmac/
 ├── cardvault_v2.db     # v2 database (all v2 data)
 ├── cardvault.db        # v1 database (legacy — never written by v2)
-├── v2.env              # API keys / config
 ├── deal_photos/        # deal documentation photos
 ├── photos/             # v1 card photos
 └── backups/            # v1 daily local backups
