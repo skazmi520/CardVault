@@ -18,14 +18,13 @@ Fresh installs start with an empty database. Start entering cards through Deals 
 
 ### Optional keys
 
-Two features need API keys, both optional. Put them in `~/.cardvaultmac/v2.env`:
+PSA cert lookups need a free API token, optional. Put it in `~/.cardvaultmac/v2.env`:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
 PSA_API_TOKEN=...
 ```
 
-The Anthropic key powers slab photo reading (a few cents per photo, it reads the label and fills in the card for you). The PSA token verifies cert numbers against PSA's registry, though fair warning, PSA cut their free tier to 1 lookup per day so don't plan around it.
+The PSA token verifies cert numbers against PSA's registry, though fair warning, PSA cut their free tier to 1 lookup per day so don't plan around it.
 
 ### Phone access
 
@@ -35,11 +34,9 @@ If you run Tailscale, add `CARDVAULT_HOST=0.0.0.0` to that same v2.env file and 
 
 ### Dashboard
 
-Your home page. Big tiles up top show total market value, total cost basis, unrealized gain, and realized gain for the year. Below that, smaller tiles for card counts, cash on hand, win rate, average profit per card, and how much money you have riding at PSA.
+Your home page. Big tiles up top show total market value, total cost basis, unrealized gain, and realized gain for the year. Below that, smaller tiles for card counts, win rate, average profit per card, and how much money you have riding at PSA.
 
-Needs Attention shows cards that haven't been repriced in 30 days or have no price at all. Click those tiles, they take you straight to a filtered list so you can fix it. Recent Deals, a value chart over time, top movers since your last repricing pass, your cash pool, sell list candidates, and what's out at grading fill in the rest.
-
-The Cash Pool panel is worth setting up on day one. Add a deposit entry for whatever cash you're starting with and every deal after that adjusts the balance automatically.
+Needs Attention shows cards that haven't been repriced in 30 days or have no price at all. Click those tiles, they take you straight to a filtered list so you can fix it. Recent Deals, a value chart over time, top movers since your last repricing pass, sell list candidates, and what's out at grading fill in the rest.
 
 ### Collection
 
@@ -92,14 +89,6 @@ Cards at grading get a Back By date so the dashboard can show you when your mone
 Physical inventory mode. The list shows every slab with a checkbox. Go through your case, tap each card as you verify it's actually there, and the progress counter tracks you. Checks save on the device you're using, so you can do it from your phone at the case.
 
 You can reprice inline while you're at it, click a price, type the new one, Tab to the next card. There's a filter for cards that haven't been priced in 30 days, which turns a stock check into a repricing pass at the same time. Print list gives you a paper version.
-
-### Slab Photos
-
-Photograph your slabs, upload them here, and the app reads the labels and creates or updates cards. It costs a few cents per photo with an Anthropic key. Review each extraction before it writes anything, nothing saves without your confirmation. Sideways photos are fine, it figures it out.
-
-### Backfill
-
-A cleanup tool. It lists graded cards missing their cert, set, card number, or year, and lets you fix them by dropping a slab photo on the row. Useful after importing old data. If your collection is complete this page just congratulates you.
 
 ## A day at a show
 

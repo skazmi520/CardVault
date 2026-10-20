@@ -28,14 +28,12 @@
       <a class="tab {{ 'active' if active=='raw' }}" href="/raw">Grading</a>
       <a class="tab {{ 'active' if active=='reports' }}" href="/reports">Reports</a>
       <div class="more">
-        <a class="tab {{ 'active' if active in ('evaluator','stock-check','photos','psa-import','backfill') }}" href="#" onclick="return false">More
+        <a class="tab {{ 'active' if active in ('evaluator','stock-check','psa-import') }}" href="#" onclick="return false">More
           <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round"><path d="M6 9l6 6 6-6"/></svg></a>
         <div class="menu">
           <a class="{{ 'active' if active=='evaluator' }}" href="/evaluator">Evaluator</a>
           <a class="{{ 'active' if active=='stock-check' }}" href="/stock-check">Stock Check</a>
-          <a class="{{ 'active' if active=='photos' }}" href="/photos">Slab Photos</a>
           <a class="{{ 'active' if active=='psa-import' }}" href="/psa-import">PSA Import</a>
-          <a class="{{ 'active' if active=='backfill' }}" href="/backfill">Backfill</a>
         </div>
       </div>
     </nav>

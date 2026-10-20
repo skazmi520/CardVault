@@ -19,7 +19,6 @@ from flask import (Flask, abort, g, jsonify, redirect, render_template,
 from . import cards as v2cards
 from . import config
 from . import db as v2db
-from . import photos as v2photos
 from . import psa_api
 from . import psa_orders
 from .deals import (CardIn, CardOut, LaterChangesError, add_deal_photo, edit_deal,
@@ -33,7 +32,7 @@ _MONEY_RE = __import__("re").compile(r"^-?\$?(\d{1,3}(,\d{3})+|\d+)?(\.\d+)?$")
 def _parse_money(v, field: str, *, allow_negative: bool = False):
     """A money value exactly as typed, or None when left blank. Anything that is
     not plainly a number ("3.5k", "1 200", "35O0", inf, nan) is refused rather
-    than truncated: a value the owner typed is either stored as typed or rejected
+    than truncated: a value the user typed is either stored as typed or rejected
     so he can see it."""
     if v is None or (isinstance(v, str) and v.strip() == ""):
         return None
@@ -505,168 +504,6 @@ def deal_photo_file(name):
     return send_from_directory(v2db.DEAL_PHOTO_DIR, name)
 
 
-@app.get("/slab-photos/<path:name>")
-def slab_photo_file(name):
-    return send_from_directory(v2db.SLAB_PHOTO_DIR, name)
-
-
-# ── Phase 4: slab photos + backfill ────────────────────────────────────────────
-
-@app.get("/photos")
-def photos_page():
-    c = conn()
-    imports = [dict(r) for r in v2photos.list_imports(c)]
-    for i in imports:
-        if i["extracted_json"]:
-            i["ext"] = json.loads(i["extracted_json"])
-    total_cost = sum(i["extract_cost"] or 0 for i in imports)
-    budget_left = psa_api.budget_remaining(c)
-    keys = config.get_keys()
-    c.close()
-    return render_template("photos.html", active="photos", imports=imports,
-                           total_cost=total_cost, budget_left=budget_left,
-                           have_anthropic=bool(keys["anthropic_api_key"]),
-                           have_psa=bool(keys["psa_api_token"]))
-
-
-@app.get("/photos/<int:import_id>")
-def photo_review(import_id):
-    c = conn()
-    row = c.execute("SELECT * FROM photo_imports WHERE id=?", (import_id,)).fetchone()
-    if row is None:
-        c.close(); abort(404)
-    ext = json.loads(row["extracted_json"]) if row["extracted_json"] else {"fields": {}, "low_confidence": []}
-    cert = json.loads(row["cert_verified_json"]) if row["cert_verified_json"] else None
-
-    current, match = None, {"exact": None, "candidates": []}
-    if row["matched_id"]:
-        cur_row = c.execute("SELECT * FROM graded_cards WHERE id=?", (row["matched_id"],)).fetchone()
-        if cur_row:
-            current = dict(cur_row)
-    else:
-        match = v2photos.find_match(c, ext["fields"], cert)
-        if match["exact"]:
-            current = match["exact"]
-    c.close()
-
-    # build per-field review rows: extracted | cert | current | proposed
-    field_map = [("grading_company", "Company"), ("grade", "Grade"),
-                 ("cert_number", "Cert #"), ("card_name", "Card name"),
-                 ("set_name", "Set"), ("card_number", "Card #"), ("year", "Year")]
-    card_col = {"cert_number": "serial_number"}
-    rows = []
-    for key, label in field_map:
-        col = card_col.get(key, key)
-        ext_v = ext["fields"].get(key, "")
-        cert_v = (cert or {}).get(key, "")
-        cur_v = str(current.get(col, "") or "") if current else ""
-        proposed = cert_v or ext_v or cur_v          # cert-verified wins on disagreement
-        rows.append({
-            "key": col, "label": label,
-            "extracted": ext_v, "cert": cert_v, "current": cur_v,
-            "proposed": proposed,
-            "low_conf": key in ext.get("low_confidence", []) and not cert_v,
-            "changed": proposed != cur_v and proposed != "",
-        })
-    return render_template("photo_review.html", active="photos",
-                           imp=row, rows=rows, current=current,
-                           candidates=match["candidates"], cert=cert)
-
-
-@app.post("/api/photos/upload")
-def api_photos_upload():
-    files = request.files.getlist("photos")
-    if not files:
-        return jsonify({"ok": False, "error": "no files"}), 400
-    card_id = request.form.get("card_id")
-    c = conn()
-    if card_id:
-        try:
-            card_id = int(card_id)
-        except ValueError:
-            return jsonify({"ok": False, "error": "card_id must be an integer"}), 400
-        if c.execute("SELECT 1 FROM graded_cards WHERE id=?", (card_id,)).fetchone() is None:
-            return jsonify({"ok": False, "error": f"card {card_id} not found"}), 404
-    ids = []
-    for f in files:
-        if not f.filename:
-            continue
-        pid = v2photos.save_upload(c, f)
-        if card_id:                      # backfill mode: pre-match to a card
-            c.execute("UPDATE photo_imports SET matched_table='graded_cards', "
-                      "matched_id=? WHERE id=?", (card_id, pid))
-            c.commit()
-        ids.append(pid)
-    c.close()
-    return jsonify({"ok": True, "ids": ids})
-
-
-@app.post("/api/photos/<int:import_id>/extract")
-def api_photo_extract(import_id):
-    c = conn()
-    res = v2photos.run_extract(c, import_id)
-    c.close()
-    status = 200 if res.get("ok") else 500
-    return jsonify(res), status
-
-
-@app.post("/api/photos/extract-all")
-def api_photo_extract_all():
-    c = conn()
-    pending = [r["id"] for r in v2photos.list_imports(c, "pending")]
-    done, errors, cost = 0, [], 0.0
-    for pid in pending:
-        res = v2photos.run_extract(c, pid)
-        if res.get("ok"):
-            done += 1
-            cost += res.get("cost", 0)
-        else:
-            errors.append({"id": pid, "error": res.get("error")})
-    c.close()
-    return jsonify({"ok": True, "processed": done, "cost": round(cost, 4),
-                    "errors": errors})
-
-
-@app.post("/api/photos/<int:import_id>/apply")
-def api_photo_apply(import_id):
-    p = request.get_json(force=True)
-    fields = p.get("fields")
-    if not isinstance(fields, dict):
-        return jsonify({"ok": False, "error": "fields must be the values you ticked"}), 400
-    if p.get("create") is True:
-        target = None
-    else:
-        target = p.get("card_id")
-        if isinstance(target, bool) or not isinstance(target, int):
-            return jsonify({"ok": False, "error": "pick a card, or create a new one"}), 400
-        if not fields:
-            return jsonify({"ok": False, "error": "no fields ticked"}), 400
-    c = conn()
-    imp = c.execute("SELECT status FROM photo_imports WHERE id=?", (import_id,)).fetchone()
-    if imp is None or imp["status"] in ("applied", "rejected"):
-        c.close()
-        return jsonify({"ok": False, "error": "photo not found or already handled"}), 400
-    try:
-        card_id = v2photos.apply_to_card(c, import_id, target, fields)
-    except (ValueError, KeyError) as e:
-        c.close()
-        return jsonify({"ok": False, "error": str(e)}), 400
-    c.close()
-    return jsonify({"ok": True, "card_id": card_id})
-
-
-@app.post("/api/photos/<int:import_id>/reject")
-def api_photo_reject(import_id):
-    c = conn()
-    imp = c.execute("SELECT status FROM photo_imports WHERE id=?", (import_id,)).fetchone()
-    if imp is None or imp["status"] in ("applied", "rejected"):
-        c.close()
-        return jsonify({"ok": False, "error": "photo not found or already handled"}), 400
-    v2photos.reject(c, import_id)
-    c.close()
-    return jsonify({"ok": True})
-
-
 @app.post("/api/quick-sale")
 def api_quick_sale():
     """One-card cash sale without the full deal screen. Still books a real
@@ -708,7 +545,7 @@ def api_void_deal(deal_id):
     created, deletes the deal. Refused if any created card has moved on.
     If a card it brought in was changed since (repriced, cert, renamed), the
     first call answers 409 with those changes; the screen shows them and
-    resends with confirm_lose_changes once the owner agrees to lose them."""
+    resends with confirm_lose_changes once the user agrees to lose them."""
     from .deals import void_deal
     p = request.get_json(silent=True) or {}
     c = conn()
@@ -1097,17 +934,6 @@ def sell_sheet():
                            total_profit=round(sum(r["profit"] for r in rows), 2))
 
 
-@app.get("/backfill")
-def backfill_page():
-    c = conn()
-    items = v2photos.incomplete_cards(c)
-    total_active = c.execute(
-        "SELECT COUNT(*) FROM graded_cards WHERE status='active'").fetchone()[0]
-    c.close()
-    return render_template("backfill.html", active="backfill", items=items,
-                           total_active=total_active)
-
-
 # ── JSON API ────────────────────────────────────────────────────────────────────
 
 @app.post("/api/reprice")
@@ -1210,7 +1036,7 @@ def api_card_update():
 @app.post("/api/psa/lookup")
 def api_psa_lookup():
     """Look up a PSA cert on demand (e.g. from the New Deal 'cards in' row).
-    Cache-first and budget-aware — reuses the same client as Slab Photos."""
+    Cache-first and budget-aware."""
     p = request.get_json(force=True)
     cert = str(p.get("cert", "")).strip()
     if not cert:
