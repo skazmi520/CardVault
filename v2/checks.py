@@ -189,7 +189,9 @@ def trade_deals_balance(conn):
             "UNION ALL SELECT COALESCE(SUM(disposal_proceeds),0) FROM ungraded_cards "
             "WHERE disposed_via_deal_id=?", i, i))
         inn = sum(float(r[0] or 0) for r in _rows(conn,
-            "SELECT COALESCE(SUM(acquisition_price),0) FROM graded_cards "
+            # a slab graded after the deal carries its grading fee in its basis;
+            # the fee was paid to the grader, not in this deal
+            "SELECT COALESCE(SUM(acquisition_price - COALESCE(grading_fee,0)),0) FROM graded_cards "
             "WHERE acquired_via_deal_id=? AND status<>'cracked' "
             "UNION ALL SELECT COALESCE(SUM(purchase_price),0) FROM ungraded_cards "
             "WHERE acquired_via_deal_id=? AND status<>'promoted'", i, i))
