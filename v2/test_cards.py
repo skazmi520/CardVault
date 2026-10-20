@@ -1,6 +1,5 @@
 """
-CardVault v2: card operation regression tests (v2/cards.py, PSA order import,
-one-time corrections).
+CardVault v2: card operation regression tests (v2/cards.py, PSA order import).
 
 Same shape as test_engine.py: every test ASSERTS, and each pins a rule that
 was broken or decided at some point. Runs against throwaway databases built
@@ -10,9 +9,7 @@ is never opened.
 Run:  python3 -m v2.test_cards
 """
 
-import importlib.util
 import sys
-from pathlib import Path
 
 from . import cards as v2cards
 from . import db as v2db
@@ -65,7 +62,7 @@ def raises(fn, *a, **kw):
 # ── dashboard ──────────────────────────────────────────────────────────────────
 
 def test_dashboard_keeps_pc_on_its_own_line(c):
-    """the owner, 2026-09-25: stock figures cover business inventory only; the
+    """Decided 2026-09-25: stock figures cover business inventory only; the
     personal collection is reported beside them, never mixed in."""
     slab(c, "Priced", 100, 150)
     slab(c, "No market", 200)                    # counts at cost, flagged at_cost
@@ -280,52 +277,6 @@ def test_apply_order_is_all_or_nothing(c):
     check("apply_order commits its work", not c.in_transaction)
 
 
-# ── one-time corrections ───────────────────────────────────────────────────────
-
-def _load_corrections():
-    path = Path(__file__).resolve().parent.parent / "tools" / "corrections_2026_09_25.py"
-    spec = importlib.util.spec_from_file_location("corrections_2026_09_25", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_corrections_2026_09_25_marks_copied_and_is_idempotent(c):
-    corr = _load_corrections()
-    c.execute("INSERT INTO deals (id, occurred_at, cash_amount, created_at) "
-              "VALUES (7, '2026-08-01T12:00:00', -500, '2026-08-01T12:00:00')")
-    ins = ("INSERT INTO graded_cards (id, card_name, grading_company, basis_legacy, "
-           "acquisition_date, date_added, market_value, acquired_via_deal_id) "
-           "VALUES (?,?,'PSA',?,'2026-08-01','2026-08-01',?,?)")
-    c.execute(ins, (749, "Pikachu with Grey Felt Hat", 0.0, None, None))
-    c.execute(ins, (810, "Charizard Arita Auto", 6200.0, 6200.0, None))
-    c.execute(ins, (820, "Take-in", 500.0, 500.0, 7))
-    c.execute("INSERT INTO price_history (card_id, recorded_at, market_value, source) "
-              "VALUES (820, '2026-08-01T12:00:00', 500, 'legacy')")
-    c.execute("INSERT INTO price_history (card_id, recorded_at, market_value, source) "
-              "VALUES (820, '2026-08-05T12:00:00', 650, 'legacy')")   # a later, real point
-    c.commit()
-
-    done = corr.run(c)
-    src = {r["market_value"]: r["source"] for r in c.execute(
-        "SELECT market_value, source FROM price_history WHERE card_id=820")}
-    check("corrections mark the deal-day take-in point 'copied'", src.get(500) == "copied", str(src))
-    check("corrections leave a later price point alone", src.get(650) == "legacy", str(src))
-    g749, g810 = row(c, "graded_cards", 749), row(c, "graded_cards", 810)
-    check("corrections: #749 $0 basis becomes typed",
-          g749["basis_entered"] == 0.0 and g749["basis_legacy"] is None)
-    check("corrections: #810 basis typed, market cleared",
-          g810["basis_entered"] == 6200.0 and g810["market_value"] is None)
-    check("corrections log to card_events",
-          c.execute("SELECT COUNT(*) FROM card_events WHERE source='correction'").fetchone()[0] > 0)
-
-    n_events = c.execute("SELECT COUNT(*) FROM card_events").fetchone()[0]
-    again = corr.run(c)
-    check("corrections are idempotent", len(done) == 3 and again == []
-          and c.execute("SELECT COUNT(*) FROM card_events").fetchone()[0] == n_events,
-          f"first {len(done)} lines, second {again}")
-
-
 TESTS = [test_dashboard_keeps_pc_on_its_own_line, test_snapshot_records_holding,
          test_top_movers_ignore_copied_points,
          test_reprice_and_confirm_refuse_cards_not_held,
@@ -333,8 +284,7 @@ TESTS = [test_dashboard_keeps_pc_on_its_own_line, test_snapshot_records_holding,
          test_promote_raw_unknown_basis_stays_unknown,
          test_crack_to_raw_carries_basis_as_derived,
          test_mark_lost_books_loss_and_restore_clears_it,
-         test_apply_order_is_all_or_nothing,
-         test_corrections_2026_09_25_marks_copied_and_is_idempotent]
+         test_apply_order_is_all_or_nothing]
 
 
 def main():

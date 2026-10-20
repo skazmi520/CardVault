@@ -91,7 +91,7 @@ _HELD = ("active", "submitted_for_grading")
 
 def reprice(conn, card_id: int, market_value: float | None,
             table: str = "graded_cards"):
-    """Set a card's market value (typed by the owner); stamps market_value_updated.
+    """Set a card's market value (typed by the user); stamps market_value_updated.
     For slabs it also appends to price_history (which feeds Top Movers).
 
     Only cards still held can be repriced: a card that left keeps the market
@@ -239,7 +239,7 @@ def crack_to_raw(conn, graded_id: int, *, target_company: str = "PSA",
          g["acquired_via_deal_id"]))
     raw_id = cur.lastrowid
     # the slab's market is a graded price; it says nothing about the raw card,
-    # which is marked at what was paid until the owner prices it
+    # which is marked at what was paid until the user prices it
     v2db.record_event(conn, "ungraded_cards", raw_id, "created", None,
                       f"cracked from slab #{graded_id}; basis_derived={basis}",
                       "engine", f"crack:{graded_id}")
@@ -583,7 +583,7 @@ def set_grading_status(conn, ungraded_id: int, grading_status: str):
 def dashboard_stats(conn) -> dict:
     """Headline figures. Stock figures (market, basis, unrealized) cover
     business inventory only; personal-collection cards are reported on their
-    own line, never mixed in (the owner, 2026-09-25). A card with no market typed
+    own line, never mixed in (decided 2026-09-25). A card with no market typed
     counts at its cost and is counted in at_cost, so the headline says how
     much of it is a price and how much is a placeholder."""
     g_all = conn.execute("SELECT * FROM graded_cards WHERE status='active'").fetchall()

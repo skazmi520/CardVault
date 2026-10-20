@@ -52,3 +52,14 @@ reports/
 design/cardvault-look/cardvault-look.html
 design/cardvault-look/archive/
 docs/design-review-shots/
+
+# Private working notes and one-off tools (real names, deals and figures): kept locally, not published
+/design/cardvault-look/
+/docs/audit-brief-2026-09-25.md
+/docs/chain-lens-plan.md
+/docs/deal-entry-plan.md
+/docs/design-review-2026-09-15.md
+/tools/corrections_2026_09_25.py
+/tools/trace_chain.py
+/tools/audit_workbook.py
+/.claude/

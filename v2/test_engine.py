@@ -77,7 +77,7 @@ def gain_of(c, cid):
 
 def test_pure_sale_scales_to_cash(c):
     """Sold at a discount: proceeds must equal the cash, not the market prefill.
-    This is the Buyer bug — $X of market booked against $X received."""
+    This was a real bug: market value booked against a smaller cash amount received."""
     a, b = slab(c, "A", 800, 1000), slab(c, "B", 800, 1000)
     save_deal(c, cards_out=[CardOut("graded_cards", a, 1000.0), CardOut("graded_cards", b, 1000.0)],
               cash_amount=1600.0, occurred_at="2026-02-01T00:00:00")
@@ -128,8 +128,8 @@ def test_unknown_basis_books_no_gain(c):
 
 def test_cash_received_reduces_basis_flowing_in(c):
     """Give a $6,100 card, take back $3,000 cash plus a card: the card carries
-    $3,100 of basis, not $6,100. Getting this sign backwards inflated a Lugia's
-    traced basis from $X to $X."""
+    $3,100 of basis, not $6,100. Getting this sign backwards inflated a card's
+    traced basis."""
     a = slab(c, "E", 6100, 6100)
     save_deal(c, cards_out=[CardOut("graded_cards", a, 6100.0)],
               cards_in=[CardIn(card_name="F", deal_value=3100.0)],
@@ -140,10 +140,10 @@ def test_cash_received_reduces_basis_flowing_in(c):
 
 
 def test_agreed_price_beats_market_everywhere(c):
-    """the owner's rule: 'I take a card in at 4k, trade it away for 5k, it should
+    """The owner's rule: 'I take a card in at 4k, trade it away for 5k, it should
     just book as +1000' — market value never substitutes for an agreed price.
 
-    Deal 47 broke this: a $6,300-market Gyarados traded for a $5,000 Mario
+    A past deal broke this: a $6,300-market Gyarados traded for a $5,000 Mario
     booked +$1,900 of gain and $6,300 of basis on the Mario. The agreed price
     was $5,000 on both sides."""
     a = slab(c, "GyaradosLike", 4400, 6300)          # market well above the agreed price
@@ -162,7 +162,7 @@ def test_agreed_price_beats_market_everywhere(c):
 
 
 def test_blank_in_lines_split_pro_rata_by_market(c):
-    """the owner's big-deal workflow: give $9,000, take in six cards worth
+    """The big-deal workflow: give $9,000, take in six cards worth
     $10,490, type only their markets and leave every paid $ blank. The $9,000
     must split across them by market — the old equal split would have put the
     same basis on a $590 Latios as a $3,500 Articuno."""
@@ -192,8 +192,8 @@ def in_basis_of(c, name):
         (name, name)).fetchone()[0]
 
 
-def test_deal_37_books_under_stefans_model(c):
-    """Deal 37 (2026-08-08), the one that broke trust. Gave a Rayquaza V with a
+def test_cash_plus_take_in_books_under_owners_model(c):
+    """A past deal (2026-08-08) that broke trust. Gave a Rayquaza V with a
     $1,292.25 basis, put out at $1,450; took back $750 cash and a Mega
     Charizard Y taken in at $400. What the Rayquaza fetched is $750 + $400 =
     $1,150, a $142.25 loss. The old engine booked $1,450 of proceeds and a
@@ -747,7 +747,7 @@ TESTS = [test_pure_sale_scales_to_cash, test_pure_sale_scales_with_an_unvalued_l
          test_zero_cash_is_not_scaled,
          test_unknown_basis_books_no_gain, test_cash_received_reduces_basis_flowing_in,
          test_agreed_price_beats_market_everywhere,
-         test_blank_in_lines_split_pro_rata_by_market, test_deal_37_books_under_stefans_model,
+         test_blank_in_lines_split_pro_rata_by_market, test_cash_plus_take_in_books_under_owners_model,
          test_worked_example_umbreon, test_two_cards_out_split_by_typed_values,
          test_double_disposal_refused, test_allocation_is_penny_exact, test_empty_deal_refused,
          test_blank_market_stays_blank, test_typed_market_seeds_price_history_as_entered,

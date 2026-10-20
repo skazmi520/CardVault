@@ -1,7 +1,7 @@
 # CardVault
 
 Track a Pokémon card collection like a portfolio: inventory, deals (buy / sell /
-multi-card trades with cash), raw-card grading workflow, slab-photo recognition,
+multi-card trades with cash), raw-card grading workflow,
 repricing, and realized-gains reporting.
 
 **CardVault v2** is a local web app (Flask + a dark, Collectr-style UI) that runs
@@ -10,7 +10,20 @@ app (**v1**, CustomTkinter) remains in the repo as legacy.
 
 ---
 
-## Install (v2 — fresh install, no v1 required)
+## Install on a Mac with nothing set up (recommended)
+
+Open Terminal and paste:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/skazmi520/CardVault/main/v2/setup-mac.sh | bash
+```
+
+It installs Python from python.org if needed (asks for your Mac password once),
+downloads CardVault to `~/CardVault`, gives it its own Python environment,
+creates an empty database in `~/.cardvaultmac`, and puts **CardVault v2** in
+`~/Applications`. Run the same command again to update; your data is kept.
+
+## Install from a git clone (developers)
 
 **Requirement:** Python 3.10+ (`brew install python` or [python.org](https://www.python.org/downloads/)).
 
@@ -38,7 +51,7 @@ python3 -m v2.app          # → http://127.0.0.1:5177
 ## v2 features
 
 - **Dashboard** — market value, cost basis, unrealized & realized YTD gains,
-  cash pool with ledger, value-over-time chart, grader breakdown, top holdings,
+  value-over-time chart, grader breakdown, top holdings,
   top movers, sell-list candidates, at-grading tracker
 - **Collection** — dense sortable table over slabs + raw, search/filters,
   inline market-value repricing with keyboard flow, per-card edit modal
@@ -46,9 +59,8 @@ python3 -m v2.app          # → http://127.0.0.1:5177
   pro-rata allocation, reconcile warnings, per-card realized gains; Show Day
   running totals for shows
 - **Raw & Grading** — grading pipeline; promotion rolls grading cost into basis
-- **Slab Photos** — batch label extraction via the Anthropic API
-  (claude-haiku-4-5 vision, <1¢/slab), PSA cert verification (free public API,
-  permanently cached), review screen with per-field accept, legacy backfill mode
+- **PSA** — order CSV import, cert lookups via PSA's free public API
+  (permanently cached)
 - **Reports** — realized gains by year, sold-card search, CSV exports
 
 ### Optional API keys
@@ -56,12 +68,11 @@ python3 -m v2.app          # → http://127.0.0.1:5177
 Put keys in `~/.cardvaultmac/v2.env` (created on first run, never committed):
 
 ```
-ANTHROPIC_API_KEY=   # slab photo extraction (pay-as-you-go)
 PSA_API_TOKEN=       # free — register at psacard.com/publicapi
 CARDVAULT_HOST=      # set to 0.0.0.0 to use from your phone via Tailscale
 ```
 
-Without keys, photo features degrade to manual entry; everything else works.
+Without a PSA token, cert lookups are skipped; everything else works.
 
 ### Data locations
 
@@ -70,7 +81,6 @@ Without keys, photo features degrade to manual entry; everything else works.
 ├── cardvault_v2.db     # v2 database (all v2 data)
 ├── cardvault.db        # v1 database (legacy — never written by v2)
 ├── v2.env              # API keys / config
-├── slab_photos/        # slab label photos
 ├── deal_photos/        # deal documentation photos
 ├── photos/             # v1 card photos
 └── backups/            # v1 daily local backups

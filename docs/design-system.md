@@ -1,11 +1,8 @@
 # CardVault v2 — design system
 
-The look the owner chose on 2026-09-16: Glass Premium with the Refined ideas, no
+The look chosen on 2026-09-16: Glass Premium with the Refined ideas, no
 warm accent. Every screen is built from this. If a screen needs something
 that is not here, add it here first.
-
-Mockups and the generator that produced them: `design/cardvault-look/`
-(`build.py`, `build_variants.py`). Canvas: https://claude.ai/artifact/E49JrzabymKCRyEWgWkiAN
 
 ## Principles
 
@@ -17,7 +14,7 @@ Mockups and the generator that produced them: `design/cardvault-look/`
 3. **Top navigation, not a sidebar.** Five tabs, a More menu, the global
    search in the bar, one primary action.
 4. **Cards first.** Anywhere a deal is summarised, lead with the cards that
-   moved, then who and when. the owner remembers the cards.
+   moved, then who and when. The owner remembers the cards.
 5. **Red means one thing.** `--neg` only on a realized loss and destructive
    confirms. A paper loss is a plain negative number. PSA's red is a grader
    chip and nothing else. Attention states are amber.

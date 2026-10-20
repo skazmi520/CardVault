@@ -268,7 +268,7 @@ CREATE TABLE IF NOT EXISTS price_history (
 );
 CREATE INDEX IF NOT EXISTS idx_price_history_card ON price_history(card_id, recorded_at);
 
--- One row per card line of a deal: what the owner typed next to what the engine
+-- One row per card line of a deal: what the user typed next to what the engine
 -- derived, never in the same column. basis_at_deal / market_at_deal freeze
 -- the outgoing card as it stood when the deal was booked, so the deal can be
 -- replayed later with the same inputs (tools/replay_deal.py).
@@ -319,7 +319,7 @@ CREATE TABLE IF NOT EXISTS voided_deals (
 # The basis readers use (acquisition_price / purchase_price), basis_unknown and
 # realized_gain are GENERATED: no code can write them, so a derived number can
 # never overwrite a typed one and a gain can never go stale.
-#   basis_entered  what the owner typed (create, drawer edit, typed take-in)
+#   basis_entered  what the user typed (create, drawer edit, typed take-in)
 #   basis_derived  what the engine computed (blank take-in split, promote, crack)
 #   basis_legacy   pre-schema-7 values whose provenance is unknown
 _BASIS = "COALESCE(basis_entered, basis_derived, basis_legacy)"
@@ -468,7 +468,7 @@ _CARD_NEW_COLS = [
     # silently inflates realized gains. Flagged cards are reported as
     # "basis unknown" and left out of gain statistics rather than faked.
     ("basis_unknown",        "INTEGER NOT NULL DEFAULT 0"),
-    # the owner's grade prediction: set on the raw card, carried to the graded
+    # The user's grade prediction: set on the raw card, carried to the graded
     # card at promotion so predicted-vs-actual accuracy can be analyzed.
     ("expected_grade",       "TEXT"),
     # Personal-collection pieces: tracked like inventory (net worth, stock

@@ -32,8 +32,8 @@ def _rows(conn, q, *a):
 def pure_sale_proceeds_match_cash(conn):
     """A sale with nothing coming back must book exactly the cash received.
 
-    Booking market value instead turned a $X loss on the Buyer deal into a
-    $X phantom profit. Deals annotated [unreconciled] are exempt: their cash
+    Booking market value instead turned a real loss on a pure sale into a
+    phantom profit. Deals annotated [unreconciled] are exempt: their cash
     trail was never recorded, and the proceeds on the cards are the real ones."""
     bad = []
     for d in _rows(conn, "SELECT id, cash_amount, COALESCE(notes,'') notes FROM deals"):
@@ -208,7 +208,7 @@ def _has_schema7(conn) -> bool:
 
 
 def typed_values_never_written_by_the_app(conn):
-    """basis_entered and market_value hold only what the owner typed. The engine
+    """basis_entered and market_value hold only what the user typed. The engine
     may create a card with them (the 'created' event) but must never change
     them afterwards (2026-09-25 rule)."""
     if not _has_schema7(conn):

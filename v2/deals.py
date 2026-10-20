@@ -165,10 +165,10 @@ def resolve(out_snaps: list[dict], out_entered: list[float | None],
             cards_in: list[CardIn], cash_amount: float,
             out_side_total: float | None = None,
             in_side_total: float | None = None) -> dict:
-    """Turn what the owner typed into what books. No database access: the deal
+    """Turn what the user typed into what books. No database access: the deal
     screen preview, the save and tools/replay_deal.py all run exactly this.
 
-    the owner's model (2026-09-15): an outgoing card has a fixed basis and no sale
+    The owner's model (2026-09-15): an outgoing card has a fixed basis and no sale
     price of its own; what it fetched is the cash plus the take-in prices of
     the cards received. A typed take-in is firm and books verbatim. A blank
     take-in is split from the ask he typed, minus the cash. Nothing is ever
@@ -564,7 +564,7 @@ def save_deal(conn, *,
                                               "basis_derived": b_derived,
                                               "market_value": mv}), "engine", ref)
             if seed_price:
-                # only a market the owner typed ever becomes a price point, and a
+                # only a market the user typed ever becomes a price point, and a
                 # kept card gets a new one only when that typing changed
                 conn.execute(
                     "INSERT INTO price_history (card_id, recorded_at, market_value, source) "
@@ -1140,7 +1140,7 @@ def get_deal(conn, deal_id: int) -> dict | None:
 
 
 def deal_as_entered(conn, deal_id: int) -> dict | None:
-    """What the owner actually typed on the deal screen, kept verbatim in
+    """What the user actually typed on the deal screen, kept verbatim in
     deal_entries at save time. The whole deal-37 investigation stalled on one
     question — "did I type $400 or did the engine invent $700?" — and nothing
     had kept the answer. Now it is stored, and shown on the deal page."""
