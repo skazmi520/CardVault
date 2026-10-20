@@ -165,6 +165,14 @@ The `samples` folder in the download has a filled-in example of each.
 - A blank Market value stays blank. The app counts that card at its cost until you price it.
 - The same cert twice in a file is flagged, and a cert already in your collection is skipped, so importing the same file twice won't double your inventory. Raw cards have no cert, so don't import the same raw list twice.
 
+**Don't know what you paid for a card?**
+
+- **Leave Cost blank.** The card is stored with an unknown cost, never $0. It counts in your inventory and stock value but stays out of every profit number. If it sells, the sale is recorded and Reports lists it under "unknown basis", apart from the totals.
+- **Fill it in later** whenever you find it: open the card on the Collection screen and click **Basis**. From then on it counts everywhere.
+- **Don't type the market value as the cost**, or every sale will show about zero profit. **Don't type $0** unless the card really cost you nothing, or every sale will look like pure profit.
+- **Where to find old costs:** eBay purchase history, PayPal, Venmo or bank statements, your PSA account (add the grading fee to what you paid for the raw card), or the purchase price in Collectr or another tracker.
+- **For taxes:** when a card with no known cost sells, an accountant will usually treat the whole sale price as gain unless you can show what you paid. Dig up costs for your bigger cards; don't bother chasing cheap ones.
+
 ---
 
 ## 4. The screens, one by one
