@@ -353,6 +353,7 @@ def create_card(conn, table: str, *, card_name: str, basis=None,
                 set_name: str = "", year: str = "", notes: str = "",
                 is_pc: bool = False, grading_status: str = "Not Slated",
                 grading_fee=None, source: str = "you",
+                target_grading_company: str = "",
                 _commit: bool = True) -> int:
     """Add a card that never came through a deal — a mystery slab, a legacy
     find, a grading return that slipped tracking. When basis is None the card
@@ -395,11 +396,12 @@ def create_card(conn, table: str, *, card_name: str, basis=None,
                  (card_name, card_number, set_name, year, basis_entered,
                   purchase_date, notes, grading_status, date_added,
                   acquisition_type, market_value, market_value_updated,
-                  status, is_pc)
-               VALUES (?,?,?,?,?,?,?,?,?,'Cash',?,?,'active',?)""",
+                  status, is_pc, target_grading_company)
+               VALUES (?,?,?,?,?,?,?,?,?,'Cash',?,?,'active',?,?)""",
             (card_name, card_number.strip(), set_name.strip(), year.strip(),
              basis_val, acq, notes.strip(), grading_status, now,
-             mv, now if mv is not None else None, 1 if is_pc else 0))
+             mv, now if mv is not None else None, 1 if is_pc else 0,
+             (target_grading_company or "").strip()))
     v2db.record_event(conn, table, cur.lastrowid, "created", None,
                       f"basis_entered={basis_val}, market_value={mv}", source)
     if _commit:

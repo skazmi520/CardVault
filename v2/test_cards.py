@@ -168,6 +168,18 @@ def test_create_card_blank_basis_and_market_stay_null(c):
           r["basis_entered"] == 0.0 and r["basis_unknown"] == 0)
 
 
+def test_create_raw_card_slated_with_target(c):
+    """A raw card added from the Grading screen can start Slated with a target
+    grader; it is still an active card, not at grading."""
+    cid = v2cards.create_card(c, "ungraded_cards", card_name="Slated raw", basis="40",
+                              grading_status="Slated", target_grading_company="PSA")
+    r = row(c, "ungraded_cards", cid)
+    check("create_card raw starts Slated with its target grader",
+          r["grading_status"] == "Slated" and r["target_grading_company"] == "PSA"
+          and r["status"] == "active" and r["submitted_at"] is None,
+          f"{r['grading_status']} / {r['target_grading_company']} / {r['status']}")
+
+
 # ── grading lifecycle ──────────────────────────────────────────────────────────
 
 def test_promote_raw_unknown_basis_stays_unknown(c):
@@ -281,6 +293,7 @@ TESTS = [test_dashboard_keeps_pc_on_its_own_line, test_snapshot_records_holding,
          test_top_movers_ignore_copied_points,
          test_reprice_and_confirm_refuse_cards_not_held,
          test_create_card_blank_basis_and_market_stay_null,
+         test_create_raw_card_slated_with_target,
          test_promote_raw_unknown_basis_stays_unknown,
          test_crack_to_raw_carries_basis_as_derived,
          test_mark_lost_books_loss_and_restore_clears_it,

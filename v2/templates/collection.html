@@ -604,7 +604,7 @@ $("m-restore").addEventListener("click", async () => {
 function openAdd() {
   ["a-name","a-set","a-number","a-year","a-grade","a-cert","a-basis","a-mv","a-notes"].forEach(id => E(id).value = "");
   E("a-pc").checked = false; E("a-msg").textContent = "";
-  E("a-date").value = new Date().toISOString().slice(0, 10);
+  E("a-date").value = new Date().toLocaleDateString("en-CA")  /* local date, not UTC */;
   syncAddKind(); E("add-backdrop").hidden = false; E("a-name").focus();
 }
 function syncAddKind() { E("a-slab-row").style.display = E("a-kind").value === "slab" ? "" : "none"; }

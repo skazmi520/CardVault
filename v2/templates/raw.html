@@ -84,6 +84,42 @@ tr:hover .ret, .ret:focus-visible { opacity: 1; }
   </div>
   <div style="flex:1"></div>
   <input type="text" id="rg-q" placeholder="Filter by card or set" style="width:260px">
+  <button class="btn ghost" id="add-raw-btn" style="height:34px">+ Add raw card</button>
+</div>
+
+<div class="modal-backdrop" id="ar-backdrop" hidden>
+  <div class="modal">
+    <h2>Add raw card</h2>
+    <p class="hint" style="margin-bottom:12px">For a raw card you already own. Just bought it?
+      Record it as a <a href="/deals/new">new deal</a> instead, so the purchase is on the books.
+      Leave the cost blank if you don't know it: the card stays out of profit numbers instead of being booked at $0.</p>
+    <div class="row">
+      <div style="flex:1;min-width:200px"><label>Card name *</label><input type="text" id="ar-name" style="width:100%"></div>
+    </div>
+    <div class="row">
+      <div style="flex:1"><label>Set</label><input type="text" id="ar-set" style="width:100%"></div>
+      <div><label>Card #</label><input type="text" id="ar-number" style="width:90px"></div>
+      <div><label>Year</label><input type="text" id="ar-year" style="width:80px"></div>
+    </div>
+    <div class="row">
+      <div><label>Cost ($)</label><input type="text" id="ar-basis" placeholder="blank = unknown" style="width:140px"></div>
+      <div><label>Acquired</label><input type="date" id="ar-date"></div>
+    </div>
+    <div class="row">
+      <div><label>Status</label>
+        <select id="ar-status"><option>Slated</option><option>Not Slated</option></select></div>
+      <div><label>Grader</label>
+        <select id="ar-target"><option>PSA</option><option>BGS</option><option>CGC</option><option>TAG</option><option value="">None yet</option></select></div>
+    </div>
+    <div class="row">
+      <div style="flex:1"><label>Notes</label><input type="text" id="ar-notes" style="width:100%"></div>
+    </div>
+    <div class="actions">
+      <span id="ar-msg" class="neg" style="align-self:center;font-size:12px"></span>
+      <button class="btn ghost" id="ar-cancel">Cancel</button>
+      <button class="btn" id="ar-save">Add card</button>
+    </div>
+  </div>
 </div>
 
 <div class="rg-strip">
@@ -375,5 +411,32 @@ document.querySelectorAll("[data-back]").forEach(inp =>
       { ungraded_id: +inp.dataset.back, expected_back: inp.value })
       .then(() => toast(inp.value ? "Return date saved." : "Return date cleared."))
       .catch(e => toast(e.message, "error"))));
+
+/* add a raw card you already own */
+(() => {
+  const g = id => document.getElementById(id);
+  g("add-raw-btn").addEventListener("click", () => {
+    ["ar-name", "ar-set", "ar-number", "ar-year", "ar-basis", "ar-notes"].forEach(id => g(id).value = "");
+    g("ar-status").value = "Slated"; g("ar-target").value = "PSA"; g("ar-msg").textContent = "";
+    g("ar-date").value = new Date().toLocaleDateString("en-CA")  /* local date, not UTC */;
+    g("ar-backdrop").hidden = false; g("ar-name").focus();
+  });
+  g("ar-cancel").addEventListener("click", () => { g("ar-backdrop").hidden = true; });
+  g("ar-save").addEventListener("click", async () => {
+    const name = g("ar-name").value.trim();
+    if (!name) { g("ar-msg").textContent = "Name is required."; return; }
+    const basis = g("ar-basis").value.trim();
+    try {
+      await postJSON("/api/card/create", {
+        is_graded: false, card_name: name, set_name: g("ar-set").value.trim(),
+        card_number: g("ar-number").value.trim(), year: g("ar-year").value.trim(),
+        basis, acquisition_date: g("ar-date").value, notes: g("ar-notes").value.trim(),
+        grading_status: g("ar-status").value, target_grading_company: g("ar-target").value,
+      });
+      toastAfterReload(`Added ${name}${basis === "" ? " (cost unknown)" : ""}.`);
+      location.reload();
+    } catch (err) { g("ar-msg").textContent = err.message; }
+  });
+})();
 </script>
 {% endblock %}

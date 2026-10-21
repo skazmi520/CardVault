@@ -1267,6 +1267,17 @@ def api_card_create():
     basis = _parse_money(p.get("basis"), "cost basis")
     mv = _parse_money(p.get("market_value"), "market value")
     fee = _parse_money(p.get("grading_fee"), "grading fee")
+    status = p.get("grading_status") or "Not Slated"
+    target = p.get("target_grading_company") or ""
+    if table == "ungraded_cards":
+        # At Grading needs an order and a submitted date; it's set from the
+        # Grading screen or a PSA import, never at creation
+        if status not in ("Not Slated", "Slated"):
+            raise ValueError("a new raw card starts as Not Slated or Slated")
+        if target not in ("", "PSA", "BGS", "CGC", "TAG"):
+            raise ValueError("grader must be PSA, BGS, CGC or TAG")
+    else:
+        status, target = "Not Slated", ""
     c = conn()
     new_id = v2cards.create_card(
         c, table,
@@ -1282,6 +1293,8 @@ def api_card_create():
         year=p.get("year", ""),
         notes=p.get("notes", ""),
         grading_fee=fee,
+        grading_status=status,
+        target_grading_company=target,
         is_pc=bool(p.get("is_pc")))
     c.close()
     return jsonify({"ok": True, "id": new_id, "table": table})

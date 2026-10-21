@@ -402,6 +402,8 @@ Your raw cards and the grading pipeline.
 
 **Bulk update:** tick cards (or use **Select all slated** or **Select all at grading**) and a bar appears. Set the status, the back-by date or the grader for all of them at once. Use it the day you ship a submission.
 
+**+ Add raw card** (top right) adds a raw card you already own, ready to start as Slated with its grader. If you just bought it, record a **New deal** instead so the purchase is on the books.
+
 **When a card comes back, press Returned…** and enter the grader, grade, cert, grading cost and date. The preview shows the new basis (raw cost plus grading cost). **Add to collection** turns it into a slab.
 
 **Grading eye** scores your guesses against what actually came back:
